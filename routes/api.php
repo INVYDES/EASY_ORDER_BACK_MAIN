@@ -58,8 +58,8 @@ Route::prefix('')->group(function () {
     Route::post('/mercadopago/webhook',          [MercadoPagoController::class, 'webhook']);
 
     // ========== RESTAURANTES PÚBLICOS ==========
-    Route::get('/restaurantes',                  [RestauranteController::class, 'indexPublic']);
-    Route::get('/restaurantes/{id}',             [RestauranteController::class, 'showPublic']);
+    // Route::get('/restaurantes',                  [RestauranteController::class, 'indexPublic']);
+    // Route::get('/restaurantes/{id}',             [RestauranteController::class, 'showPublic']);
 
     // ========== ANUNCIOS PÚBLICOS ==========
     Route::get('/anuncios',                      [AnuncioController::class, 'indexPublic']);
