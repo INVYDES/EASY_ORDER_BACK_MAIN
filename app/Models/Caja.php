@@ -40,9 +40,9 @@ class Caja extends Model
         'ventas_tarjeta'       => 'decimal:2',
         'ventas_transferencia' => 'decimal:2',
         'ventas_paypal'        => 'decimal:2',
-        'ventas_mercadopago' => 'decimal:2',
         'ventas_mercadopago'   => 'decimal:2',
         'diferencia'           => 'decimal:2',
+        'total_ordenes'        => 'integer',
     ];
 
     // ── Relaciones ─────────────────────────────────────────────────────────────
@@ -63,9 +63,4 @@ class Caja extends Model
             $this->ventas_mercadopago
         );
     }
-    // ── Accessor: total de órdenes del día ─────────────────────────────────────
-public function getTotalOrdenesAttribute(): int
-{
-    return (int) $this->total_ordenes;
-}
 }

@@ -47,6 +47,15 @@ class Ingrediente extends Model
     }
 
     /**
+     * Productos que usan este ingrediente
+     */
+    public function productos()
+    {
+        return $this->belongsToMany(Producto::class, 'producto_ingrediente')
+            ->withPivot('cantidad');
+    }
+
+    /**
      * Atributo para saber si el stock es bajo
      */
     public function getBajoStockAttribute()

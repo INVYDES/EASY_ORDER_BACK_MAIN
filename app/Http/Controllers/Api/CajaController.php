@@ -92,7 +92,7 @@ class CajaController extends Controller
             }
 
             $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)
+                ->where('updated_at', '>=', $caja->fecha_apertura)
                 ->where('estado', 'CERRADA')
                 ->selectRaw($this->ventasSelectRaw())
                 ->first();
@@ -223,7 +223,7 @@ class CajaController extends Controller
             DB::beginTransaction();
 
             $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)->where('estado','CERRADA')
+                ->where('updated_at', '>=', $caja->fecha_apertura)->where('estado','CERRADA')
                 ->selectRaw($this->ventasSelectRaw())->first();
 
             $v = $this->formatVentas($ventas);
@@ -517,16 +517,13 @@ class CajaController extends Controller
             return response()->json([
                 'success' => true,
                 'data'    => [
-                    'id'                       => $caja->id,
-                    'restaurante_id'           => $caja->restaurante_id,
-                    'fecha_apertura'           => $caja->fecha_apertura,
-                    'fecha_apertura_formateada'=> $caja->fecha_apertura->format('d/m/Y H:i'),
-                    'fecha_cierre'             => $caja->fecha_cierre,
-                    'fecha_cierre_formateada'  => $caja->fecha_cierre?->format('d/m/Y H:i'),
-                    'usuario_apertura'         => $caja->usuarioApertura
-                        ? ['id'=>$caja->usuarioApertura->id,'name'=>$caja->usuarioApertura->name] : null,
-                    'usuario_cierre'           => $caja->usuarioCierre
-                        ? ['id'=>$caja->usuarioCierre->id,  'name'=>$caja->usuarioCierre->name]   : null,
+                    'caja' => [
+                        'id'             => $caja->id,
+                        'fecha_apertura' => $caja->fecha_apertura->format('d/m/Y H:i'),
+                        'fecha_cierre'   => $caja->fecha_cierre?->format('d/m/Y H:i'),
+                        'abierto_por'    => $caja->usuarioApertura?->name,
+                        'cerrado_por'    => $caja->usuarioCierre?->name,
+                    ],
                     'montos' => [
                         'monto_inicial' => (float) $caja->monto_inicial,
                         'monto_final'   => (float) $caja->monto_final,
@@ -542,10 +539,10 @@ class CajaController extends Controller
                         'total_ordenes' => (int) $caja->total_ordenes,
                     ],
                     'movimientos' => [
-                        'ingresos' => (float) $TotalIngresos,
-                        'egresos'  => (float) $TotalEgresos,
-                        'total'    => $movimientos->count(),
-                        'lista'    => $movimientos,
+                        'ingresos'          => (float) $TotalIngresos,
+                        'egresos'           => (float) $TotalEgresos,
+                        'total_movimientos' => $movimientos->count(),
+                        'lista'             => $movimientos,
                     ],
                     'observaciones' => $caja->observaciones_cierre,
                     'estado'        => $caja->estado,

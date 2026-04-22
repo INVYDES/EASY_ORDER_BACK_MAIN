@@ -42,6 +42,9 @@ class OrdenController extends Controller
             if ($request->filled('fecha_hasta')) {
                 $query->whereDate('created_at', '<=', $request->fecha_hasta);
             }
+            if ($request->filled('updated_at_desde')) {
+                $query->where('updated_at', '>=', $request->updated_at_desde);
+            }
             if ($request->filled('fecha')) {
                 $query->whereDate('created_at', $request->fecha);
             }
@@ -80,8 +83,10 @@ class OrdenController extends Controller
                 'total_ordenes' => $ordenes->total(),
                 'por_estado' => [
                     'abiertas'       => Orden::where('restaurante_id', $rid)->where('estado', 'ABIERTA')->count(),
+                    'por_preparar'   => Orden::where('restaurante_id', $rid)->where('estado', 'POR_PREPARAR')->count(),
                     'en_preparacion' => Orden::where('restaurante_id', $rid)->where('estado', 'EN_PREPARACION')->count(),
                     'listas'         => Orden::where('restaurante_id', $rid)->where('estado', 'LISTA')->count(),
+                    'entregadas'     => Orden::where('restaurante_id', $rid)->where('estado', 'ENTREGADA')->count(),
                     'cerradas'       => Orden::where('restaurante_id', $rid)->where('estado', 'CERRADA')->count(),
                 ],
                 'total_ventas_hoy' => Orden::where('restaurante_id', $rid)->whereDate('created_at', $hoy)->where('estado', 'CERRADA')->sum('total'),
@@ -146,8 +151,10 @@ class OrdenController extends Controller
                     'total'      => $ordenes->count(),
                     'por_estado' => [
                         'ABIERTA'        => $ordenes->where('estado', 'ABIERTA')->count(),
+                        'POR_PREPARAR'   => $ordenes->where('estado', 'POR_PREPARAR')->count(),
                         'EN_PREPARACION' => $ordenes->where('estado', 'EN_PREPARACION')->count(),
                         'LISTA'          => $ordenes->where('estado', 'LISTA')->count(),
+                        'ENTREGADA'      => $ordenes->where('estado', 'ENTREGADA')->count(),
                         'CERRADA'        => $ordenes->where('estado', 'CERRADA')->count(),
                     ],
                     'ventas_totales' => $ordenes->where('estado', 'CERRADA')->sum('total'),
@@ -285,6 +292,7 @@ class OrdenController extends Controller
                     'precio_unitario' => $producto->precio,
                     'subtotal'        => $subtotal,
                     'notas'           => $item['notas'],
+                    'estado_preparacion' => 'PENDIENTE',
                 ]);
 
                 $detalles[] = [
@@ -297,6 +305,7 @@ class OrdenController extends Controller
                     'precio_unitario'     => (float) $producto->precio,
                     'subtotal'            => (float) $subtotal,
                     'subtotal_formateado' => '$' . number_format($subtotal, 2),
+                    'estado_preparacion'  => 'PENDIENTE',
                 ];
 
                 $total += $subtotal;
@@ -344,7 +353,7 @@ class OrdenController extends Controller
     public function update(Request $request, $id)
     {
         $request->validate([
-            'estado'      => 'required|in:ABIERTA,EN_PREPARACION,LISTA,CERRADA',
+            'estado'      => 'required|in:ABIERTA,POR_PREPARAR,EN_PREPARACION,LISTA,ENTREGADA,CERRADA',
             'metodo_pago' => 'nullable|string|max:50',
             'propina'     => 'nullable|numeric|min:0',
         ]);
@@ -360,7 +369,7 @@ class OrdenController extends Controller
                 ->where('id', $id)
                 ->firstOrFail();
 
-            if (!$this->puedeCambiarEstado($orden->estado, $request->estado)) {
+            if (!$orden->puedeCambiarEstado($request->estado)) {
                 return response()->json([
                     'success' => false,
                     'message' => "No se puede cambiar de {$orden->estado} a {$request->estado}",
@@ -540,8 +549,10 @@ class OrdenController extends Controller
                     ],
                     'por_estado' => [
                         'abiertas'       => Orden::where('restaurante_id', $rid)->where('estado', 'ABIERTA')->count(),
+                        'por_preparar'   => Orden::where('restaurante_id', $rid)->where('estado', 'POR_PREPARAR')->count(),
                         'en_preparacion' => Orden::where('restaurante_id', $rid)->where('estado', 'EN_PREPARACION')->count(),
                         'listas'         => Orden::where('restaurante_id', $rid)->where('estado', 'LISTA')->count(),
+                        'entregadas'     => Orden::where('restaurante_id', $rid)->where('estado', 'ENTREGADA')->count(),
                         'cerradas'       => Orden::where('restaurante_id', $rid)->where('estado', 'CERRADA')->count(),
                     ],
                 ],
@@ -588,6 +599,7 @@ class OrdenController extends Controller
                 'subtotal'            => (float) $d->subtotal,
                 'subtotal_formateado' => '$' . number_format($d->subtotal, 2),
                 'notas'               => $d->notas ?? null,
+                'estado_preparacion'  => $d->estado_preparacion ?? 'PENDIENTE',
             ]),
             'created_at'            => $orden->created_at,
             'created_at_formateado' => $orden->created_at->format('d/m/Y H:i'),
@@ -599,22 +611,65 @@ class OrdenController extends Controller
 
     private function getEstadoTexto(string $estado): string
     {
-        return ['ABIERTA' => 'Abierta', 'EN_PREPARACION' => 'En preparación', 'LISTA' => 'Lista', 'CERRADA' => 'Cerrada'][$estado] ?? $estado;
+        return ['ABIERTA' => 'Abierta', 'POR_PREPARAR' => 'Por preparar', 'EN_PREPARACION' => 'En preparación', 'LISTA' => 'Lista', 'ENTREGADA' => 'Entregada', 'CERRADA' => 'Cerrada'][$estado] ?? $estado;
     }
 
     private function getEstadoColor(string $estado): string
     {
-        return ['ABIERTA' => 'yellow', 'EN_PREPARACION' => 'blue', 'LISTA' => 'green', 'CERRADA' => 'gray'][$estado] ?? 'gray';
+        return ['ABIERTA' => 'yellow', 'POR_PREPARAR' => 'orange', 'EN_PREPARACION' => 'blue', 'LISTA' => 'green', 'ENTREGADA' => 'purple', 'CERRADA' => 'gray'][$estado] ?? 'gray';
     }
 
     private function puedeCambiarEstado(string $actual, string $nuevo): bool
     {
         $transiciones = [
-            'ABIERTA'        => ['EN_PREPARACION', 'LISTA', 'CERRADA'],
+            'ABIERTA'        => ['POR_PREPARAR', 'CERRADA'],
+            'POR_PREPARAR'   => ['EN_PREPARACION', 'CERRADA'],
             'EN_PREPARACION' => ['LISTA', 'CERRADA'],
-            'LISTA'          => ['CERRADA'],
+            'LISTA'          => ['ENTREGADA', 'CERRADA'],
+            'ENTREGADA'      => ['CERRADA'],
             'CERRADA'        => [],
         ];
         return in_array($nuevo, $transiciones[$actual] ?? []);
+    }
+
+    public function updateStationStatus(Request $request, $id)
+    {
+        $request->validate([
+            'detalles' => 'required|array|min:1',
+            'detalles.*' => 'exists:orden_detalles,id',
+            'estado_preparacion' => 'required|in:PENDIENTE,EN_PREPARACION,LISTO'
+        ]);
+
+        try {
+            $user = $request->user();
+            $restauranteActivo = app('restaurante_activo');
+            
+            $orden = Orden::with('detalles')
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->where('id', $id)
+                ->firstOrFail();
+
+            // Actualizar detalles seleccionados
+            OrdenDetalle::whereIn('id', $request->detalles)
+                ->where('orden_id', $orden->id)
+                ->update(['estado_preparacion' => $request->estado_preparacion]);
+
+            // Verificar y actualizar estado global de la orden
+            $orden->verificarYActualizarEstadoGlobal();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Estado de preparación actualizado',
+                'data' => [
+                    'orden_id' => $orden->id,
+                    'nuevo_estado_orden' => $orden->estado
+                ]
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['success' => false, 'message' => 'Orden no encontrada'], 404);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error al actualizar', 'error' => $e->getMessage()], 500);
+        }
     }
 }

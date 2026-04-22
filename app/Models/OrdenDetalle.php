@@ -14,7 +14,8 @@ class OrdenDetalle extends Model
         'producto_id',
         'cantidad',
         'precio_unitario',  // ✅ NOMBRE CORRECTO
-        'subtotal'
+        'subtotal',
+        'estado_preparacion'
     ];
 
     protected $casts = [

@@ -121,6 +121,45 @@ class PermissionRoleSeeder extends Seeder
             }
         }
 
+        // =====================================================
+        // BARRA (ID 6)
+        // =====================================================
+        $barraPermisos = [
+            1, // VER_RESTAURANTE
+            5, // VER_PRODUCTOS
+            9, // VER_ORDENES
+            12, // CERRAR_ORDENES
+            38,39 // VER_CATEGORIAS
+        ];
+        
+        foreach ($barraPermisos as $permisoId) {
+            if (in_array($permisoId, $this->existingPermissions)) {
+                DB::table('permission_role')->updateOrInsert([
+                    'permission_id' => $permisoId,
+                    'role_id' => 6
+                ]);
+            }
+        }
+
+        // =====================================================
+        // MENU (ID 7) - KIOSKO
+        // =====================================================
+        $menuPermisos = [
+            1, // VER_RESTAURANTE
+            5, // VER_PRODUCTOS
+            10, // CREAR_ORDENES
+            38, // VER_CATEGORIAS
+        ];
+        
+        foreach ($menuPermisos as $permisoId) {
+            if (in_array($permisoId, $this->existingPermissions)) {
+                DB::table('permission_role')->updateOrInsert([
+                    'permission_id' => $permisoId,
+                    'role_id' => 7
+                ]);
+            }
+        }
+
         $this->command->info('✅ Permisos asignados correctamente a los roles!');
     }
 }

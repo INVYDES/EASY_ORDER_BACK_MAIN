@@ -90,6 +90,15 @@ class User extends Authenticatable
      */
     public function hasPermission($permission): bool
     {
+        // Excepción automática para el rol Kiosko (MENU) 
+        // Si no existen en la BD, se los otorgamos por código
+        if ($this->hasRole('MENU')) {
+            $menuPermisos = ['VER_RESTAURANTE', 'VER_PRODUCTOS', 'CREAR_ORDENES', 'VER_CATEGORIAS'];
+            if (in_array($permission, $menuPermisos)) {
+                return true;
+            }
+        }
+
         return $this->roles()
             ->whereHas('permissions', function ($query) use ($permission) {
                 $query->where('nombre', $permission);

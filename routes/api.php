@@ -267,6 +267,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::post('/',                     [OrdenController::class, 'store'])->middleware('permission:CREAR_ORDENES');
         Route::get('/{orden}',               [OrdenController::class, 'show'])->middleware('permission:VER_ORDENES');
         Route::put('/{orden}',               [OrdenController::class, 'update'])->middleware('permission:EDITAR_ORDENES');
+        Route::put('/{orden}/station-status', [OrdenController::class, 'updateStationStatus'])->middleware('permission:EDITAR_ORDENES');
         Route::post('/{orden}/cerrar',       [OrdenController::class, 'cerrar'])->middleware('permission:CERRAR_ORDENES');
     });
 

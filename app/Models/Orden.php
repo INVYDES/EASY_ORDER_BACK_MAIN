@@ -128,6 +128,7 @@ class Orden extends Model
     {
         $textos = [
             'ABIERTA' => 'Abierta',
+            'POR_PREPARAR' => 'Por preparar',
             'EN_PREPARACION' => 'En preparación',
             'LISTA' => 'Lista para servir',
             'ENTREGADA' => 'Entregada',
@@ -143,6 +144,7 @@ class Orden extends Model
     {
         $colores = [
             'ABIERTA' => 'yellow',
+            'POR_PREPARAR' => 'orange',
             'EN_PREPARACION' => 'blue',
             'LISTA' => 'green',
             'ENTREGADA' => 'purple',
@@ -180,9 +182,10 @@ class Orden extends Model
     public function puedeCambiarEstado(string $nuevoEstado): bool
     {
         $transiciones = [
-            'ABIERTA' => ['EN_PREPARACION', 'LISTA', 'ENTREGADA', 'CANCELADA'],
-            'EN_PREPARACION' => ['LISTA', 'ENTREGADA', 'CANCELADA'],
-            'LISTA' => ['ENTREGADA', 'CERRADA', 'PAGADA'],
+            'ABIERTA' => ['POR_PREPARAR', 'CANCELADA'],
+            'POR_PREPARAR' => ['EN_PREPARACION', 'CANCELADA'],
+            'EN_PREPARACION' => ['LISTA', 'CANCELADA'],
+            'LISTA' => ['ENTREGADA', 'CERRADA'],
             'ENTREGADA' => ['CERRADA', 'PAGADA'],
             'CERRADA' => ['PAGADA'],
             'PAGADA' => [],
@@ -194,7 +197,7 @@ class Orden extends Model
 
     public function esEditable(): bool
     {
-        return in_array($this->estado, ['ABIERTA', 'EN_PREPARACION', 'LISTA']);
+        return in_array($this->estado, ['ABIERTA', 'POR_PREPARAR', 'EN_PREPARACION', 'LISTA']);
     }
 
     public function recalcularTotal(): float
@@ -203,5 +206,43 @@ class Orden extends Model
         $total = $subtotal + ($this->propina ?? 0);
         $this->update(['total' => $total]);
         return $total;
+    }
+
+    /**
+     * Verifica los estados de los detalles y actualiza el estado de la orden global.
+     */
+    public function verificarYActualizarEstadoGlobal()
+    {
+        $detalles = $this->detalles()->get();
+        if ($detalles->isEmpty()) return;
+
+        $total = $detalles->count();
+        $listos = $detalles->where('estado_preparacion', 'LISTO')->count();
+        $enPreparacion = $detalles->where('estado_preparacion', 'EN_PREPARACION')->count();
+        
+        $nuevoEstado = $this->estado;
+
+        if ($listos === $total) {
+            $nuevoEstado = 'LISTA';
+        } elseif ($listos > 0 || $enPreparacion > 0) {
+            $nuevoEstado = 'EN_PREPARACION';
+        } else {
+            $nuevoEstado = 'POR_PREPARAR';
+        }
+
+        if ($this->estado !== $nuevoEstado && !in_array($this->estado, ['ENTREGADA', 'CERRADA', 'CANCELADA', 'PAGADA'])) {
+            $this->update(['estado' => $nuevoEstado]);
+            
+            // Emitir evento si es necesario (el controlador lo debería hacer, pero aseguramos estado correcto)
+            try {
+                broadcast(new \App\Events\OrdenActualizada(
+                    $this->load(['usuario:id,name,username', 'detalles.producto.categoria']), 
+                    'estado_cambiado', 
+                    $this->restaurante_id
+                ));
+            } catch (\Exception $e) {
+                // ignorar
+            }
+        }
     }
 }
