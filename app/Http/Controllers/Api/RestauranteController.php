@@ -21,7 +21,7 @@ class RestauranteController extends Controller
         }
 
         $perPage   = min($request->get('per_page', 15), 50);
-        $isCliente = app('is_cliente') ?? $user->hasRole('cliente');
+        $isCliente = $user->hasRole('cliente') || $user->hasRole('CLIENTE');
         $query     = $isCliente ? Restaurante::query() : $user->restaurantes();
 
         // Filtros
