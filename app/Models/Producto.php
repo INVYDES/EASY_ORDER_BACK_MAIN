@@ -165,11 +165,12 @@ class Producto extends Model
                 return $this->imagen;
             }
             // Si es solo el nombre del archivo (guardado en storage)
-            return asset('storage/productos/' . $this->imagen);
+            // Quitamos 'productos/' adicional porque $this->imagen ya lo incluye
+            return asset('storage/' . $this->imagen);
         }
         
-        // Imagen por defecto
-        return asset('images/no-image.png');
+        // Imagen por defecto (apuntando a una ruta que no de error o un placeholder)
+        return 'https://ui-avatars.com/api/?name=' . urlencode($this->nombre) . '&color=7F9CF5&background=EBF4FF';
     }
 
     public function getImagenDataAttribute()
