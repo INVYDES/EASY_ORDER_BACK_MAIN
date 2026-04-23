@@ -62,4 +62,12 @@ class Ingrediente extends Model
     {
         return $this->stock_actual <= $this->stock_minimo;
     }
+
+    /**
+     * Atributo para el costo total del stock actual
+     */
+    public function getCostoTotalStockAttribute()
+    {
+        return $this->costo_unitario * $this->stock_actual;
+    }
 }
