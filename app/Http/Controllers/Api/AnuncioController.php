@@ -170,9 +170,10 @@ class AnuncioController extends Controller
         try {
             $restauranteId  = $request->get('restaurante_id');
             
-            // Para la vista previa del admin, si no viene ID en la URL, usamos el del usuario logueado
-            if (!$restauranteId && $request->user()) {
-                $restauranteId = $request->user()->restaurante_id;
+            // Forzamos la detección del usuario aunque la ruta sea pública para la vista previa admin
+            $user = auth('sanctum')->user();
+            if (!$restauranteId && $user) {
+                $restauranteId = $user->restaurante_id;
             }
 
             $mostrarCliente = $request->boolean('mostrar_cliente', false);
