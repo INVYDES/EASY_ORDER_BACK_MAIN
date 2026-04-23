@@ -169,6 +169,12 @@ class AnuncioController extends Controller
     {
         try {
             $restauranteId  = $request->get('restaurante_id');
+            
+            // Para la vista previa del admin, si no viene ID en la URL, usamos el del usuario logueado
+            if (!$restauranteId && $request->user()) {
+                $restauranteId = $request->user()->restaurante_id;
+            }
+
             $mostrarCliente = $request->boolean('mostrar_cliente', false);
             $mostrarInterno = $request->boolean('mostrar_interno', false);
 
@@ -179,6 +185,7 @@ class AnuncioController extends Controller
             if ($restauranteId) {
                 $query->where('restaurante_id', $restauranteId);
             } else {
+                // Si de plano no hay ID, no mostramos nada para seguridad
                 return response()->json(['success' => true, 'data' => []]);
             }
 
