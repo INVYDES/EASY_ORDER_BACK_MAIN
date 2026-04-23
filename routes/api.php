@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\OfertaController;
 use App\Http\Controllers\Api\PayPalController;
 use App\Http\Controllers\Api\LicenciaPagoController;
 use App\Http\Controllers\Api\MercadoPagoController;
+use App\Http\Controllers\Api\MeseroController;
 
 /*
 |--------------------------------------------------------------------------
@@ -97,11 +98,10 @@ Route::middleware('auth:sanctum')->group(function () {
     // ========== PERFIL DE USUARIO ==========
     Route::get('/user/profile',              [UserController::class, 'show']);
     Route::put('/user/profile',              [UserController::class, 'update']);
-    Route::put('/user/password',             [UserController::class, 'password']);
+    Route::get('/user/password',             [UserController::class, 'password']);
     Route::get('/user',                      [UserController::class, 'show']);
     Route::get('/user/roles',                [UserController::class, 'roles']);
     Route::get('/user/rol-principal',        [UserController::class, 'rolPrincipal']);
-
     // ========== RESTAURANTES ==========
     Route::get('/restaurantes/buscar',       [RestauranteController::class, 'buscarPorNombre']);
 
@@ -307,6 +307,14 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::prefix('users')->group(function () {
         Route::put('/{id}',                  [UserController::class, 'updateById'])->middleware('permission:EDITAR_EMPLEADOS');
         Route::delete('/{id}',               [UserController::class, 'destroy'])->middleware('permission:ELIMINAR_EMPLEADOS');
+    });
+
+    // ========== MESEROS Y MESAS ==========
+    Route::prefix('meseros')->group(function () {
+        Route::get('/',                      [MeseroController::class, 'index']);
+        Route::get('/mis-ordenes',           [MeseroController::class, 'misOrdenes']);
+        Route::post('/configurar-mesas',     [MeseroController::class, 'configurarTotalMesas']);
+        Route::post('/asignar-mesas',        [MeseroController::class, 'asignarMesas']);
     });
 
     // ========== OFERTAS ==========

@@ -18,7 +18,8 @@ class Restaurante extends Model
         'nombre',
         'calle',
         'ciudad',
-        'estado'
+        'estado',
+        'total_mesas'
     ];
 
     public function propietario()
