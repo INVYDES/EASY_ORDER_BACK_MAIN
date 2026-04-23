@@ -170,17 +170,24 @@ class AnuncioController extends Controller
         try {
             $restauranteId  = $request->get('restaurante_id');
             $mostrarCliente = $request->boolean('mostrar_cliente', false);
+            $mostrarInterno = $request->boolean('mostrar_interno', false);
 
             $query = Anuncio::with('producto:id,nombre,precio,imagen')
                 ->where('activo', true);
 
-            // Si se pasa restaurante_id, filtrar por ese restaurante
+            // Obligamos a filtrar por restaurante para evitar mezclas
             if ($restauranteId) {
                 $query->where('restaurante_id', $restauranteId);
+            } else {
+                return response()->json(['success' => true, 'data' => []]);
             }
 
             if ($mostrarCliente) {
                 $query->where('mostrar_cliente', true);
+            }
+
+            if ($mostrarInterno) {
+                $query->where('mostrar_interno', true);
             }
 
             $anuncios = $query->orderBy('orden')->get();
@@ -193,7 +200,7 @@ class AnuncioController extends Controller
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error', 'error' => $e->getMessage()], 500);
         }
-    }
+    } 
 
     // Anuncios vigentes públicos (sin autenticación) — para marquesina del cliente
     public function vigentesPublic(Request $request)
