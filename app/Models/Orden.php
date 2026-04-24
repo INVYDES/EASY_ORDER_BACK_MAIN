@@ -210,23 +210,35 @@ class Orden extends Model
 
     /**
      * Verifica los estados de los detalles y actualiza el estado de la orden global.
+     * Ahora permite que la orden se vea como "LISTA" para el mesero si hay productos terminados,
+     * aunque otros sigan en preparación.
      */
     public function verificarYActualizarEstadoGlobal()
     {
-        $detalles = $this->detalles()->get();
+        $detalles = $this->detalles()->with('producto.categoria')->get();
         if ($detalles->isEmpty()) return;
 
         $total = $detalles->count();
         $listos = $detalles->where('estado_preparacion', 'LISTO')->count();
         $enPreparacion = $detalles->where('estado_preparacion', 'EN_PREPARACION')->count();
+        $entregados = $detalles->where('estado_preparacion', 'ENTREGADO')->count();
         
         $nuevoEstado = $this->estado;
 
-        if ($listos === $total) {
+        // Si todo está entregado, la orden está ENTREGADA
+        if ($entregados === $total) {
+            $nuevoEstado = 'ENTREGADA';
+        } 
+        // Si hay cosas listas (y no todo entregado), marcar como LISTA para que el mesero la vea
+        elseif ($listos > 0) {
             $nuevoEstado = 'LISTA';
-        } elseif ($listos > 0 || $enPreparacion > 0) {
+        }
+        // Si hay cosas en preparación
+        elseif ($enPreparacion > 0) {
             $nuevoEstado = 'EN_PREPARACION';
-        } else {
+        } 
+        // Por defecto
+        else {
             $nuevoEstado = 'POR_PREPARAR';
         }
 

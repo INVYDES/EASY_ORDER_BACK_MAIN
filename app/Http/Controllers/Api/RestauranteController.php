@@ -76,6 +76,8 @@ class RestauranteController extends Controller
                 'calle'           => $r->calle,
                 'ciudad'          => $r->ciudad,
                 'estado'          => $r->estado,
+                'imagen'          => $r->imagen,
+                'imagen_url'      => $r->imagen_url,
                 'es_activo'       => !$isCliente && $user->restaurante_activo == $r->id,
                 'estadisticas'    => $isCliente ? null : [
                     'productos_count'     => $r->productos_count,
@@ -196,6 +198,8 @@ class RestauranteController extends Controller
                         'correo' => $restaurante->propietario->correo ?? $restaurante->propietario->email,
                     ] : null,
                     'es_activo' => $user->restaurante_activo == $restaurante->id,
+                    'imagen' => $restaurante->imagen,
+                    'imagen_url' => $restaurante->imagen_url,
                     'estadisticas' => $estadisticas,
                     'productos_destacados' => $productosMasVendidos,
                     'created_at' => $restaurante->created_at,
@@ -227,6 +231,7 @@ class RestauranteController extends Controller
                 'calle' => 'nullable|string|max:150',
                 'ciudad' => 'nullable|string|max:100',
                 'estado' => 'nullable|string|max:100',
+                'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
             ]);
 
             $propietario = $user->propietario;
@@ -256,6 +261,11 @@ class RestauranteController extends Controller
                 'ciudad' => $request->ciudad,
                 'estado' => $request->estado,
             ]);
+
+            if ($request->hasFile('imagen')) {
+                $path = $request->file('imagen')->store('restaurantes', 'public');
+                $restaurante->update(['imagen' => $path]);
+            }
 
             $user->restaurantes()->attach($restaurante->id);
 
@@ -311,11 +321,29 @@ class RestauranteController extends Controller
                 'ciudad' => 'nullable|string|max:100',
                 'estado' => 'nullable|string|max:100',
                 'activo' => 'sometimes|boolean',
+                'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
+                'eliminar_imagen' => 'nullable|boolean',
             ]);
 
             DB::beginTransaction();
 
             $restaurante->update($request->only(['nombre', 'telefono', 'calle', 'ciudad', 'estado', 'activo']));
+
+            if ($request->eliminar_imagen && $restaurante->imagen) {
+                if (!filter_var($restaurante->imagen, FILTER_VALIDATE_URL)) {
+                    \Illuminate\Support\Facades\Storage::disk('public')->delete($restaurante->imagen);
+                }
+                $restaurante->update(['imagen' => null]);
+            }
+
+            if ($request->hasFile('imagen')) {
+                // Borrar anterior
+                if ($restaurante->imagen && !filter_var($restaurante->imagen, FILTER_VALIDATE_URL)) {
+                    \Illuminate\Support\Facades\Storage::disk('public')->delete($restaurante->imagen);
+                }
+                $path = $request->file('imagen')->store('restaurantes', 'public');
+                $restaurante->update(['imagen' => $path]);
+            }
 
             DB::commit();
 

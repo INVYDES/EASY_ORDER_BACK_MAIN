@@ -194,7 +194,8 @@ class OrdenController extends Controller
     {
         $request->validate([
             'cliente_id'              => 'nullable|exists:clientes,id',
-            'productos'               => 'required|array|min:1',
+            'productos'               => 'present|array',
+            'paquetes'                => 'nullable|array',
             'productos.*.producto_id' => 'required_without:productos.*.paquete_id|nullable|exists:productos,id',
             'productos.*.paquete_id'  => 'required_without:productos.*.producto_id|nullable|exists:paquetes,id',
             'productos.*.cantidad'    => 'required|integer|min:1|max:100',
@@ -704,7 +705,7 @@ class OrdenController extends Controller
         $request->validate([
             'detalles' => 'required|array|min:1',
             'detalles.*' => 'exists:orden_detalles,id',
-            'estado_preparacion' => 'required|in:PENDIENTE,EN_PREPARACION,LISTO'
+            'estado_preparacion' => 'required|in:PENDIENTE,EN_PREPARACION,LISTO,ENTREGADO'
         ]);
 
         try {

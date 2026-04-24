@@ -205,6 +205,7 @@ class PropietarioController extends Controller
 
             $propietario = Propietario::with([
                 'users.roles',
+                'users.restauranteActivo',
                 'restaurantes',
                 'licencias.licencia',
             ])->findOrFail($id);
@@ -215,6 +216,10 @@ class PropietarioController extends Controller
                 'email'    => $u->email,
                 'username' => $u->username,
                 'roles'    => $u->roles->map(fn($r) => ['id' => $r->id, 'nombre' => $r->nombre]),
+                'restaurante_activo' => $u->restauranteActivo ? [
+                    'id'     => $u->restauranteActivo->id,
+                    'nombre' => $u->restauranteActivo->nombre
+                ] : null,
             ]);
 
             $this->registrarLog($user, 'VER_PROPIETARIO', 'propietarios', $id, "Vio detalles del propietario ID: {$id}");

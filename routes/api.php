@@ -103,6 +103,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user',                      [UserController::class, 'show']);
     Route::get('/user/roles',                [UserController::class, 'roles']);
     Route::get('/user/rol-principal',        [UserController::class, 'rolPrincipal']);
+    Route::get('/user/owner-restaurants',    [UserController::class, 'getOwnerRestaurants']);
     // ========== RESTAURANTES ==========
     Route::get('/restaurantes/buscar',       [RestauranteController::class, 'buscarPorNombre']);
 
@@ -316,13 +317,14 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     // ========== USUARIOS ==========
     Route::prefix('users')->group(function () {
-        Route::put('/{id}',                  [UserController::class, 'updateById'])->middleware('permission:EDITAR_EMPLEADOS');
+        Route::put('/{id}',                  [UserController::class, 'updateById'])->middleware('permission:VER_RESTAURANTE');
         Route::delete('/{id}',               [UserController::class, 'destroy'])->middleware('permission:ELIMINAR_EMPLEADOS');
     });
 
     // ========== MESEROS Y MESAS ==========
     Route::prefix('meseros')->group(function () {
         Route::get('/',                      [MeseroController::class, 'index']);
+        Route::get('/mis-mesas',             [MeseroController::class, 'misMesas']);
         Route::get('/mis-ordenes',           [MeseroController::class, 'misOrdenes']);
         Route::post('/configurar-mesas',     [MeseroController::class, 'configurarTotalMesas']);
         Route::post('/asignar-mesas',        [MeseroController::class, 'asignarMesas']);

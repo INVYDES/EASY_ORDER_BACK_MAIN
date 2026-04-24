@@ -37,12 +37,7 @@ class MeseroController extends Controller
                       ->orWhereRaw('LOWER(roles.nombre) = ?', ['mesero']);
                 })
                 ->where('propietario_id', $user->propietario_id)
-                ->where(function($q) use ($restauranteId) {
-                    $q->where('restaurante_activo', $restauranteId)
-                      ->orWhereHas('restaurantes', function($sq) use ($restauranteId) {
-                          $sq->where('restaurantes.id', $restauranteId);
-                      });
-                })
+                ->where('restaurante_activo', $restauranteId)
                 ->with('roles')
                 ->get();
 
@@ -124,11 +119,31 @@ class MeseroController extends Controller
                 return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
             }
 
-            MesaMesero::where('user_id', $request->user_id)
+            // 1. Obtener las asignaciones actuales
+            $currentAssignments = MesaMesero::where('user_id', $request->user_id)
                 ->where('restaurante_id', $restauranteId)
-                ->delete();
+                ->get();
 
-            foreach ($request->mesas as $numMesa) {
+            $newMesas = $request->mesas;
+            
+            // 2. Reutilizar registros existentes (Sobrescribir)
+            foreach ($currentAssignments as $index => $assignment) {
+                if (isset($newMesas[$index])) {
+                    // Reutilizamos este registro (ID) para una de las nuevas mesas
+                    $assignment->update([
+                        'numero_mesa' => $newMesas[$index],
+                        'rol_id' => $request->rol_id,
+                        'propietario_id' => $userAuth->propietario_id
+                    ]);
+                    unset($newMesas[$index]); // Ya procesamos esta mesa
+                } else {
+                    // El nuevo set es más pequeño, borramos lo que sobra
+                    $assignment->delete();
+                }
+            }
+
+            // 3. Crear solo si sobran mesas nuevas
+            foreach ($newMesas as $numMesa) {
                 MesaMesero::create([
                     'user_id' => $request->user_id,
                     'restaurante_id' => $restauranteId,
@@ -202,6 +217,37 @@ class MeseroController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $ordenes
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Obtener las mesas asignadas al mesero logueado
+     */
+    public function misMesas(Request $request)
+    {
+        try {
+            $user = $request->user();
+            $headerId = $request->header('X-Restaurante-Id');
+            $userRestId = is_object($user->restaurante_activo) ? $user->restaurante_activo->id : $user->restaurante_activo;
+            $restauranteId = (!empty($headerId)) ? $headerId : $userRestId;
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó sucursal activa'], 400);
+            }
+
+            $misMesas = MesaMesero::where('user_id', $user->id)
+                ->where('restaurante_id', $restauranteId)
+                ->pluck('numero_mesa')
+                ->values()
+                ->toArray();
+
+            return response()->json([
+                'success' => true,
+                'data' => $misMesas
             ]);
 
         } catch (\Exception $e) {
