@@ -166,7 +166,7 @@ class MeseroController extends Controller
 
             // Verificamos si el usuario es Propietario (1) o Administrador (2)
             $esAdminOPropietario = $user->roles()->whereIn('roles.id', [1, 2])->exists();
-
+ 
             $query = \App\Models\Orden::where('restaurante_id', $restauranteId)
                 ->with(['detalles.producto', 'user', 'cliente']);
 

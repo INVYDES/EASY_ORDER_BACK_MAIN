@@ -12,7 +12,7 @@ class AnuncioController extends Controller
     {
         try {
             $restaurante = app('restaurante_activo');
-            $anuncios = Anuncio::with('producto:id,nombre,precio,imagen')
+            $anuncios = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
                 ->where('restaurante_id', $restaurante->id)
                 ->orderBy('orden')->orderByDesc('created_at')
                 ->get();
@@ -30,7 +30,7 @@ class AnuncioController extends Controller
             $restaurante = app('restaurante_activo');
             $tipo        = $request->get('tipo', 'cliente'); // cliente | interno
 
-            $query = Anuncio::with('producto:id,nombre,precio,imagen')
+            $query = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
                 ->where('restaurante_id', $restaurante->id)
                 ->vigentes();
 
@@ -54,6 +54,7 @@ class AnuncioController extends Controller
             'contenido'        => 'nullable|string|max:500',
             'tipo'             => 'required|in:info,promo,alerta,producto',
             'producto_id'      => 'nullable|exists:productos,id',
+            'paquete_id'       => 'nullable|exists:paquetes,id',
             'precio_promo'     => 'nullable|numeric|min:0',
             'emoji'            => 'nullable|string|max:10',
             'color'            => 'nullable|in:indigo,emerald,amber,rose,blue,purple',
@@ -71,6 +72,7 @@ class AnuncioController extends Controller
                 'contenido'       => $request->contenido,
                 'tipo'            => $request->tipo,
                 'producto_id'     => $request->producto_id,
+                'paquete_id'      => $request->paquete_id,
                 'precio_promo'    => $request->precio_promo,
                 'emoji'           => $request->emoji ?? $this->emojiPorTipo($request->tipo),
                 'color'           => $request->color  ?? $this->colorPorTipo($request->tipo),
@@ -106,7 +108,7 @@ class AnuncioController extends Controller
             $restaurante = app('restaurante_activo');
             $anuncio = Anuncio::where('restaurante_id',$restaurante->id)->findOrFail($id);
             $anuncio->update($request->only([
-                'titulo','contenido','tipo','producto_id','precio_promo',
+                'titulo','contenido','tipo','producto_id','paquete_id','precio_promo',
                 'emoji','color','activo','mostrar_cliente','mostrar_interno',
                 'fecha_inicio','fecha_fin','orden',
             ]));
@@ -148,6 +150,12 @@ class AnuncioController extends Controller
                 'precio'   => (float) $a->producto->precio,
                 'imagen'   => $a->producto->imagen,
             ] : null,
+            'paquete'         => $a->paquete ? [
+                'id'       => $a->paquete->id,
+                'nombre'   => $a->paquete->nombre,
+                'precio'   => (float) $a->paquete->precio,
+                'imagen'   => $a->paquete->imagen,
+            ] : null,
             'precio_promo'    => $a->precio_promo,
             'vigente'         => $a->activo &&
                 (!$a->fecha_inicio || $a->fecha_inicio->isPast()) &&
@@ -179,7 +187,7 @@ class AnuncioController extends Controller
             $mostrarCliente = $request->boolean('mostrar_cliente', false);
             $mostrarInterno = $request->boolean('mostrar_interno', false);
 
-            $query = Anuncio::with('producto:id,nombre,precio,imagen')
+            $query = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
                 ->where('activo', true);
 
             // Obligamos a filtrar por restaurante para evitar mezclas
@@ -220,7 +228,7 @@ class AnuncioController extends Controller
             }
 
             $tipo  = $request->get('tipo', 'cliente');
-            $query = Anuncio::with('producto:id,nombre,precio,imagen')
+            $query = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
                 ->where('restaurante_id', $restauranteId)
                 ->vigentes();
 

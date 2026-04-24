@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\PayPalController;
 use App\Http\Controllers\Api\LicenciaPagoController;
 use App\Http\Controllers\Api\MercadoPagoController;
 use App\Http\Controllers\Api\MeseroController;
+use App\Http\Controllers\Api\PaqueteController;
 
 /*
 |--------------------------------------------------------------------------
@@ -215,6 +216,16 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::delete('/{producto}',         [ProductoController::class, 'destroy'])->middleware('permission:ELIMINAR_PRODUCTOS');
         Route::patch('/{producto}/toggle-active', [ProductoController::class, 'toggleActive'])->middleware('permission:EDITAR_PRODUCTOS');
         Route::post('/{producto}/ajustar-stock', [ProductoController::class, 'ajustarStock'])->middleware('permission:EDITAR_PRODUCTOS');
+    });
+
+    // ========== PAQUETES ==========
+    Route::prefix('paquetes')->group(function () {
+        Route::get('/',                      [PaqueteController::class, 'index'])->middleware('permission:VER_PRODUCTOS');
+        Route::post('/',                     [PaqueteController::class, 'store'])->middleware('permission:CREAR_PRODUCTOS');
+        Route::get('/{id}',                  [PaqueteController::class, 'show'])->middleware('permission:VER_PRODUCTOS');
+        Route::put('/{id}',                  [PaqueteController::class, 'update'])->middleware('permission:EDITAR_PRODUCTOS');
+        Route::delete('/{id}',               [PaqueteController::class, 'destroy'])->middleware('permission:ELIMINAR_PRODUCTOS');
+        Route::patch('/{id}/toggle-active',  [PaqueteController::class, 'toggleActive'])->middleware('permission:EDITAR_PRODUCTOS');
     });
 
     // ========== INGREDIENTES ==========

@@ -12,9 +12,11 @@ class OrdenDetalle extends Model
     protected $fillable = [
         'orden_id',
         'producto_id',
+        'paquete_id',
         'cantidad',
         'precio_unitario',  // ✅ NOMBRE CORRECTO
         'subtotal',
+        'notas',
         'estado_preparacion'
     ];
 
@@ -34,6 +36,11 @@ class OrdenDetalle extends Model
     public function producto()
     {
         return $this->belongsTo(Producto::class);
+    }
+
+    public function paquete()
+    {
+        return $this->belongsTo(Paquete::class);
     }
 
     /**

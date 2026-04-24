@@ -13,7 +13,7 @@ class Anuncio extends Model
     protected $table = 'anuncios';
 
     protected $fillable = [
-        'restaurante_id', 'titulo', 'contenido', 'tipo', 'producto_id',
+        'restaurante_id', 'titulo', 'contenido', 'tipo', 'producto_id', 'paquete_id',
         'precio_promo', 'emoji', 'color', 'activo',
         'mostrar_cliente', 'mostrar_interno',
         'fecha_inicio', 'fecha_fin', 'orden',
@@ -49,6 +49,11 @@ class Anuncio extends Model
     {
         // Importante: No forzar selects aquí, mejor en el controlador
         return $this->belongsTo(Producto::class);
+    }
+
+    public function paquete()
+    {
+        return $this->belongsTo(Paquete::class);
     }
 
     public function scopeVigentes($query)

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Orden;
 use App\Models\OrdenDetalle;
 use App\Models\Producto;
+use App\Models\Paquete;
 use App\Models\IngredienteMovimiento;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -194,7 +195,8 @@ class OrdenController extends Controller
         $request->validate([
             'cliente_id'              => 'nullable|exists:clientes,id',
             'productos'               => 'required|array|min:1',
-            'productos.*.producto_id' => 'required|exists:productos,id',
+            'productos.*.producto_id' => 'required_without:productos.*.paquete_id|nullable|exists:productos,id',
+            'productos.*.paquete_id'  => 'required_without:productos.*.producto_id|nullable|exists:paquetes,id',
             'productos.*.cantidad'    => 'required|integer|min:1|max:100',
             'productos.*.notas'       => 'nullable|string|max:300',
             'notas'                   => 'nullable|string|max:500',
@@ -216,6 +218,52 @@ class OrdenController extends Controller
             $productosVerificados = [];
 
             foreach ($request->productos as $item) {
+                // --- PROCESAR PAQUETE ---
+                if (!empty($item['paquete_id'])) {
+                    $paquete = Paquete::with('productos.ingredientes')
+                        ->where('restaurante_id', $restauranteActivo->id)
+                        ->where('id', $item['paquete_id'])
+                        ->first();
+
+                    if (!$paquete) {
+                        $erroresStock[] = "Paquete ID {$item['paquete_id']} no encontrado";
+                        continue;
+                    }
+
+                    foreach ($paquete->productos as $pComp) {
+                        $cantidadTotal = $pComp->pivot->cantidad * $item['cantidad'];
+                        
+                        // Verificar stock del producto componente
+                        if ($pComp->ingredientes->isEmpty()) {
+                            if ($pComp->stock < $cantidadTotal) {
+                                $erroresStock[] = "Stock insuficiente para '{$pComp->nombre}' (en paquete {$paquete->nombre}). Disponible: {$pComp->stock}";
+                            }
+                        } else {
+                            $maxDisponible = $pComp->ingredientes->map(function ($ing) use ($cantidadTotal) {
+                                $necesario = $ing->pivot->cantidad * $cantidadTotal;
+                                return $necesario > 0 ? floor($ing->stock_actual / $necesario) : PHP_INT_MAX;
+                            })->min();
+
+                            if ($maxDisponible < 1) {
+                                $erroresStock[] = "Stock insuficiente para ingredientes de '{$pComp->nombre}' (en paquete {$paquete->nombre})";
+                            }
+                        }
+
+                        if (empty($erroresStock)) {
+                            $productosVerificados[] = [
+                                'producto' => $pComp,
+                                'cantidad' => $cantidadTotal,
+                                'notas'    => $item['notas'] ?? null,
+                                'precio'   => 0, // Los componentes de un paquete tienen precio 0
+                                'paquete_id' => $paquete->id,
+                                'paquete_precio' => ($pComp->id === $paquete->productos->first()->id) ? $paquete->precio * $item['cantidad'] : 0
+                            ];
+                        }
+                    }
+                    continue;
+                }
+
+                // --- PROCESAR PRODUCTO INDIVIDUAL ---
                 $producto = Producto::with(['ingredientes'])
                     ->where('restaurante_id', $restauranteActivo->id)
                     ->where('id', $item['producto_id'])
@@ -235,6 +283,7 @@ class OrdenController extends Controller
                             'producto' => $producto,
                             'cantidad' => $item['cantidad'],
                             'notas'    => $item['notas'] ?? null,
+                            'precio'   => $producto->precio
                         ];
                     }
                     continue;
@@ -253,6 +302,7 @@ class OrdenController extends Controller
                         'producto' => $producto,
                         'cantidad' => $item['cantidad'],
                         'notas'    => $item['notas'] ?? null,
+                        'precio'   => $producto->precio
                     ];
                 }
             }
@@ -283,13 +333,21 @@ class OrdenController extends Controller
             $detalles = [];
 
             foreach ($productosVerificados as $item) {
-                $producto = $item['producto'];
-                $subtotal = $producto->precio * $item['cantidad'];
+                $productoModel = $item['producto'];
+                $precio = $item['precio'] ?? $productoModel->precio;
+                $paqueteId = $item['paquete_id'] ?? null;
+                $paquetePrecio = $item['paquete_precio'] ?? 0;
+
+                // El subtotal para la línea será el precio del producto (0 si es parte de paquete) 
+                // MÁS el precio del paquete si es el ítem representante
+                $subtotal = ($precio * $item['cantidad']) + $paquetePrecio;
+
                 $detalle  = OrdenDetalle::create([
                     'orden_id'        => $orden->id,
-                    'producto_id'     => $producto->id,
+                    'producto_id'     => $productoModel->id,
+                    'paquete_id'      => $paqueteId,
                     'cantidad'        => $item['cantidad'],
-                    'precio_unitario' => $producto->precio,
+                    'precio_unitario' => $precio + ($item['cantidad'] > 0 ? ($paquetePrecio / $item['cantidad']) : 0),
                     'subtotal'        => $subtotal,
                     'notas'           => $item['notas'],
                     'estado_preparacion' => 'PENDIENTE',
@@ -297,12 +355,12 @@ class OrdenController extends Controller
 
                 $detalles[] = [
                     'id'                  => $detalle->id,
-                    'producto_id'         => $producto->id,
-                    'producto_nombre'     => $producto->nombre,
-                    'categoria_id'        => $producto->categoria_id,
-                    'categoria'           => $producto->categoria?->nombre,
+                    'producto_id'         => $productoModel->id,
+                    'producto_nombre'     => $productoModel->nombre,
+                    'categoria_id'        => $productoModel->categoria_id,
+                    'categoria'           => $productoModel->categoria?->nombre,
                     'cantidad'            => $item['cantidad'],
-                    'precio_unitario'     => (float) $producto->precio,
+                    'precio_unitario'     => (float) $detalle->precio_unitario,
                     'subtotal'            => (float) $subtotal,
                     'subtotal_formateado' => '$' . number_format($subtotal, 2),
                     'estado_preparacion'  => 'PENDIENTE',
@@ -591,6 +649,15 @@ class OrdenController extends Controller
                 'id'                  => $d->id,
                 'producto_id'         => $d->producto_id,
                 'producto_nombre'     => $d->producto->nombre ?? 'Producto eliminado',
+                'producto'            => [
+                    'id'           => $d->producto_id,
+                    'nombre'       => $d->producto->nombre ?? 'Producto eliminado',
+                    'categoria_id' => $d->producto->categoria_id ?? null,
+                    'categoria'    => $d->producto->categoria ? [
+                        'id'     => $d->producto->categoria->id,
+                        'nombre' => $d->producto->categoria->nombre,
+                    ] : null,
+                ],
                 'categoria_id'        => $d->producto->categoria_id ?? null,
                 'categoria'           => $d->producto->categoria?->nombre ?? null,
                 'cantidad'            => $d->cantidad,
