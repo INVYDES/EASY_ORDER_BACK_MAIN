@@ -273,6 +273,22 @@ class RestauranteController extends Controller
                 $user->update(['restaurante_activo' => $restaurante->id]);
             }
 
+            // Crear categorías base automáticamente
+            $categoriasBase = [
+                ['nombre' => 'Cocina', 'color' => '#10B981'], // Esmeralda
+                ['nombre' => 'Barra',  'color' => '#6366F1'], // Indigo
+                ['nombre' => 'Postres', 'color' => '#EC4899'], // Rosa
+            ];
+
+            foreach ($categoriasBase as $cat) {
+                \App\Models\Categoria::create([
+                    'restaurante_id' => $restaurante->id,
+                    'nombre' => $cat['nombre'],
+                    'color'  => $cat['color'],
+                    'activo' => true
+                ]);
+            }
+
             DB::commit();
 
             if (method_exists($user, 'logAction')) {

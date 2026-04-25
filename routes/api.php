@@ -44,6 +44,34 @@ Route::prefix('')->group(function () {
     Route::post('/reset-password',           [AuthController::class, 'resetPassword']);
     Route::post('/verify-reset-token',       [AuthController::class, 'verifyResetToken']);
 
+    // ========== RUTA TEMPORAL MANTENIMIENTO ==========
+    Route::get('/fix-categories', function() {
+        $restaurantes = \App\Models\Restaurante::all();
+        $categoriasBase = [
+            ['nombre' => 'Cocina', 'color' => '#10B981'],
+            ['nombre' => 'Barra',  'color' => '#6366F1'],
+            ['nombre' => 'Postres', 'color' => '#EC4899'],
+        ];
+        $count = 0;
+        foreach ($restaurantes as $rest) {
+            foreach ($categoriasBase as $base) {
+                $existe = \App\Models\Categoria::where('restaurante_id', $rest->id)
+                                   ->where('nombre', $base['nombre'])
+                                   ->exists();
+                if (!$existe) {
+                    \App\Models\Categoria::create([
+                        'restaurante_id' => $rest->id,
+                        'nombre' => $base['nombre'],
+                        'color'  => $base['color'],
+                        'activo' => true
+                    ]);
+                    $count++;
+                }
+            }
+        }
+        return "Categorías regularizadas: $count creadas.";
+    });
+
     // ========== PROPIETARIOS ==========
     Route::post('/propietarios',             [PropietarioController::class, 'store']);
     
