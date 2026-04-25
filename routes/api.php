@@ -46,6 +46,19 @@ Route::prefix('')->group(function () {
 
     // ========== RUTA TEMPORAL MANTENIMIENTO ==========
     Route::get('/fix-categories', function() {
+        // 1. Regularizar Permisos
+        $permiso = \App\Models\Permission::firstOrCreate(
+            ['slug' => 'VER_POSTRES'],
+            ['nombre' => 'Ver Estación de Postres', 'descripcion' => 'Permite acceder a la estación de preparación de postres']
+        );
+
+        // Asignar a Dueño (1) y Administrador (2) por defecto
+        \DB::table('role_permissions')->insertOrIgnore([
+            ['role_id' => 1, 'permission_id' => $permiso->id],
+            ['role_id' => 2, 'permission_id' => $permiso->id],
+        ]);
+
+        // 2. Regularizar Categorías
         $restaurantes = \App\Models\Restaurante::all();
         $categoriasBase = [
             ['nombre' => 'Cocina', 'color' => '#10B981'],
