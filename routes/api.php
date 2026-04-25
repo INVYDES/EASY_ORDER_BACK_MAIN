@@ -48,15 +48,17 @@ Route::prefix('')->group(function () {
     Route::get('/fix-categories', function() {
         // 1. Regularizar Permisos
         $permiso = \App\Models\Permission::firstOrCreate(
-            ['slug' => 'VER_POSTRES'],
-            ['nombre' => 'Ver Estación de Postres', 'descripcion' => 'Permite acceder a la estación de preparación de postres']
+            ['nombre' => 'VER_POSTRES'],
+            ['descripcion' => 'Permite acceder a la estación de preparación de postres']
         );
 
         // Asignar a Dueño (1) y Administrador (2) por defecto
-        \DB::table('role_permissions')->insertOrIgnore([
+        \DB::table('permission_role')->insertOrIgnore([
             ['role_id' => 1, 'permission_id' => $permiso->id],
             ['role_id' => 2, 'permission_id' => $permiso->id],
         ]);
+        
+        $msgPermiso = "Permiso VER_POSTRES (ID: {$permiso->id}) asignado a roles 1 y 2.";
 
         // 2. Regularizar Categorías
         $restaurantes = \App\Models\Restaurante::all();
@@ -82,7 +84,7 @@ Route::prefix('')->group(function () {
                 }
             }
         }
-        return "Categorías regularizadas: $count creadas.";
+        return "$msgPermiso | Categorías regularizadas: $count creadas.";
     });
 
     // ========== PROPIETARIOS ==========
@@ -321,6 +323,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::get('/{orden}',               [OrdenController::class, 'show'])->middleware('permission:VER_ORDENES');
         Route::put('/{orden}',               [OrdenController::class, 'update'])->middleware('permission:EDITAR_ORDENES');
         Route::put('/{orden}/station-status', [OrdenController::class, 'updateStationStatus'])->middleware('permission:EDITAR_ORDENES');
+        Route::post('/{orden}/actualizar-estado-estacion', [\App\Http\Controllers\Api\OrdenDetalleController::class, 'actualizarEstadoPorEstacion'])->middleware('permission:EDITAR_ORDENES');
         Route::post('/{orden}/cerrar',       [OrdenController::class, 'cerrar'])->middleware('permission:CERRAR_ORDENES');
     });
 

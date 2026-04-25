@@ -496,7 +496,7 @@ class OrdenController extends Controller
             }
 
             $restauranteActivo = app('restaurante_activo');
-            $orden = Orden::with(['detalles.producto.ingredientes'])
+            $orden = Orden::with(['detalles.producto.ingredientes', 'detalles.producto.categoria'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();

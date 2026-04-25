@@ -559,4 +559,55 @@ class OrdenDetalleController extends Controller
             ], 500);
         }
     }
+
+    public function actualizarEstadoPorEstacion(\Illuminate\Http\Request $request, $ordenId)
+    {
+        $request->validate([
+            "estacion" => "required|string|in:cocina,barra,postres",
+            "estado"   => "required|string|in:PENDIENTE,EN_PREPARACION,LISTO"
+        ]);
+
+        try {
+            $user = $request->user();
+            $estacion = strtolower($request->estacion);
+            $nuevoEstado = strtoupper($request->estado);
+
+            $restauranteActivo = app("restaurante_activo");
+            $orden = \App\Models\Orden::where("restaurante_id", $restauranteActivo->id)
+                ->where("id", $ordenId)
+                ->firstOrFail();
+
+            \Illuminate\Support\Facades\DB::beginTransaction();
+
+            $detalles = \App\Models\OrdenDetalle::where("orden_id", $orden->id)
+                ->whereHas("producto.categoria", function($q) use ($estacion) {
+                    $q->whereRaw("LOWER(nombre) = ?", [$estacion]);
+                })
+                ->get();
+
+            if ($detalles->isEmpty()) {
+                return response()->json(["success" => false, "message" => "No hay productos de la estacion " . $estacion], 404);
+            }
+
+            foreach ($detalles as $detalle) {
+                $detalle->update(["estado_preparacion" => $nuevoEstado]);
+            }
+
+            if ($nuevoEstado === "EN_PREPARACION" && $orden->estado === "POR_PREPARAR") {
+                $orden->update(["estado" => "EN_PREPARACION"]);
+            }
+
+            \Illuminate\Support\Facades\DB::commit();
+
+            try {
+                $orden->load(["detalles.producto.categoria", "usuario:id,name"]);
+                broadcast(new \App\Events\OrdenActualizada($orden, "estado_cambiado", $restauranteActivo->id));
+            } catch (\Exception $e) {}
+
+            return response()->json(["success" => true, "message" => "Estacion " . $estacion . " actualizada"]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
+            return response()->json(["success" => false, "error" => $e->getMessage()], 500);
+        }
+    }
 }
