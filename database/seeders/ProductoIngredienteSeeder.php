@@ -10,11 +10,11 @@ class ProductoIngredienteSeeder extends Seeder
     public function run(): void
     {
         $productoIngredientes = [
-            // Pastel de Chocolate (id=8): Chocolate, Huevo, Leche, Caramelo
-            ['producto_id' => 8, 'ingrediente_id' => 12, 'cantidad' => 188.000],
-            ['producto_id' => 8, 'ingrediente_id' => 13, 'cantidad' => 116.000],
-            ['producto_id' => 8, 'ingrediente_id' => 14, 'cantidad' => 145.000],
-            ['producto_id' => 8, 'ingrediente_id' => 15, 'cantidad' => 78.000],
+            // Pastel de Chocolate (id=7): Chocolate, Huevo, Leche, Caramelo
+            ['producto_id' => 7, 'ingrediente_id' => 12, 'cantidad' => 188.000],
+            ['producto_id' => 7, 'ingrediente_id' => 13, 'cantidad' => 116.000],
+            ['producto_id' => 7, 'ingrediente_id' => 14, 'cantidad' => 145.000],
+            ['producto_id' => 7, 'ingrediente_id' => 15, 'cantidad' => 78.000],
 
             // Flan Napolitano (id=8): Huevo, Leche, Caramelo, Queso
             ['producto_id' => 8, 'ingrediente_id' => 13, 'cantidad' => 200.000],

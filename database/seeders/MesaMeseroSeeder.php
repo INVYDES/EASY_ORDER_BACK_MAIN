@@ -10,20 +10,20 @@ class MesaMeseroSeeder extends Seeder
     public function run(): void
     {
         // Datos de ejemplo para asignación de mesas a meseros
-        // Se asume: user_id 5-8 son meseros, restaurante_id=1, propietario_id=1, rol_id=3 (mesero)
+        // user_id 3, 6, 7, 8 son meseros, restaurante_id=1, propietario_id=1, rol_id=3 (mesero)
         $mesasMeseros = [
-            // Mesero 1 - Mesas 1-10
-            ['user_id' => 5, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 1],
-            ['user_id' => 5, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 2],
-            ['user_id' => 5, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 3],
-            ['user_id' => 5, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 4],
-            ['user_id' => 5, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 5],
-            ['user_id' => 5, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 6],
-            ['user_id' => 5, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 7],
-            ['user_id' => 5, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 8],
-            ['user_id' => 5, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 9],
-            ['user_id' => 5, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 10],
-            // Mesero 2 - Mesas 11-20
+            // Mesero 1 (user_id=3, Maria Garcia) - Mesas 1-10
+            ['user_id' => 3, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 1],
+            ['user_id' => 3, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 2],
+            ['user_id' => 3, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 3],
+            ['user_id' => 3, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 4],
+            ['user_id' => 3, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 5],
+            ['user_id' => 3, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 6],
+            ['user_id' => 3, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 7],
+            ['user_id' => 3, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 8],
+            ['user_id' => 3, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 9],
+            ['user_id' => 3, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 10],
+            // Mesero 2 (user_id=6, Pedro Ramirez) - Mesas 11-20
             ['user_id' => 6, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 11],
             ['user_id' => 6, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 12],
             ['user_id' => 6, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 13],
@@ -34,7 +34,7 @@ class MesaMeseroSeeder extends Seeder
             ['user_id' => 6, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 18],
             ['user_id' => 6, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 19],
             ['user_id' => 6, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 20],
-            // Mesero 3 - Mesas 21-30
+            // Mesero 3 (user_id=7, Sofia Torres) - Mesas 21-30
             ['user_id' => 7, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 21],
             ['user_id' => 7, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 22],
             ['user_id' => 7, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 23],
@@ -45,7 +45,7 @@ class MesaMeseroSeeder extends Seeder
             ['user_id' => 7, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 28],
             ['user_id' => 7, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 29],
             ['user_id' => 7, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 30],
-            // Mesero 4 - Mesas 31-40
+            // Mesero 4 (user_id=8, Miguel Angel Flores) - Mesas 31-40
             ['user_id' => 8, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 31],
             ['user_id' => 8, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 32],
             ['user_id' => 8, 'restaurante_id' => 1, 'propietario_id' => 1, 'rol_id' => 3, 'numero_mesa' => 33],

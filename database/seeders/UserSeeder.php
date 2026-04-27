@@ -139,5 +139,83 @@ class UserSeeder extends Seeder
                 'updated_at' => now()
             ]
         );
+
+        // Usuario MESERO 2
+        DB::table('users')->updateOrInsert(
+            ['id' => 6],
+            [
+                'id' => 6,
+                'propietario_id' => 1,
+                'name' => 'Pedro Ramirez',
+                'email' => 'mesero2@empresa.com',
+                'username' => 'pedro_mesero',
+                'password' => Hash::make('password123'),
+                'created_at' => now(),
+                'updated_at' => now()
+            ]
+        );
+
+        // Asignar rol MESERO al usuario 6
+        DB::table('role_user')->updateOrInsert(
+            ['user_id' => 6, 'role_id' => 3],
+            [
+                'user_id' => 6,
+                'role_id' => 3,
+                'created_at' => now(),
+                'updated_at' => now()
+            ]
+        );
+
+        // Usuario MESERO 3
+        DB::table('users')->updateOrInsert(
+            ['id' => 7],
+            [
+                'id' => 7,
+                'propietario_id' => 1,
+                'name' => 'Sofia Torres',
+                'email' => 'mesero3@empresa.com',
+                'username' => 'sofia_mesera',
+                'password' => Hash::make('password123'),
+                'created_at' => now(),
+                'updated_at' => now()
+            ]
+        );
+
+        // Asignar rol MESERO al usuario 7
+        DB::table('role_user')->updateOrInsert(
+            ['user_id' => 7, 'role_id' => 3],
+            [
+                'user_id' => 7,
+                'role_id' => 3,
+                'created_at' => now(),
+                'updated_at' => now()
+            ]
+        );
+
+        // Usuario MESERO 4
+        DB::table('users')->updateOrInsert(
+            ['id' => 8],
+            [
+                'id' => 8,
+                'propietario_id' => 1,
+                'name' => 'Miguel Angel Flores',
+                'email' => 'mesero4@empresa.com',
+                'username' => 'miguel_mesero',
+                'password' => Hash::make('password123'),
+                'created_at' => now(),
+                'updated_at' => now()
+            ]
+        );
+
+        // Asignar rol MESERO al usuario 8
+        DB::table('role_user')->updateOrInsert(
+            ['user_id' => 8, 'role_id' => 3],
+            [
+                'user_id' => 8,
+                'role_id' => 3,
+                'created_at' => now(),
+                'updated_at' => now()
+            ]
+        );
     }
 }

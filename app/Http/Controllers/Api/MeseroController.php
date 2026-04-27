@@ -259,12 +259,17 @@ class MeseroController extends Controller
  * GET /api/meseros/metricas-ventas
  * Query params opcionales: fecha_desde, fecha_hasta, estado
  */
+/**
+ * Métricas de ventas agrupadas por mesero
+ * GET /api/meseros/metricas-ventas
+ * Query params opcionales: fecha_desde, fecha_hasta, estado, mesero_id
+ */
 public function metricasVentas(Request $request)
 {
     try {
         $user = $request->user();
 
-        $headerId  = $request->header('X-Restaurante-Id');
+        $headerId = $request->header('X-Restaurante-Id');
         $userRestId = is_object($user->restaurante_activo)
             ? $user->restaurante_activo->id
             : $user->restaurante_activo;
@@ -281,7 +286,9 @@ public function metricasVentas(Request $request)
         // -- Base query: órdenes del restaurante ---------------------
         $ordenesQuery = DB::table('ordenes')
             ->where('ordenes.restaurante_id', $restauranteId)
-            ->whereIn('ordenes.estado', ['completada', 'pagada']); // solo ventas cerradas
+            ->whereIn('ordenes.estado', ['completada', 'pagada'])
+            ->whereNotNull('ordenes.mesa') // Evitar mesas NULL
+            ->where('ordenes.mesa', '>', 0); // Mesa válida
 
         // Filtros opcionales de fecha
         if ($request->filled('fecha_desde')) {
@@ -294,65 +301,272 @@ public function metricasVentas(Request $request)
             $ordenesQuery->where('ordenes.estado', $request->estado);
         }
 
-        // -- JOIN: ordenes → mesas_meseros → users ------------------
+        // Filtro por mesero específico
+        if ($request->filled('mesero_id')) {
+            $ordenesQuery->whereExists(function ($query) use ($request) {
+                $query->select(DB::raw(1))
+                    ->from('mesas_meseros')
+                    ->whereColumn('mesas_meseros.numero_mesa', 'ordenes.mesa')
+                    ->where('mesas_meseros.user_id', $request->mesero_id)
+                    ->where('mesas_meseros.restaurante_id', DB::raw('ordenes.restaurante_id'));
+            });
+        }
+
+        // -- Versión mejorada del JOIN --------------------------------
         $metricas = $ordenesQuery
             ->join('mesas_meseros', function ($join) use ($restauranteId) {
                 $join->on('mesas_meseros.numero_mesa', '=', 'ordenes.mesa')
-                     ->where('mesas_meseros.restaurante_id', '=', $restauranteId);
+                     ->where('mesas_meseros.restaurante_id', '=', $restauranteId)
+                     ->whereNotNull('mesas_meseros.user_id'); // Asegurar que hay mesero
             })
             ->join('users', 'users.id', '=', 'mesas_meseros.user_id')
             ->select(
-                'users.id          as mesero_id',
-                'users.name        as mesero_nombre',
-                'users.username    as mesero_username',
-                DB::raw('COUNT(DISTINCT ordenes.id)          as total_ordenes'),
-                DB::raw('COALESCE(SUM(ordenes.total), 0)     as total_ventas'),
-                DB::raw('COALESCE(AVG(ordenes.total), 0)     as ticket_promedio'),
-                DB::raw('COUNT(DISTINCT ordenes.mesa)        as mesas_atendidas')
+                'users.id as mesero_id',
+                'users.name as mesero_nombre',
+                'users.username as mesero_username',
+                'users.email as mesero_email',
+                DB::raw('COUNT(DISTINCT ordenes.id) as total_ordenes'),
+                DB::raw('COALESCE(SUM(ordenes.total), 0) as total_ventas'),
+                DB::raw('COALESCE(AVG(ordenes.total), 0) as ticket_promedio'),
+                DB::raw('COUNT(DISTINCT ordenes.mesa) as mesas_atendidas'),
+                DB::raw('COUNT(DISTINCT ordenes.cliente_id) as clientes_atendidos'),
+                DB::raw('MIN(ordenes.created_at) as primera_venta'),
+                DB::raw('MAX(ordenes.created_at) as ultima_venta')
             )
-            ->groupBy('users.id', 'users.name', 'users.username')
+            ->groupBy('users.id', 'users.name', 'users.username', 'users.email')
             ->orderByDesc('total_ventas')
             ->get();
 
-        // -- Totales globales del restaurante (mismo filtro) --------
-        $totalesQuery = clone $ordenesQuery; // ya lleva los filtros aplicados
+        // -- Totales globales del restaurante -------------------------
         $totales = DB::table('ordenes')
             ->where('restaurante_id', $restauranteId)
             ->whereIn('estado', ['completada', 'pagada'])
+            ->whereNotNull('mesa')
+            ->where('mesa', '>', 0)
             ->when($request->filled('fecha_desde'), fn($q) =>
                 $q->whereDate('created_at', '>=', $request->fecha_desde))
             ->when($request->filled('fecha_hasta'), fn($q) =>
                 $q->whereDate('created_at', '<=', $request->fecha_hasta))
+            ->when($request->filled('estado'), fn($q) =>
+                $q->where('estado', $request->estado))
             ->selectRaw('COUNT(*) as total_ordenes, COALESCE(SUM(total),0) as total_ventas')
             ->first();
 
-        // -- Enriquecer con porcentaje de participación -------------
-        $ventaTotal = (float) ($totales->total_ventas ?? 0);
+        // -- Calcular total de meseros activos ------------------------
+        $totalMeseros = User::whereHas('roles', function($q) {
+                $q->where('roles.id', 3)->orWhereRaw('LOWER(roles.nombre) = ?', ['mesero']);
+            })
+            ->where('propietario_id', $user->propietario_id)
+            ->where('restaurante_activo', $restauranteId)
+            ->count();
 
-        $data = $metricas->map(function ($row) use ($ventaTotal) {
+        // -- Enriquecer datos y calcular porcentajes -----------------
+        $ventaTotal = (float) ($totales->total_ventas ?? 0);
+        $ordenesTotal = (int) ($totales->total_ordenes ?? 0);
+
+        $data = $metricas->map(function ($row) use ($ventaTotal, $ordenesTotal) {
+            $totalVentas = (float) $row->total_ventas;
+            $totalOrdenes = (int) $row->total_ordenes;
+            
             return [
-                'mesero_id'        => $row->mesero_id,
-                'mesero_nombre'    => $row->mesero_nombre,
-                'mesero_username'  => $row->mesero_username,
-                'total_ordenes'    => (int)   $row->total_ordenes,
-                'total_ventas'     => (float) $row->total_ventas,
-                'ticket_promedio'  => round((float) $row->ticket_promedio, 2),
-                'mesas_atendidas'  => (int)   $row->mesas_atendidas,
-                'participacion_pct'=> $ventaTotal > 0
-                    ? round(($row->total_ventas / $ventaTotal) * 100, 2)
+                'mesero_id' => $row->mesero_id,
+                'mesero_nombre' => $row->mesero_nombre,
+                'mesero_username' => $row->mesero_username,
+                'mesero_email' => $row->mesero_email,
+                'total_ordenes' => $totalOrdenes,
+                'total_ventas' => $totalVentas,
+                'ticket_promedio' => $totalOrdenes > 0 
+                    ? round($totalVentas / $totalOrdenes, 2)
                     : 0,
+                'mesas_atendidas' => (int) $row->mesas_atendidas,
+                'clientes_atendidos' => (int) $row->clientes_atendidos,
+                'participacion_ventas' => $ventaTotal > 0
+                    ? round(($totalVentas / $ventaTotal) * 100, 2)
+                    : 0,
+                'participacion_ordenes' => $ordenesTotal > 0
+                    ? round(($totalOrdenes / $ordenesTotal) * 100, 2)
+                    : 0,
+                'primera_venta' => $row->primera_venta,
+                'ultima_venta' => $row->ultima_venta,
+                // Calcular eficiencia (ventas por orden)
+                'eficiencia' => $totalOrdenes > 0
+                    ? round($totalVentas / $totalOrdenes, 2)
+                    : 0
+            ];
+        });
+
+        // -- Calcular adicionales -------------------------------------
+        $ticketPromedioGeneral = $ordenesTotal > 0 
+            ? round($ventaTotal / $ordenesTotal, 2) 
+            : 0;
+
+        $mejorMesero = $data->isNotEmpty() ? $data->first() : null;
+        $ranking = $data->map(function($item, $index) {
+            return [
+                'posicion' => $index + 1,
+                'mesero_id' => $item['mesero_id'],
+                'mesero_nombre' => $item['mesero_nombre'],
+                'total_ventas' => $item['total_ventas']
             ];
         });
 
         return response()->json([
             'success' => true,
             'data' => [
-                'meseros'         => $data,
+                'metricas_por_mesero' => $data,
                 'resumen_general' => [
-                    'total_ordenes' => (int)   ($totales->total_ordenes ?? 0),
-                    'total_ventas'  => (float) ($totales->total_ventas  ?? 0),
+                    'total_ordenes' => $ordenesTotal,
+                    'total_ventas' => $ventaTotal,
+                    'ticket_promedio_general' => $ticketPromedioGeneral,
+                    'total_meseros_activos' => $totalMeseros,
+                    'meseros_con_ventas' => $metricas->count(),
+                    'periodo' => [
+                        'desde' => $request->filled('fecha_desde') ? $request->fecha_desde : null,
+                        'hasta' => $request->filled('fecha_hasta') ? $request->fecha_hasta : null
+                    ]
                 ],
+                'ranking' => $ranking,
+                'top_mesero' => $mejorMesero ? [
+                    'id' => $mejorMesero['mesero_id'],
+                    'nombre' => $mejorMesero['mesero_nombre'],
+                    'total_ventas' => $mejorMesero['total_ventas'],
+                    'total_ordenes' => $mejorMesero['total_ordenes']
+                ] : null,
+                'data_para_grafico' => [
+                    'labels' => $data->pluck('mesero_nombre')->toArray(),
+                    'ventas' => $data->pluck('total_ventas')->toArray(),
+                    'ordenes' => $data->pluck('total_ordenes')->toArray(),
+                    'participacion' => $data->pluck('participacion_ventas')->toArray()
+                ]
             ],
+        ]);
+
+    } catch (\Exception $e) {
+        \Log::error('Error en metricasVentas: ' . $e->getMessage(), [
+            'trace' => $e->getTraceAsString(),
+            'restaurante_id' => $restauranteId ?? null
+        ]);
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Error al obtener métricas: ' . $e->getMessage()
+        ], 500);
+    }
+}
+/**
+ * Métricas detalladas de un mesero específico
+ * GET /api/meseros/{id}/metricas-detalladas
+ */
+public function metricasDetalladas(Request $request, $meseroId)
+{
+    try {
+        $user = $request->user();
+        
+        $headerId = $request->header('X-Restaurante-Id');
+        $userRestId = is_object($user->restaurante_activo)
+            ? $user->restaurante_activo->id
+            : $user->restaurante_activo;
+
+        $restauranteId = !empty($headerId) ? $headerId : $userRestId;
+
+        if (empty($restauranteId)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se detectó el ID de la sucursal activa'
+            ], 400);
+        }
+
+        // Verificar que el mesero existe y pertenece al restaurante
+        $mesero = User::where('id', $meseroId)
+            ->where('restaurante_activo', $restauranteId)
+            ->whereHas('roles', function($q) {
+                $q->where('roles.id', 3)->orWhereRaw('LOWER(roles.nombre) = ?', ['mesero']);
+            })
+            ->first();
+
+        if (!$mesero) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Mesero no encontrado'
+            ], 404);
+        }
+
+        // Obtener las mesas asignadas al mesero
+        $mesasAsignadas = MesaMesero::where('user_id', $meseroId)
+            ->where('restaurante_id', $restauranteId)
+            ->pluck('numero_mesa')
+            ->toArray();
+
+        // Query de órdenes atendidas por este mesero
+        $ordenesQuery = \App\Models\Orden::where('restaurante_id', $restauranteId)
+            ->whereIn('estado', ['completada', 'pagada'])
+            ->whereIn('mesa', $mesasAsignadas);
+
+        // Filtros de fecha
+        if ($request->filled('fecha_desde')) {
+            $ordenesQuery->whereDate('created_at', '>=', $request->fecha_desde);
+        }
+        if ($request->filled('fecha_hasta')) {
+            $ordenesQuery->whereDate('created_at', '<=', $request->fecha_hasta);
+        }
+
+        $ordenes = $ordenesQuery->get();
+        
+        $totalVentas = $ordenes->sum('total');
+        $totalOrdenes = $ordenes->count();
+        $ticketPromedio = $totalOrdenes > 0 ? $totalVentas / $totalOrdenes : 0;
+        
+        // Ventas por día de la semana
+        $ventasPorDia = $ordenes->groupBy(function($orden) {
+            return $orden->created_at->format('l');
+        })->map(function($ordenesDelDia) {
+            return [
+                'ordenes' => $ordenesDelDia->count(),
+                'ventas' => $ordenesDelDia->sum('total')
+            ];
+        });
+
+        // Productos más vendidos por este mesero
+        $productosTop = DB::table('orden_detalles')
+            ->join('ordenes', 'ordenes.id', '=', 'orden_detalles.orden_id')
+            ->join('productos', 'productos.id', '=', 'orden_detalles.producto_id')
+            ->whereIn('ordenes.mesa', $mesasAsignadas)
+            ->where('ordenes.restaurante_id', $restauranteId)
+            ->whereIn('ordenes.estado', ['completada', 'pagada'])
+            ->when($request->filled('fecha_desde'), fn($q) =>
+                $q->whereDate('ordenes.created_at', '>=', $request->fecha_desde))
+            ->when($request->filled('fecha_hasta'), fn($q) =>
+                $q->whereDate('ordenes.created_at', '<=', $request->fecha_hasta))
+            ->select(
+                'productos.id',
+                'productos.nombre',
+                DB::raw('SUM(orden_detalles.cantidad) as total_vendido'),
+                DB::raw('SUM(orden_detalles.subtotal) as total_ventas')
+            )
+            ->groupBy('productos.id', 'productos.nombre')
+            ->orderByDesc('total_vendido')
+            ->limit(10)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'mesero' => [
+                    'id' => $mesero->id,
+                    'name' => $mesero->name,
+                    'username' => $mesero->username,
+                    'email' => $mesero->email
+                ],
+                'mesas_asignadas' => $mesasAsignadas,
+                'total_mesas' => count($mesasAsignadas),
+                'metricas' => [
+                    'total_ventas' => round($totalVentas, 2),
+                    'total_ordenes' => $totalOrdenes,
+                    'ticket_promedio' => round($ticketPromedio, 2),
+                    'ventas_por_dia' => $ventasPorDia,
+                    'productos_top' => $productosTop
+                ]
+            ]
         ]);
 
     } catch (\Exception $e) {

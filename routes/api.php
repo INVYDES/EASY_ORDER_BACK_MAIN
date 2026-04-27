@@ -330,7 +330,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::get('/mis-ordenes',         [MeseroController::class, 'misOrdenes']);
         Route::post('/configurar-mesas',   [MeseroController::class, 'configurarTotalMesas']);
         Route::post('/asignar-mesas',      [MeseroController::class, 'asignarMesas']);
-        Route::get('/metricas-ventas',     [MeseroController::class, 'metricasVentas']); // ✅ corregido (era meseros/meseros/...)
+        Route::get('/metricas-ventas',     [MeseroController::class, 'metricasVentas']); 
     });
 
     // ========== OFERTAS ==========

@@ -24,8 +24,8 @@ class RestauranteSeeder extends Seeder
             ]
         );
 
-        // Asignar usuarios al restaurante
-        for ($userId = 1; $userId <= 5; $userId++) {
+        // Asignar usuarios al restaurante (ahora hay 8 usuarios: 1-5 originales + 6-8 meseros adicionales)
+        for ($userId = 1; $userId <= 8; $userId++) {
             DB::table('restaurante_user')->updateOrInsert(
                 ['user_id' => $userId, 'restaurante_id' => 1],
                 [
@@ -38,7 +38,7 @@ class RestauranteSeeder extends Seeder
         }
 
         // Actualizar restaurante_activo para todos los usuarios
-        for ($userId = 1; $userId <= 5; $userId++) {
+        for ($userId = 1; $userId <= 8; $userId++) {
             DB::table('users')
                 ->where('id', $userId)
                 ->update(['restaurante_activo' => 1]);
