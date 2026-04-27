@@ -5,20 +5,18 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\DB;
 
 class PayPalController extends Controller
 {
-    // Obtener token de acceso
     private function getAccessToken()
     {
-        $clientId = env('PAYPAL_CLIENT_ID');
-        $clientSecret = env('PAYPAL_CLIENT_SECRET');
-
-        $response = Http::withBasicAuth($clientId, $clientSecret)
-            ->asForm()
-            ->post('https://api-m.sandbox.paypal.com/v1/oauth2/token', [
-                'grant_type' => 'client_credentials',
-            ]);
+        $response = Http::withBasicAuth(
+            config('services.paypal.client_id'),
+            config('services.paypal.secret')
+        )->asForm()->post(config('services.paypal.base_url') . '/v1/oauth2/token', [
+            'grant_type' => 'client_credentials',
+        ]);
 
         if ($response->successful()) {
             return $response->json()['access_token'];
@@ -27,43 +25,69 @@ class PayPalController extends Controller
         throw new \Exception('Error al obtener token de PayPal');
     }
 
-   public function createSubscription(Request $request)
-{
-    $accessToken = $this->getAccessToken();
-
-    $request->validate([
-        'plan_id' => 'required|string'
-    ]);
-
-    $response = Http::withToken($accessToken)
-        ->post('https://api-m.sandbox.paypal.com/v1/billing/subscriptions', [
-            'plan_id' => $request->plan_id,
-            'application_context' => [
-                'return_url' => route('paypal.success'),
-                'cancel_url' => route('paypal.cancel')
-            ]
+    public function createSubscription(Request $request)
+    {
+        $request->validate([
+            'licencia_id' => 'required|integer'
         ]);
 
-    $data = $response->json();
+        $licencia = DB::table('licencias')->where('id', $request->licencia_id)->first();
 
-    $approvalUrl = collect($data['links'])
-        ->firstWhere('rel', 'approve')['href'];
+        if (!$licencia || !$licencia->paypal_plan_id) {
+            return response()->json([
+                'error' => 'Licencia inválida o sin plan de PayPal'
+            ], 400);
+        }
 
-    return response()->json([
-        'approval_url' => $approvalUrl
-    ]);
-}
+        $accessToken = $this->getAccessToken();
 
-   public function success(Request $request)
-{
-    $subscriptionId = $request->query('subscription_id');
+        $response = Http::withToken($accessToken)
+            ->post(config('services.paypal.base_url') . '/v1/billing/subscriptions', [
+                'plan_id' => $licencia->paypal_plan_id,
+                'application_context' => [
+                    'return_url' => route('paypal.success'),
+                    'cancel_url' => route('paypal.cancel')
+                ]
+            ]);
 
-    // 🔥 AQUÍ activas licencia en tu BD
-    // Ejemplo:
-    // LicenciaUsuario::create([...]);
+        if (!$response->successful()) {
+            return response()->json([
+                'error' => 'Error creando suscripción',
+                'paypal' => $response->json()
+            ], 500);
+        }
 
-    return redirect()->to(env('FRONTEND_URL') . '/suscripcion-activa');
-}
+        $data = $response->json();
 
- 
+        $approvalUrl = collect($data['links'])
+            ->firstWhere('rel', 'approve')['href'] ?? null;
+
+        return response()->json([
+            'approval_url' => $approvalUrl
+        ]);
+    }
+
+    public function success(Request $request)
+    {
+        $subscriptionId = $request->query('subscription_id');
+
+        if (!$subscriptionId) {
+            return redirect(env('FRONTEND_URL') . '/error');
+        }
+
+        // 🔥 Guardar suscripción (mínimo viable)
+        DB::table('subscriptions')->insert([
+            'paypal_subscription_id' => $subscriptionId,
+            'status' => 'ACTIVE',
+            'created_at' => now(),
+            'updated_at' => now()
+        ]);
+
+        return redirect(env('FRONTEND_URL') . '/suscripcion-activa');
+    }
+
+    public function cancel()
+    {
+        return redirect(env('FRONTEND_URL') . '/suscripcion-cancelada');
+    }
 }

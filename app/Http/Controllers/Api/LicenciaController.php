@@ -505,152 +505,167 @@ public function disponibles(Request $request)
             return response()->json(['status' => 'error'], 500);
         }
     }
+// ============================================
+// MERCADO PAGO — método corregido
+// ============================================
 
-    // ============================================
-    // MERCADO PAGO - PAGO ÚNICO (con tarjeta sin cuenta)
-    // ============================================
+public function comprarLicenciaMercadoPago(Request $request, $licenciaId)
+{
+    try {
+        $user       = $request->user();
+        $propietario = $user->propietario;
 
-    public function comprarLicenciaMercadoPago(Request $request, $licenciaId)
-    {
-        try {
-            $user = $request->user();
-            $propietario = $user->propietario;
+        if (!$propietario) {
+            return response()->json(['success' => false, 'message' => 'Propietario no encontrado'], 404);
+        }
 
-            if (!$propietario) {
-                return response()->json(['success' => false, 'message' => 'Propietario no encontrado'], 404);
-            }
+        $licencia = Licencia::findOrFail($licenciaId);
 
-            $licencia = Licencia::findOrFail($licenciaId);
+        if (!$licencia->activo) {
+            return response()->json(['success' => false, 'message' => 'Licencia no disponible'], 400);
+        }
 
-            if (!$licencia->activo) {
-                return response()->json(['success' => false, 'message' => 'Licencia no disponible'], 400);
-            }
+        $licenciaActiva = PropietarioLicencia::where('propietario_id', $propietario->id)
+            ->where('estado', 'ACTIVA')
+            ->where('fecha_expiracion', '>', Carbon::now())
+            ->first();
 
-            $licenciaActiva = PropietarioLicencia::where('propietario_id', $propietario->id)
-                ->where('estado', 'ACTIVA')->where('fecha_expiracion', '>', Carbon::now())->first();
+        if ($licenciaActiva) {
+            return response()->json(['success' => false, 'message' => 'Ya tienes una licencia activa'], 400);
+        }
 
-            if ($licenciaActiva) {
-                return response()->json(['success' => false, 'message' => 'Ya tienes una licencia activa'], 400);
-            }
+        $preferenceClient = new PreferenceClient();
 
-            $preferenceClient = new PreferenceClient();
-
-            $preference = $preferenceClient->create([
-                'items' => [[
-                    'id' => (string) $licencia->id,
-                    'title' => $licencia->nombre . ' - Licencia ' . ($licencia->tipo === 'MENSUAL' ? 'Mensual' : 'Anual'),
-                    'description' => 'Licencia de software para sistema de restaurantes',
-                    'quantity' => 1,
-                    'unit_price' => (float) $licencia->precio,
-                    'currency_id' => 'MXN'
-                ]],
-                'payer' => [
-                    'name' => $user->name,
-                    'email' => $user->email
-                ],
-                'back_urls' => [
-                    'success' => env('FRONTEND_URL') . '/licencias/exito',
-                    'failure' => env('FRONTEND_URL') . '/licencias/error',
-                    'pending' => env('FRONTEND_URL') . '/licencias/pendiente'
-                ],
-                'auto_return' => 'approved',
-                'external_reference' => 'lic_' . $licencia->id . '_' . $propietario->id,
-                'notification_url' => env('APP_URL') . '/api/mercadopago/licencia-webhook',
-                'statement_descriptor' => 'Easy Order - Licencia',
-                'metadata' => [
-                    'propietario_id' => $propietario->id,
-                    'licencia_id' => $licencia->id,
-                    'tipo' => $licencia->tipo
-                ]
-            ]);
-
-            // Guardar referencia temporal
-            cache()->put('mp_lic_' . $preference->id, [
+        $preference = $preferenceClient->create([
+            'items' => [[
+                'id'          => (string) $licencia->id,
+                'title'       => $licencia->nombre . ' — Licencia ' . ucfirst(strtolower($licencia->tipo)),
+                'description' => 'Licencia de software para sistema de restaurantes',
+                'quantity'    => 1,
+                'unit_price'  => (float) ($licencia->tipo === 'ANUAL' ? $licencia->precio_anual : $licencia->precio),
+                'currency_id' => 'MXN',
+            ]],
+            'payer' => [
+                'name'  => $user->name,
+                'email' => $user->email,
+            ],
+            'back_urls' => [
+                'success' => config('app.frontend_url') . '/licencias/exito',
+                'failure' => config('app.frontend_url') . '/licencias/error',
+                'pending' => config('app.frontend_url') . '/licencias/pendiente',
+            ],
+            'auto_return'          => 'approved',
+            // ✅ Formato consistente con el webhook
+            'external_reference'   => 'LIC-' . $licencia->id . '-' . $propietario->id,
+            'notification_url'     => config('app.url') . '/api/licencias/webhook/mercadopago',
+            'statement_descriptor' => 'Easy Order',
+            'metadata' => [
                 'propietario_id' => $propietario->id,
-                'licencia_id' => $licencia->id,
-                'monto' => $licencia->precio,
-                'tipo' => $licencia->tipo
-            ], now()->addHours(24));
+                'licencia_id'    => $licencia->id,
+                'tipo'           => $licencia->tipo,
+            ],
+        ]);
 
-            return response()->json([
-                'success' => true,
-                'init_point' => $preference->init_point,
-                'preference_id' => $preference->id,
-                'pasarela' => 'mercadopago'
-            ]);
+        return response()->json([
+            'success'      => true,
+            'init_point'   => $preference->init_point,
+            'preference_id'=> $preference->id,
+            'pasarela'     => 'mercadopago',
+        ]);
 
-        } catch (\Exception $e) {
-            Log::error('Error Mercado Pago: ' . $e->getMessage());
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
-        }
+    } catch (\Exception $e) {
+        Log::error('Error Mercado Pago: ' . $e->getMessage());
+        return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
     }
+}
 
-    public function webhookMercadoPago(Request $request)
-    {
-        try {
-            $payload = $request->all();
-            Log::info('Webhook Mercado Pago', $payload);
+// ============================================
+// WEBHOOK MERCADO PAGO — corregido
+// ============================================
 
-            if (isset($payload['type']) && $payload['type'] === 'payment') {
-                $paymentId = $payload['data']['id'];
+public function webhookMercadoPago(Request $request)
+{
+    try {
+        $payload = $request->all();
+        Log::info('Webhook Mercado Pago', $payload);
 
-                $paymentClient = new PaymentClient();
-                $payment = $paymentClient->get($paymentId);
-
-                if ($payment && $payment->status === 'approved') {
-                    $externalRef = $payment->external_reference;
-                    $parts = explode('_', $externalRef);
-                    $licenciaId = $parts[1] ?? null;
-                    $propietarioId = $parts[2] ?? null;
-
-                    if ($licenciaId && $propietarioId) {
-                        $licencia = Licencia::find($licenciaId);
-                        $dias = $licencia->tipo === 'MENSUAL' ? 30 : 365;
-
-                        PropietarioLicencia::create([
-                            'propietario_id' => $propietarioId,
-                            'licencia_id' => $licenciaId,
-                            'fecha_inicio' => Carbon::now(),
-                            'fecha_expiracion' => Carbon::now()->addDays($dias),
-                            'estado' => 'ACTIVA',
-                            'monto_pagado' => $payment->transaction_amount,
-                            'metodo_pago' => 'mercadopago',
-                            'mercadopago_payment_id' => $paymentId
-                        ]);
-
-                        Log::info('Licencia activada por Mercado Pago', [
-                            'propietario_id' => $propietarioId,
-                            'licencia_id' => $licenciaId
-                        ]);
-                    }
-                }
-            }
-
-            return response()->json(['status' => 'success'], 200);
-
-        } catch (\Exception $e) {
-            Log::error('Error webhook Mercado Pago: ' . $e->getMessage());
-            return response()->json(['status' => 'error'], 500);
+        if (($payload['type'] ?? null) !== 'payment') {
+            return response()->json(['status' => 'ok'], 200);
         }
-    }
 
-    public function verificarPagoMercadoPago(Request $request, $paymentId)
-    {
-        try {
-            $paymentClient = new PaymentClient();
-            $payment = $paymentClient->get($paymentId);
+        $paymentId = $payload['data']['id'];
 
-            return response()->json([
-                'success' => true,
-                'status' => $payment->status,
-                'payment_method' => $payment->payment_method_id,
-                'amount' => $payment->transaction_amount
-            ]);
+        $client = new PaymentClient();
+        $payment = $client->get($paymentId);
 
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error al verificar pago'], 500);
+        if (!$payment || $payment->status !== 'approved') {
+            return response()->json(['status' => 'ok'], 200);
         }
+
+        $reference = $payment->external_reference ?? '';
+
+        if (!str_starts_with($reference, 'LIC-')) {
+            Log::warning('Referencia desconocida', ['ref' => $reference]);
+            return response()->json(['status' => 'ok'], 200);
+        }
+
+        $parts = explode('-', $reference);
+
+        if (count($parts) !== 3) {
+            Log::error('Formato inválido', ['ref' => $reference]);
+            return response()->json(['status' => 'error'], 400);
+        }
+
+        [, $licenciaId, $propietarioId] = $parts;
+
+        $licencia = Licencia::find($licenciaId);
+
+        if (!$licencia) {
+            Log::error('Licencia no encontrada', ['licencia_id' => $licenciaId]);
+            return response()->json(['status' => 'ok'], 200);
+        }
+
+        // 🔒 Buscar registro existente
+        $registro = PropietarioLicencia::where('propietario_id', $propietarioId)
+            ->where('licencia_id', $licenciaId)
+            ->latest()
+            ->first();
+
+        // 🔁 Evitar duplicados
+        if ($registro && $registro->estado === 'ACTIVA') {
+            return response()->json(['status' => 'ok'], 200);
+        }
+
+        $dias = $licencia->tipo === 'ANUAL' ? 365 : 30;
+
+        if (!$registro) {
+            $registro = new PropietarioLicencia();
+            $registro->propietario_id = $propietarioId;
+            $registro->licencia_id = $licenciaId;
+        }
+
+        $registro->estado = 'ACTIVA';
+        $registro->fecha_inicio = now();
+        $registro->fecha_expiracion = now()->addDays($dias);
+        $registro->monto_pagado = $payment->transaction_amount;
+        $registro->metodo_pago = 'mercadopago';
+        $registro->mercadopago_payment_id = $paymentId;
+
+        $registro->save();
+
+        Log::info('Licencia activada', [
+            'propietario_id' => $propietarioId,
+            'licencia_id' => $licenciaId
+        ]);
+
+        return response()->json(['status' => 'ok'], 200);
+
+    } catch (\Exception $e) {
+        Log::error('Error webhook MP: ' . $e->getMessage());
+        return response()->json(['status' => 'error'], 500);
     }
+}
+
     public function comprarLicencia(Request $request, $licenciaId)
 {
     $pasarela = $request->input('pasarela', 'paypal');

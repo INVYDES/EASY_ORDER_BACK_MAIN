@@ -17,7 +17,14 @@ return [
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],
-
+    'paypal' => [
+    'client_id' => env('PAYPAL_CLIENT_ID'),
+    'secret' => env('PAYPAL_CLIENT_SECRET'),
+    'base_url' => env('PAYPAL_MODE') === 'sandbox'
+        ? 'https://api-m.sandbox.paypal.com'
+        : 'https://api-m.paypal.com',
+    'product_id' => env('PAYPAL_PRODUCT_ID'),
+],
     'resend' => [
         'key' => env('RESEND_API_KEY'),
     ],

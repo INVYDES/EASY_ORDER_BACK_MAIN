@@ -18,6 +18,13 @@ class DatabaseSeeder extends Seeder
             RestauranteSeeder::class,
             CategoriaSeeder::class,
             ProductoSeeder::class,
+            IngredienteSeeder::class,
+            ProductoIngredienteSeeder::class,
+            PaqueteSeeder::class,
+            PaqueteProductoSeeder::class,
+            MesaMeseroSeeder::class,
+            CajaSeeder::class,
+            CajaMovimientoSeeder::class,
             ClienteSeeder::class,
         ]);
     }

@@ -38,12 +38,15 @@ class PermissionSeeder extends Seeder
             ['id' => 17, 'nombre' => 'EDITAR_USUARIOS', 'descripcion' => 'Editar usuarios'],
             ['id' => 18, 'nombre' => 'ELIMINAR_USUARIOS', 'descripcion' => 'Eliminar usuarios'],
             
-            // Propietarios (19-23)
+            // Propietarios (19-23, 31-33)
             ['id' => 19, 'nombre' => 'VER_TODOS_PROPIETARIOS', 'descripcion' => 'Ver todos los propietarios'],
             ['id' => 20, 'nombre' => 'EDITAR_TODOS_PROPIETARIOS', 'descripcion' => 'Editar cualquier propietario'],
             ['id' => 21, 'nombre' => 'ELIMINAR_PROPIETARIOS', 'descripcion' => 'Eliminar propietarios'],
             ['id' => 22, 'nombre' => 'EDITAR_PROPIETARIO_LICENCIA', 'descripcion' => 'Editar asignaciones de licencias'],
             ['id' => 23, 'nombre' => 'ELIMINAR_PROPIETARIO_LICENCIA', 'descripcion' => 'Eliminar asignaciones de licencias'],
+            ['id' => 31, 'nombre' => 'VER_PROPIETARIOS', 'descripcion' => 'Ver propietarios'],
+            ['id' => 32, 'nombre' => 'CREAR_PROPIETARIOS', 'descripcion' => 'Crear propietarios'],
+            ['id' => 33, 'nombre' => 'EDITAR_PROPIETARIOS', 'descripcion' => 'Editar propietarios'],
             
             // Clientes (24-28, 57)
             ['id' => 24, 'nombre' => 'VER_CLIENTES', 'descripcion' => 'Ver listado de clientes'],
@@ -56,7 +59,25 @@ class PermissionSeeder extends Seeder
             // Reportes (29-30)
             ['id' => 29, 'nombre' => 'VER_REPORTES', 'descripcion' => 'Ver reportes y estadísticas'],
             ['id' => 30, 'nombre' => 'EXPORTAR_REPORTES', 'descripcion' => 'Exportar reportes'],
-            
+
+            // Roles y Permisos (34-37, 45-56)
+            ['id' => 34, 'nombre' => 'VER_ROLES', 'descripcion' => 'Ver roles'],
+            ['id' => 35, 'nombre' => 'CREAR_ROLES', 'descripcion' => 'Crear roles'],
+            ['id' => 36, 'nombre' => 'EDITAR_ROLES', 'descripcion' => 'Editar roles'],
+            ['id' => 37, 'nombre' => 'ELIMINAR_ROLES', 'descripcion' => 'Eliminar roles'],
+            ['id' => 45, 'nombre' => 'VER_PERMISOS', 'descripcion' => 'Ver permisos'],
+            ['id' => 46, 'nombre' => 'CREAR_PERMISOS', 'descripcion' => 'Crear permisos'],
+            ['id' => 47, 'nombre' => 'EDITAR_PERMISOS', 'descripcion' => 'Editar permisos'],
+            ['id' => 48, 'nombre' => 'ELIMINAR_PERMISOS', 'descripcion' => 'Eliminar permisos'],
+            ['id' => 49, 'nombre' => 'ASIGNAR_LICENCIA', 'descripcion' => 'Asignar licencias a propietarios'],
+            ['id' => 50, 'nombre' => 'VER_PROPIETARIO_LICENCIA', 'descripcion' => 'Ver asignaciones de licencias'],
+            ['id' => 51, 'nombre' => 'CERRAR_CAJA_ADMIN', 'descripcion' => 'Cerrar caja admin'],
+            ['id' => 52, 'nombre' => 'CREAR_EMPLEADOS', 'descripcion' => 'Crear empleados'],
+            ['id' => 53, 'nombre' => 'ADMIN_LICENCIAS', 'descripcion' => 'Administración de licencias'],
+            ['id' => 54, 'nombre' => 'CREAR_LICENCIAS', 'descripcion' => 'Crear licencias'],
+            ['id' => 55, 'nombre' => 'EDITAR_LICENCIAS', 'descripcion' => 'Editar licencias'],
+            ['id' => 56, 'nombre' => 'ELIMINAR_LICENCIAS', 'descripcion' => 'Eliminar licencias'],
+
             // Categorías (38-42)
             ['id' => 38, 'nombre' => 'VER_CATEGORIAS', 'descripcion' => 'Ver listado de categorías'],
             ['id' => 39, 'nombre' => 'VER_CATEGORIA', 'descripcion' => 'Ver detalle de una categoría'],
@@ -80,6 +101,9 @@ class PermissionSeeder extends Seeder
             ['id' => 64, 'nombre' => 'EDITAR_INGREDIENTES', 'descripcion' => 'Editar ingredientes existentes'],
             ['id' => 65, 'nombre' => 'ELIMINAR_INGREDIENTES', 'descripcion' => 'Eliminar ingredientes'],
             ['id' => 66, 'nombre' => 'AJUSTAR_STOCK_INGREDIENTES', 'descripcion' => 'Ajustar inventario de ingredientes'],
+
+            // Postres (67)
+            ['id' => 67, 'nombre' => 'VER_POSTRES', 'descripcion' => 'Ver postres'],
         ];
 
         foreach ($permissions as $perm) {

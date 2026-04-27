@@ -254,4 +254,112 @@ class MeseroController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
+    /**
+ * Métricas de ventas agrupadas por mesero
+ * GET /api/meseros/metricas-ventas
+ * Query params opcionales: fecha_desde, fecha_hasta, estado
+ */
+public function metricasVentas(Request $request)
+{
+    try {
+        $user = $request->user();
+
+        $headerId  = $request->header('X-Restaurante-Id');
+        $userRestId = is_object($user->restaurante_activo)
+            ? $user->restaurante_activo->id
+            : $user->restaurante_activo;
+
+        $restauranteId = !empty($headerId) ? $headerId : $userRestId;
+
+        if (empty($restauranteId)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se detectó el ID de la sucursal activa'
+            ], 400);
+        }
+
+        // -- Base query: órdenes del restaurante ---------------------
+        $ordenesQuery = DB::table('ordenes')
+            ->where('ordenes.restaurante_id', $restauranteId)
+            ->whereIn('ordenes.estado', ['completada', 'pagada']); // solo ventas cerradas
+
+        // Filtros opcionales de fecha
+        if ($request->filled('fecha_desde')) {
+            $ordenesQuery->whereDate('ordenes.created_at', '>=', $request->fecha_desde);
+        }
+        if ($request->filled('fecha_hasta')) {
+            $ordenesQuery->whereDate('ordenes.created_at', '<=', $request->fecha_hasta);
+        }
+        if ($request->filled('estado')) {
+            $ordenesQuery->where('ordenes.estado', $request->estado);
+        }
+
+        // -- JOIN: ordenes → mesas_meseros → users ------------------
+        $metricas = $ordenesQuery
+            ->join('mesas_meseros', function ($join) use ($restauranteId) {
+                $join->on('mesas_meseros.numero_mesa', '=', 'ordenes.mesa')
+                     ->where('mesas_meseros.restaurante_id', '=', $restauranteId);
+            })
+            ->join('users', 'users.id', '=', 'mesas_meseros.user_id')
+            ->select(
+                'users.id          as mesero_id',
+                'users.name        as mesero_nombre',
+                'users.username    as mesero_username',
+                DB::raw('COUNT(DISTINCT ordenes.id)          as total_ordenes'),
+                DB::raw('COALESCE(SUM(ordenes.total), 0)     as total_ventas'),
+                DB::raw('COALESCE(AVG(ordenes.total), 0)     as ticket_promedio'),
+                DB::raw('COUNT(DISTINCT ordenes.mesa)        as mesas_atendidas')
+            )
+            ->groupBy('users.id', 'users.name', 'users.username')
+            ->orderByDesc('total_ventas')
+            ->get();
+
+        // -- Totales globales del restaurante (mismo filtro) --------
+        $totalesQuery = clone $ordenesQuery; // ya lleva los filtros aplicados
+        $totales = DB::table('ordenes')
+            ->where('restaurante_id', $restauranteId)
+            ->whereIn('estado', ['completada', 'pagada'])
+            ->when($request->filled('fecha_desde'), fn($q) =>
+                $q->whereDate('created_at', '>=', $request->fecha_desde))
+            ->when($request->filled('fecha_hasta'), fn($q) =>
+                $q->whereDate('created_at', '<=', $request->fecha_hasta))
+            ->selectRaw('COUNT(*) as total_ordenes, COALESCE(SUM(total),0) as total_ventas')
+            ->first();
+
+        // -- Enriquecer con porcentaje de participación -------------
+        $ventaTotal = (float) ($totales->total_ventas ?? 0);
+
+        $data = $metricas->map(function ($row) use ($ventaTotal) {
+            return [
+                'mesero_id'        => $row->mesero_id,
+                'mesero_nombre'    => $row->mesero_nombre,
+                'mesero_username'  => $row->mesero_username,
+                'total_ordenes'    => (int)   $row->total_ordenes,
+                'total_ventas'     => (float) $row->total_ventas,
+                'ticket_promedio'  => round((float) $row->ticket_promedio, 2),
+                'mesas_atendidas'  => (int)   $row->mesas_atendidas,
+                'participacion_pct'=> $ventaTotal > 0
+                    ? round(($row->total_ventas / $ventaTotal) * 100, 2)
+                    : 0,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'meseros'         => $data,
+                'resumen_general' => [
+                    'total_ordenes' => (int)   ($totales->total_ordenes ?? 0),
+                    'total_ventas'  => (float) ($totales->total_ventas  ?? 0),
+                ],
+            ],
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => $e->getMessage()
+        ], 500);
+    }
+}
 }
