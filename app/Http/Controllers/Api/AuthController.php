@@ -265,8 +265,8 @@ class AuthController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name'           => 'required|string|max:255',
-            'email'          => 'required|email|max:255|unique:users',
-            'username'       => 'required|string|max:50|unique:users',
+            'email'          => 'nullable|email|max:255|unique:users',
+            'username'       => 'nullable|string|max:50|unique:users',
             'password'       => 'required|string|min:8|confirmed',
             'propietario_id' => 'required|exists:propietarios,id',
             'rol_id'         => 'required|exists:roles,id',
@@ -283,12 +283,20 @@ class AuthController extends Controller
         DB::beginTransaction();
 
         try {
+            // email y username son opcionales: si no se envían se generan
+            // internamente para cumplir la restricción unique de la tabla.
+            $email    = $request->email
+                ?? 'emp_' . $request->propietario_id . '_' . Str::random(8) . '@sin-correo.local';
+
+            $username = $request->username
+                ?? $this->generateUsername(Str::slug($request->name));
+
             $user = User::create([
-                'propietario_id'    => $request->propietario_id,
-                'name'              => $request->name,
-                'email'             => $request->email,
-                'username'          => $request->username,
-                'password'          => Hash::make($request->password),
+                'propietario_id'     => $request->propietario_id,
+                'name'               => $request->name,
+                'email'              => $email,
+                'username'           => $username,
+                'password'           => Hash::make($request->password),
                 'restaurante_activo' => $request->restaurante_id,
             ]);
 
@@ -297,10 +305,13 @@ class AuthController extends Controller
 
             DB::commit();
 
+            $cadenaAcceso = "{$user->id}-{$user->propietario_id}-{$user->restaurante_activo}";
+
             return response()->json([
-                'success' => true,
-                'message' => 'Empleado registrado correctamente',
-                'user'    => $user->load('roles'),
+                'success'        => true,
+                'message'        => 'Empleado registrado correctamente',
+                'user'           => $user->load('roles'),
+                'login_empleado' => $cadenaAcceso,  // ej: "3-1-2" → compartir al empleado
             ], 201);
 
         } catch (\Exception $e) {
