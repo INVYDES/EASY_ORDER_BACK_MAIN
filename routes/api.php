@@ -39,7 +39,7 @@ Route::prefix('')->group(function () {
         Route::post('/login',            [AuthController::class, 'login']);
         Route::post('/register',         [AuthController::class, 'register']);
         Route::post('/register-cliente', [AuthController::class, 'registerCliente']);
-        Route::post('/register-empleado',[AuthController::class, 'registerEmpleado']);
+        Route::post('/empleado/login', [AuthController::class, 'loginEmpleado']);
         Route::post('/forgot-password',  [AuthController::class, 'forgotPassword']);
     });
     Route::post('/reset-password',       [AuthController::class, 'resetPassword']);

@@ -3,26 +3,133 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\User;
 use App\Models\Propietario;
 use App\Models\Role;
+use App\Models\User;
+use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
-use Illuminate\Auth\Events\PasswordReset;
-use Illuminate\Support\Facades\DB;
 
 class AuthController extends Controller
 {
+    /*
+    |--------------------------------------------------------------------------
+    | AUTENTICACIÓN
+    |--------------------------------------------------------------------------
+    */
+
     /**
-     * REGISTRO DE CLIENTES
-     * Ruta pública — el cliente se registra solo con nombre, email y teléfono.
-     * Se crea un User con rol CLIENTE (id=6), sin propietario ni restaurante.
-     * Puede ver todos los menús de todos los restaurantes.
+     * Login general — acepta email o username.
      */
-    public function registerCliente(Request $request)
+    public function login(Request $request): JsonResponse
+    {
+        $request->validate([
+            'login'    => 'required|string',
+            'password' => 'required|string',
+        ]);
+
+        $field = filter_var($request->login, FILTER_VALIDATE_EMAIL) ? 'email' : 'username';
+        $user  = User::where($field, $request->login)->first();
+
+        if (! $user || ! Hash::check($request->password, $user->password)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Credenciales incorrectas',
+            ], 401);
+        }
+
+        $user->load(['roles', 'restauranteActivo']);
+        $token = $user->createToken('api_token_' . $user->id)->plainTextToken;
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Login exitoso',
+            'user'    => $user,
+            'token'   => $token,
+        ]);
+    }
+
+    /**
+     * Login de empleados — usa la concatenación id-propietarioId-restauranteId.
+     *
+     * Ejemplo: "3-1-2" (id=3, propietario=1, restaurante=2)
+     */
+    public function loginEmpleado(Request $request): JsonResponse
+    {
+        $request->validate([
+            'login'    => ['required', 'string', 'regex:/^\d+-\d+-\d+$/'],
+            'password' => 'required|string',
+        ], [
+            'login.regex' => 'El formato debe ser id-propietarioId-restauranteId (ej: 3-1-2)',
+        ]);
+
+        [$userId, $propietarioId, $restauranteId] = explode('-', $request->login);
+
+        $user = User::where('id', $userId)
+            ->where('propietario_id', $propietarioId)
+            ->where('restaurante_activo', $restauranteId)
+            ->first();
+
+        if (! $user || ! Hash::check($request->password, $user->password)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Credenciales incorrectas',
+            ], 401);
+        }
+
+        $user->load(['roles', 'restauranteActivo']);
+        $token = $user->createToken('empleado_' . $user->id)->plainTextToken;
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Login exitoso',
+            'user'    => $user,
+            'token'   => $token,
+        ]);
+    }
+
+    /**
+     * Logout — revoca el token actual.
+     */
+    public function logout(Request $request): JsonResponse
+    {
+        $request->user()->currentAccessToken()->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Sesión cerrada correctamente',
+        ]);
+    }
+
+    /**
+     * Devuelve el usuario autenticado con sus relaciones.
+     */
+    public function me(Request $request): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data'    => $request->user()->load(['roles', 'restauranteActivo']),
+        ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | REGISTRO
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Registro de clientes.
+     *
+     * Ruta pública. Se crea un User con rol CLIENTE (id=6), sin propietario
+     * ni restaurante asignado — puede explorar todos los menús.
+     */
+    public function registerCliente(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'nombre'   => 'required|string|max:255',
@@ -30,9 +137,9 @@ class AuthController extends Controller
             'telefono' => 'nullable|string|max:20',
             'password' => 'required|string|min:6|confirmed',
         ], [
-            'email.unique'        => 'Ya existe una cuenta con ese correo.',
-            'password.min'        => 'La contraseña debe tener al menos 6 caracteres.',
-            'password.confirmed'  => 'Las contraseñas no coinciden.',
+            'email.unique'       => 'Ya existe una cuenta con ese correo.',
+            'password.min'       => 'La contraseña debe tener al menos 6 caracteres.',
+            'password.confirmed' => 'Las contraseñas no coinciden.',
         ]);
 
         if ($validator->fails()) {
@@ -44,30 +151,20 @@ class AuthController extends Controller
         }
 
         DB::beginTransaction();
-        try {
-            // Generar username único a partir del email
-            $baseUsername = strtolower(explode('@', $request->email)[0]);
-            $username     = $baseUsername;
-            $i = 1;
-            while (User::where('username', $username)->exists()) {
-                $username = $baseUsername . $i++;
-            }
 
+        try {
             $user = User::create([
-                'name'       => $request->nombre,
-                'email'      => $request->email,
-                'username'   => $username,
-                'password'   => Hash::make($request->password),
-                'telefono'   => $request->telefono,
-                // Sin propietario_id — cliente independiente
-                // Sin restaurante_activo — puede ver todos
+                'name'     => $request->nombre,
+                'email'    => $request->email,
+                'username' => $this->generateUsername($request->email),
+                'password' => Hash::make($request->password),
+                'telefono' => $request->telefono,
             ]);
 
-            // Asignar rol CLIENTE (id = 6) - Ver CLAUDE.md
             $rolCliente = Role::whereRaw('LOWER(nombre) = ?', ['cliente'])->first()
                 ?? Role::find(6);
 
-            if (!$rolCliente) {
+            if (! $rolCliente) {
                 throw new \Exception('Rol CLIENTE no encontrado. Ejecuta seeders.');
             }
 
@@ -87,6 +184,7 @@ class AuthController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al crear la cuenta',
@@ -94,145 +192,107 @@ class AuthController extends Controller
             ], 500);
         }
     }
-    /**
-     * Login de usuarios - Permite login con email o username
-     */
-   public function login(Request $request)
-{
-    $request->validate([
-        'login' => 'required|string',
-        'password' => 'required|string'
-    ]);
-
-    $login = $request->login;
-    $field = filter_var($login, FILTER_VALIDATE_EMAIL) ? 'email' : 'username';
-
-    $user = User::where($field, $login)->first();
-
-    if (!$user || !Hash::check($request->password, $user->password)) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Credenciales incorrectas'
-        ], 401);
-    }
-
-    $user->load(['roles', 'restauranteActivo']); // ✅ AGREGA ESTA LÍNEA
-
-    $token = $user->createToken('api_token_' . $user->id)->plainTextToken;
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Login exitoso',
-        'user' => $user,
-        'token' => $token
-    ]);
-}
 
     /**
-     * REGISTRO DE NUEVOS USUARIOS
+     * Registro de propietarios/dueños.
+     *
+     * Crea automáticamente un Propietario asociado al nuevo usuario.
      */
-    public function register(Request $request)
+    public function register(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
+            'name'     => 'required|string|max:255',
+            'email'    => 'required|email|max:255|unique:users',
             'username' => 'required|string|max:50|unique:users',
             'password' => 'required|string|min:8|confirmed',
-            'rol_id' => 'required|exists:roles,id'
+            'rol_id'   => 'required|exists:roles,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'errors' => $validator->errors()
+                'errors'  => $validator->errors(),
             ], 422);
         }
 
         DB::beginTransaction();
 
         try {
-            // Crear propietario automáticamente para nuevos dueños
             $propietario = Propietario::create([
                 'nombre' => $request->name,
-                'email' => $request->email
+                'email'  => $request->email,
             ]);
 
-            // Crear usuario
             $user = User::create([
                 'propietario_id' => $propietario->id,
-                'name' => $request->name,
-                'email' => $request->email,
-                'username' => $request->username,
-                'password' => Hash::make($request->password)
+                'name'           => $request->name,
+                'email'          => $request->email,
+                'username'       => $request->username,
+                'password'       => Hash::make($request->password),
             ]);
 
-            // Asignar rol
             $user->roles()->attach($request->rol_id);
 
             DB::commit();
 
-            // Cargar relaciones
             $user->load('roles');
-
-            // Crear token
             $token = $user->createToken('api_token_' . $user->id)->plainTextToken;
 
             return response()->json([
                 'success' => true,
                 'message' => 'Usuario registrado correctamente',
-                'user' => $user,
-                'token' => $token
+                'user'    => $user,
+                'token'   => $token,
             ], 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al registrar usuario',
-                'error' => $e->getMessage()
+                'error'   => $e->getMessage(),
             ], 500);
         }
     }
 
     /**
-     * REGISTRO DE EMPLEADOS (para dueños registrando personal)
+     * Registro de empleados.
+     *
+     * Solo accesible para dueños. Requiere propietario y restaurante existentes.
      */
-    public function registerEmpleado(Request $request)
+    public function registerEmpleado(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'username' => 'required|string|max:50|unique:users',
-            'password' => 'required|string|min:8|confirmed',
+            'name'           => 'required|string|max:255',
+            'email'          => 'required|email|max:255|unique:users',
+            'username'       => 'required|string|max:50|unique:users',
+            'password'       => 'required|string|min:8|confirmed',
             'propietario_id' => 'required|exists:propietarios,id',
-            'rol_id' => 'required|exists:roles,id',
-            'restaurante_id' => 'required|exists:restaurantes,id'
+            'rol_id'         => 'required|exists:roles,id',
+            'restaurante_id' => 'required|exists:restaurantes,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'errors' => $validator->errors()
+                'errors'  => $validator->errors(),
             ], 422);
         }
 
         DB::beginTransaction();
 
         try {
-            // Crear usuario empleado
             $user = User::create([
-                'propietario_id' => $request->propietario_id,
-                'name' => $request->name,
-                'email' => $request->email,
-                'username' => $request->username,
-                'password' => Hash::make($request->password),
-                'restaurante_activo' => $request->restaurante_id
+                'propietario_id'    => $request->propietario_id,
+                'name'              => $request->name,
+                'email'             => $request->email,
+                'username'          => $request->username,
+                'password'          => Hash::make($request->password),
+                'restaurante_activo' => $request->restaurante_id,
             ]);
 
-            // Asignar rol
             $user->roles()->attach($request->rol_id);
-            
-            // Asignar restaurante
             $user->restaurantes()->attach($request->restaurante_id);
 
             DB::commit();
@@ -240,75 +300,50 @@ class AuthController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Empleado registrado correctamente',
-                'user' => $user->load('roles')
+                'user'    => $user->load('roles'),
             ], 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al registrar empleado',
-                'error' => $e->getMessage()
+                'error'   => $e->getMessage(),
             ], 500);
         }
     }
 
-    /**
-     * Logout (revocar token)
-     */
-    public function logout(Request $request)
-    {
-        $request->user()->currentAccessToken()->delete();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Sesión cerrada correctamente'
-        ]);
-    }
+    /*
+    |--------------------------------------------------------------------------
+    | GESTIÓN DE RESTAURANTE ACTIVO
+    |--------------------------------------------------------------------------
+    */
 
     /**
-     * Obtener usuario autenticado
+     * Cambia el restaurante activo del usuario autenticado.
      */
-    public function me(Request $request)
-    {
-        $user = $request->user()->load(['roles', 'restauranteActivo']);
-        
-        return response()->json([
-            'success' => true,
-            'data' => $user
-        ]);
-    }
-
-    /**
-     * Cambiar restaurante activo
-     */
-    public function cambiarRestaurante(Request $request)
+    public function cambiarRestaurante(Request $request): JsonResponse
     {
         $request->validate([
-            'restaurante_id' => 'required|exists:restaurantes,id'
+            'restaurante_id' => 'required|exists:restaurantes,id',
         ]);
 
         $user = $request->user();
 
-        // Verificar que el usuario pertenece a ese restaurante
-        if (!$user->restaurantes()->where('restaurante_id', $request->restaurante_id)->exists()) {
+        if (! $user->restaurantes()->where('restaurante_id', $request->restaurante_id)->exists()) {
             return response()->json([
                 'success' => false,
-                'message' => 'No tienes acceso a ese restaurante'
+                'message' => 'No tienes acceso a ese restaurante',
             ], 403);
         }
 
-        $user->update([
-            'restaurante_activo' => $request->restaurante_id
-        ]);
-
-        // Recargar el usuario para obtener los cambios
-        $user = $user->fresh('restauranteActivo');
+        $user->update(['restaurante_activo' => $request->restaurante_id]);
 
         return response()->json([
-            'success' => true,
-            'message' => 'Restaurante activo actualizado',
-            'restaurante_activo' => $user->restauranteActivo
+            'success'            => true,
+            'message'            => 'Restaurante activo actualizado',
+            'restaurante_activo' => $user->fresh('restauranteActivo')->restauranteActivo,
         ]);
     }
 
@@ -319,48 +354,46 @@ class AuthController extends Controller
     */
 
     /**
-     * Enviar correo de restablecimiento de contraseña
+     * Envía un enlace de restablecimiento al correo indicado.
      */
-    public function forgotPassword(Request $request)
+    public function forgotPassword(Request $request): JsonResponse
     {
         $request->validate([
-            'email' => 'required|email|exists:users,email'
+            'email' => 'required|email|exists:users,email',
         ]);
 
-        $status = Password::sendResetLink(
-            $request->only('email')
-        );
+        $status = Password::sendResetLink($request->only('email'));
 
         if ($status === Password::RESET_LINK_SENT) {
             return response()->json([
                 'success' => true,
-                'message' => 'Hemos enviado un enlace de recuperación a tu correo electrónico'
+                'message' => 'Hemos enviado un enlace de recuperación a tu correo electrónico',
             ]);
         }
 
         return response()->json([
             'success' => false,
-            'message' => 'No se pudo enviar el enlace de recuperación'
+            'message' => 'No se pudo enviar el enlace de recuperación',
         ], 400);
     }
 
     /**
-     * Restablecer contraseña
+     * Restablece la contraseña usando el token recibido por correo.
      */
-    public function resetPassword(Request $request)
+    public function resetPassword(Request $request): JsonResponse
     {
         $request->validate([
-            'token' => 'required',
-            'email' => 'required|email',
-            'password' => 'required|min:8|confirmed'
+            'token'    => 'required',
+            'email'    => 'required|email',
+            'password' => 'required|min:8|confirmed',
         ]);
 
         $status = Password::reset(
             $request->only('email', 'password', 'password_confirmation', 'token'),
-            function ($user, $password) {
+            function (User $user, string $password) {
                 $user->forceFill([
-                    'password' => Hash::make($password),
-                    'remember_token' => Str::random(60)
+                    'password'       => Hash::make($password),
+                    'remember_token' => Str::random(60),
                 ])->save();
 
                 event(new PasswordReset($user));
@@ -370,77 +403,88 @@ class AuthController extends Controller
         if ($status === Password::PASSWORD_RESET) {
             return response()->json([
                 'success' => true,
-                'message' => 'Contraseña restablecida correctamente'
+                'message' => 'Contraseña restablecida correctamente',
             ]);
         }
 
         return response()->json([
             'success' => false,
-            'message' => 'El token de recuperación es inválido o ha expirado'
+            'message' => 'El token de recuperación es inválido o ha expirado',
         ], 400);
     }
 
     /**
-     * Verificar token de restablecimiento
+     * Verifica si un token de restablecimiento sigue siendo válido.
      */
-    public function verifyResetToken(Request $request)
+    public function verifyResetToken(Request $request): JsonResponse
     {
         $request->validate([
             'token' => 'required',
-            'email' => 'required|email'
+            'email' => 'required|email',
         ]);
 
         $user = User::where('email', $request->email)->first();
-        
-        if (!$user) {
+
+        if (! $user) {
             return response()->json([
                 'success' => false,
-                'message' => 'Usuario no encontrado'
+                'message' => 'Usuario no encontrado',
             ], 404);
         }
 
-        $broker = Password::broker();
-        $result = $broker->tokenExists($user, $request->token);
+        $valid = Password::broker()->tokenExists($user, $request->token);
 
-        if ($result) {
-            return response()->json([
-                'success' => true,
-                'message' => 'Token válido'
-            ]);
-        }
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Token inválido o expirado'
-        ], 400);
+        return $valid
+            ? response()->json(['success' => true,  'message' => 'Token válido'])
+            : response()->json(['success' => false, 'message' => 'Token inválido o expirado'], 400);
     }
 
     /**
-     * Cambiar contraseña (estando autenticado)
+     * Cambia la contraseña del usuario autenticado.
      */
-    public function changePassword(Request $request)
+    public function changePassword(Request $request): JsonResponse
     {
         $request->validate([
             'current_password' => 'required',
-            'new_password' => 'required|min:8|confirmed|different:current_password'
+            'new_password'     => 'required|min:8|confirmed|different:current_password',
         ]);
 
         $user = $request->user();
 
-        if (!Hash::check($request->current_password, $user->password)) {
+        if (! Hash::check($request->current_password, $user->password)) {
             return response()->json([
                 'success' => false,
-                'message' => 'La contraseña actual es incorrecta'
+                'message' => 'La contraseña actual es incorrecta',
             ], 403);
         }
 
-        $user->update([
-            'password' => Hash::make($request->new_password)
-        ]);
+        $user->update(['password' => Hash::make($request->new_password)]);
 
         return response()->json([
             'success' => true,
-            'message' => 'Contraseña cambiada correctamente'
+            'message' => 'Contraseña cambiada correctamente',
         ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | HELPERS PRIVADOS
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Genera un username único a partir de la parte local del email.
+     */
+    private function generateUsername(string $email): string
+    {
+        $base = strtolower(explode('@', $email)[0]);
+        $username = $base;
+        $i = 1;
+
+        while (User::where('username', $username)->exists()) {
+            $username = $base . $i++;
+        }
+
+        return $username;
     }
 }
