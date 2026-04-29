@@ -231,7 +231,11 @@ class RestauranteController extends Controller
                 'calle' => 'nullable|string|max:150',
                 'ciudad' => 'nullable|string|max:100',
                 'estado' => 'nullable|string|max:100',
-                'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
+                'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120',
+            ], [
+                'imagen.max' => 'La imagen es muy pesada. El tamaño máximo permitido es de 5MB.',
+                'imagen.image' => 'El archivo seleccionado debe ser una imagen.',
+                'imagen.mimes' => 'La imagen debe ser de formato: jpeg, png, jpg, gif o webp.',
             ]);
 
             $propietario = $user->propietario;
@@ -337,8 +341,12 @@ class RestauranteController extends Controller
                 'ciudad' => 'nullable|string|max:100',
                 'estado' => 'nullable|string|max:100',
                 'activo' => 'sometimes|boolean',
-                'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
+                'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120',
                 'eliminar_imagen' => 'nullable|boolean',
+            ], [
+                'imagen.max' => 'La imagen es muy pesada. El tamaño máximo permitido es de 5MB.',
+                'imagen.image' => 'El archivo seleccionado debe ser una imagen.',
+                'imagen.mimes' => 'La imagen debe ser de formato: jpeg, png, jpg, gif o webp.',
             ]);
 
             DB::beginTransaction();
