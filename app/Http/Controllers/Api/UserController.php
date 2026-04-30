@@ -135,4 +135,33 @@ class UserController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al obtener lista', 'error' => $e->getMessage()], 500);
         }
     }
+
+    /**
+     * Eliminar un usuario (Uso administrativo)
+     */
+    public function destroy(Request $request, $id)
+    {
+        try {
+            $admin = $request->user();
+            $user = User::findOrFail($id);
+
+            // Seguridad: Verificar que el administrador pertenezca al mismo dueño que el usuario a borrar
+            if ($admin->propietario_id !== $user->propietario_id && $admin->id !== $user->propietario_id) {
+                return response()->json(['success' => false, 'message' => 'No tienes permiso para eliminar este usuario'], 403);
+            }
+
+            if ($admin->id == $user->id) {
+                return response()->json(['success' => false, 'message' => 'No puedes eliminar tu propia cuenta desde aquí'], 400);
+            }
+
+            $user->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Usuario eliminado correctamente'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error al eliminar usuario: ' . $e->getMessage()], 500);
+        }
+    }
 }
