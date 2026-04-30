@@ -154,7 +154,8 @@ class UserController extends Controller
                 return response()->json(['success' => false, 'message' => 'No puedes eliminar tu propia cuenta desde aquí'], 400);
             }
 
-            $user->delete();
+            // Usamos forceDelete para borrarlo físicamente de la DB (saltando el SoftDelete)
+            $user->forceDelete();
 
             return response()->json([
                 'success' => true,
