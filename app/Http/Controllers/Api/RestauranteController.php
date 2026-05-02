@@ -241,9 +241,9 @@ class RestauranteController extends Controller
             $propietario = $user->propietario;
 
             // Verificar límite de licencia
-            $licenciaActiva = $propietario->licenciaActiva();
+            $licenciaActiva = $propietario->getLicenciaActiva();
             if ($licenciaActiva) {
-                $limite = $licenciaActiva->licencia->max_restaurantes;
+                $limite = $licenciaActiva->licencia->max_restaurantes ?? 1;
                 $actuales = Restaurante::where('propietario_id', $propietario->id)->count();
                 if ($actuales >= $limite) {
                     return response()->json([

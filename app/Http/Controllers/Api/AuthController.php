@@ -44,6 +44,22 @@ class AuthController extends Controller
         }
 
         $user->load(['roles', 'restauranteActivo']);
+
+        // Si es propietario y no tiene restaurante activo, asignarle el primero
+        if ($user->propietario_id && !$user->restaurante_activo) {
+            $primer = \App\Models\Restaurante::where('propietario_id', $user->propietario_id)->first();
+            if ($primer) {
+                $user->restaurante_activo = $primer->id;
+                $user->save();
+                $user->load('restauranteActivo');
+            }
+        }
+
+        // Asegurar categorías base
+        if ($user->restaurante_activo) {
+            $this->asegurarCategoriasBase($user->restaurante_activo);
+        }
+
         $token = $user->createToken('api_token_' . $user->id)->plainTextToken;
 
         return response()->json([
@@ -111,10 +127,54 @@ class AuthController extends Controller
      */
     public function me(Request $request): JsonResponse
     {
+        $user = $request->user();
+
+        // Asegurar que tenga restaurante activo si es propietario
+        if ($user->propietario_id && !$user->restaurante_activo) {
+            $primer = \App\Models\Restaurante::where('propietario_id', $user->propietario_id)->first();
+            if ($primer) {
+                $user->restaurante_activo = $primer->id;
+                $user->save();
+            }
+        }
+
+        // AUTO-SANACIÓN: Verificar y crear categorías si faltan
+        if ($user->restaurante_activo) {
+            $this->asegurarCategoriasBase($user->restaurante_activo);
+        }
+
         return response()->json([
             'success' => true,
-            'data'    => $request->user()->load(['roles', 'restauranteActivo']),
+            'data'    => $user->load(['roles', 'restauranteActivo']),
         ]);
+    }
+
+    /**
+     * Asegura que un restaurante tenga las categorías base necesarias para el frontend.
+     */
+    private function asegurarCategoriasBase($restauranteId)
+    {
+        $categoriasBase = [
+            ['nombre' => 'Cocina', 'color' => '#10B981'],
+            ['nombre' => 'Barra',  'color' => '#6366F1'],
+            ['nombre' => 'Postres', 'color' => '#EC4899'],
+        ];
+
+        foreach ($categoriasBase as $cat) {
+            $existe = \App\Models\Categoria::where('restaurante_id', $restauranteId)
+                ->where('nombre', $cat['nombre'])
+                ->exists();
+
+            if (!$existe) {
+                \App\Models\Categoria::create([
+                    'restaurante_id' => $restauranteId,
+                    'nombre' => $cat['nombre'],
+                    'color'  => $cat['color'],
+                    'activo' => true,
+                    'orden'  => 0
+                ]);
+            }
+        }
     }
 
     /*
@@ -225,8 +285,8 @@ class AuthController extends Controller
                 'restaurante_activo' => $request->restaurante_id,
             ]);
 
-            // GENERACIÓN SIMPLIFICADA: ID_User + ID_Propietario
-            $finalUsername = $user->id . $request->propietario_id;
+            // GENERACIÓN SIMPLIFICADA: ID_Propietario + ID_User
+            $finalUsername = $request->propietario_id . $user->id;
             
             $user->update(['username' => $finalUsername]);
 

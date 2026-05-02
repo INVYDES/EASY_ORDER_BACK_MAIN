@@ -32,14 +32,15 @@ class EnsureTenantSelected
 
         // Si no tiene restaurante activo, intentar asignar el primero
         if (!$user->restaurante_activo) {
-            $primerRestaurante = $user->restaurantes()->first();
+            // Intentar primero como dueño, luego como asignado
+            $primerRestaurante = ($user->propietario_id) 
+                ? $user->restaurantesDelPropietario()->first() 
+                : $user->restaurantes()->first();
             
             if ($primerRestaurante) {
                 $user->restaurante_activo = $primerRestaurante->id;
                 $user->save();
             } else if ($user->hasRole('CLIENTE')) {
-                // Si es cliente y no tiene restaurante, no lo bloqueamos aún si no hay restaurante_id
-                // permitimos que siga para que la lógica del controlador maneje el error o lista vacía
                 return $next($request);
             } else {
                 return response()->json([
@@ -52,9 +53,12 @@ class EnsureTenantSelected
         // Compartir el restaurante activo con toda la aplicación
         $restauranteActivo = $user->restauranteActivo;
 
-        // Si el ID guardado no corresponde a un registro real (ej: borrado), buscar el primero disponible
+        // Si el ID guardado no corresponde a un registro real, buscar el primero disponible
         if (!$restauranteActivo) {
-            $primerRestaurante = $user->restaurantes()->first();
+            $primerRestaurante = ($user->propietario_id) 
+                ? $user->restaurantesDelPropietario()->first() 
+                : $user->restaurantes()->first();
+                
             if ($primerRestaurante) {
                 $user->restaurante_activo = $primerRestaurante->id;
                 $user->save();
