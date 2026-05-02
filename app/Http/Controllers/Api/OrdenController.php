@@ -628,6 +628,7 @@ class OrdenController extends Controller
 
         return [
             'id'                    => $orden->id,
+            'restaurante_id'        => $orden->restaurante_id,
             'folio'                 => 'ORD-' . str_pad($orden->id, 6, '0', STR_PAD_LEFT),
             'user'                  => $u ? [
                 'id'       => $u->id,
