@@ -334,6 +334,9 @@ class ProductoController extends Controller
 
     /**
      * Crear un nuevo producto
+     *
+     * ACTIVIDAD 2: Si el usuario no asigna categoria_id, se busca o crea
+     * automáticamente la categoría "Cocina" para el restaurante activo.
      */
     public function store(Request $request)
     {
@@ -381,11 +384,30 @@ class ProductoController extends Controller
                 ], 409);
             }
 
+            // ---------------------------------------------------------------
+            // ACTIVIDAD 2: Si no se envía categoria_id (o viene vacío/nulo),
+            // obtener o crear la categoría "Cocina" para este restaurante.
+            // ---------------------------------------------------------------
+            $categoriaId = $request->categoria_id;
+            if (!$categoriaId) {
+                $categoriaDefault = Categoria::firstOrCreate(
+                    [
+                        'restaurante_id' => $restauranteActivo->id,
+                        'nombre'         => 'Cocina',
+                    ],
+                    [
+                        'descripcion' => 'Categoría por defecto para productos de cocina',
+                        'activo'      => true,
+                    ]
+                );
+                $categoriaId = $categoriaDefault->id;
+            }
+
             DB::beginTransaction();
 
             $data = [
                 'restaurante_id' => $restauranteActivo->id,
-                'categoria_id' => $request->categoria_id,
+                'categoria_id' => $categoriaId,          // ← siempre tendrá valor
                 'nombre' => $request->nombre,
                 'descripcion' => $request->descripcion,
                 'precio' => $request->precio,
@@ -452,6 +474,9 @@ class ProductoController extends Controller
 
     /**
      * Actualizar un producto
+     *
+     * ACTIVIDAD 2: Si se envía categoria_id vacío/nulo, se asigna "Cocina"
+     * en lugar de dejar el campo sin categoría.
      */
     public function update(Request $request, $id)
     {
@@ -510,6 +535,28 @@ class ProductoController extends Controller
             DB::beginTransaction();
 
             $data = $request->except(['imagen', 'imagen_url', 'eliminar_imagen', 'ingredientes']);
+
+            // ---------------------------------------------------------------
+            // ACTIVIDAD 2: Si se envía categoria_id nulo/vacío, usar "Cocina".
+            // Solo aplica cuando el campo viene explícitamente en el request.
+            // ---------------------------------------------------------------
+            if ($request->has('categoria_id')) {
+                if ($request->categoria_id) {
+                    $data['categoria_id'] = $request->categoria_id;
+                } else {
+                    $categoriaDefault = Categoria::firstOrCreate(
+                        [
+                            'restaurante_id' => $restauranteActivo->id,
+                            'nombre'         => 'Cocina',
+                        ],
+                        [
+                            'descripcion' => 'Categoría por defecto para productos de cocina',
+                            'activo'      => true,
+                        ]
+                    );
+                    $data['categoria_id'] = $categoriaDefault->id;
+                }
+            }
 
             if ($request->eliminar_imagen && $producto->imagen) {
                 if (!filter_var($producto->imagen, FILTER_VALIDATE_URL)) {
@@ -924,51 +971,79 @@ class ProductoController extends Controller
 
     /**
      * Obtener productos disponibles (con stock de ingredientes suficiente)
+     * No requiere middleware restaurante_activo — lee restaurante_id del query param
+     * Incluye productos sin receta (usando stock directo)
      */
-    /**
- * Obtener productos disponibles (con stock de ingredientes suficiente)
- * ✅ No requiere middleware restaurante_activo — lee restaurante_id del query param
- * ✅ Incluye productos sin receta (usando stock directo)
- */
-public function disponibles(Request $request)
-{
-    try {
-        // ── Resolver restaurante ───────────────────────────────────────────
-        // Intenta primero el binding del middleware; si no existe, usa query param
+    public function disponibles(Request $request)
+    {
         try {
-            $restaurante = app('restaurante_activo');
-        } catch (\Exception $e) {
-            $restauranteId = $request->get('restaurante_id');
-            if (!$restauranteId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Se requiere restaurante_id',
-                ], 422);
+            // Resolver restaurante
+            try {
+                $restaurante = app('restaurante_activo');
+            } catch (\Exception $e) {
+                $restauranteId = $request->get('restaurante_id');
+                if (!$restauranteId) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Se requiere restaurante_id',
+                    ], 422);
+                }
+                $restaurante = \App\Models\Restaurante::find($restauranteId);
+                if (!$restaurante) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Restaurante no encontrado',
+                    ], 404);
+                }
             }
-            $restaurante = \App\Models\Restaurante::find($restauranteId);
-            if (!$restaurante) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Restaurante no encontrado',
-                ], 404);
-            }
-        }
 
-        // ── Query ─────────────────────────────────────────────────────────
-        $productos = Producto::with(['categoria', 'ingredientes'])
-            ->where('restaurante_id', $restaurante->id)
-            ->where('activo', true)
-            ->get();
+            $productos = Producto::with(['categoria', 'ingredientes'])
+                ->where('restaurante_id', $restaurante->id)
+                ->where('activo', true)
+                ->get();
 
-        $data = $productos->map(function ($producto) {
-            
-            // ── Producto SIN receta ───────────────────────────────────────
-            if ($producto->ingredientes->isEmpty()) {
-                // Solo mostrar si tiene stock disponible
-                if ($producto->stock <= 0) {
+            $data = $productos->map(function ($producto) {
+                
+                // Producto SIN receta
+                if ($producto->ingredientes->isEmpty()) {
+                    if ($producto->stock <= 0) {
+                        return null;
+                    }
+                    
+                    return [
+                        'id'              => $producto->id,
+                        'nombre'          => $producto->nombre,
+                        'descripcion'     => $producto->descripcion,
+                        'precio'          => (float) $producto->precio,
+                        'imagen_url'      => $producto->imagen_url,
+                        'categoria'       => $producto->categoria ? [
+                            'id'     => $producto->categoria->id,
+                            'nombre' => $producto->categoria->nombre,
+                            'color'  => $producto->categoria->color,
+                            'icono'  => $producto->categoria->icono,
+                            'orden'  => $producto->categoria->orden ?? 99,
+                        ] : null,
+                        'stock_disponible' => (int) $producto->stock,
+                        'bajo_stock'      => $producto->stock <= $producto->stock_minimo && $producto->stock_minimo > 0,
+                        'agotado'         => $producto->stock <= 0,
+                        'sin_receta'      => true,
+                    ];
+                }
+
+                // Producto CON receta
+                $stockCalculado = $producto->ingredientes->map(function ($ing) {
+                    if ($ing->pivot->cantidad <= 0) return PHP_INT_MAX;
+                    return (int) floor($ing->stock_actual / $ing->pivot->cantidad);
+                })->min();
+
+                if ($stockCalculado <= 0) {
                     return null;
                 }
-                
+
+                $bajoStock = $producto->ingredientes->some(function ($ing) {
+                    return $ing->stock_actual <= $ing->stock_minimo;
+                });
+
                 return [
                     'id'              => $producto->id,
                     'nombre'          => $producto->nombre,
@@ -982,73 +1057,37 @@ public function disponibles(Request $request)
                         'icono'  => $producto->categoria->icono,
                         'orden'  => $producto->categoria->orden ?? 99,
                     ] : null,
-                    'stock_disponible' => (int) $producto->stock,
-                    'bajo_stock'      => $producto->stock <= $producto->stock_minimo && $producto->stock_minimo > 0,
-                    'agotado'         => $producto->stock <= 0,
-                    'sin_receta'      => true,
+                    'stock_disponible' => $stockCalculado,
+                    'bajo_stock'      => $bajoStock,
+                    'agotado'         => false,
+                    'sin_receta'      => false,
                 ];
-            }
+            })->filter()->values();
 
-            // ── Producto CON receta (calcular stock por ingredientes) ──────
-            $stockCalculado = $producto->ingredientes->map(function ($ing) {
-                if ($ing->pivot->cantidad <= 0) return PHP_INT_MAX;
-                return (int) floor($ing->stock_actual / $ing->pivot->cantidad);
-            })->min();
+            $data = $data->sortBy([
+                ['categoria.orden', 'asc'],
+                ['categoria.nombre', 'asc'],
+                ['nombre', 'asc'],
+            ])->values();
 
-            // Si no hay suficiente stock de ingredientes, excluir producto
-            if ($stockCalculado <= 0) {
-                return null;
-            }
+            return response()->json([
+                'success' => true,
+                'data'    => $data,
+                'restaurante' => [
+                    'id' => $restaurante->id,
+                    'nombre' => $restaurante->nombre
+                ]
+            ]);
 
-            $bajoStock = $producto->ingredientes->some(function ($ing) {
-                return $ing->stock_actual <= $ing->stock_minimo;
-            });
-
-            return [
-                'id'              => $producto->id,
-                'nombre'          => $producto->nombre,
-                'descripcion'     => $producto->descripcion,
-                'precio'          => (float) $producto->precio,
-                'imagen_url'      => $producto->imagen_url,
-                'categoria'       => $producto->categoria ? [
-                    'id'     => $producto->categoria->id,
-                    'nombre' => $producto->categoria->nombre,
-                    'color'  => $producto->categoria->color,
-                    'icono'  => $producto->categoria->icono,
-                    'orden'  => $producto->categoria->orden ?? 99,
-                ] : null,
-                'stock_disponible' => $stockCalculado,
-                'bajo_stock'      => $bajoStock,
-                'agotado'         => false,
-                'sin_receta'      => false,
-            ];
-        })->filter()->values();
-
-        // Ordenar por categoría y orden
-        $data = $data->sortBy([
-            ['categoria.orden', 'asc'],
-            ['categoria.nombre', 'asc'],
-            ['nombre', 'asc'],
-        ])->values();
-
-        return response()->json([
-            'success' => true,
-            'data'    => $data,
-            'restaurante' => [
-                'id' => $restaurante->id,
-                'nombre' => $restaurante->nombre
-            ]
-        ]);
-
-    } catch (\Exception $e) {
-        \Log::error('Error en ProductoController@disponibles: ' . $e->getMessage());
-        return response()->json([
-            'success' => false,
-            'message' => 'Error al obtener productos disponibles',
-            'error'   => config('app.debug') ? $e->getMessage() : null
-        ], 500);
+        } catch (\Exception $e) {
+            \Log::error('Error en ProductoController@disponibles: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener productos disponibles',
+                'error'   => config('app.debug') ? $e->getMessage() : null
+            ], 500);
+        }
     }
-}
 
     /**
      * Importar productos desde un array
@@ -1188,6 +1227,318 @@ public function disponibles(Request $request)
     }
 
     /**
+     * Listar productos públicamente (sin autenticación)
+     */
+    public function indexPublic(Request $request)
+    {
+        try {
+            $restauranteId = $request->get('restaurante_id');
+            if (!$restauranteId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Se requiere restaurante_id'
+                ], 422);
+            }
+
+            $restaurante = \App\Models\Restaurante::find($restauranteId);
+            if (!$restaurante) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Restaurante no encontrado'
+                ], 404);
+            }
+
+            $query = Producto::with(['categoria'])
+                ->where('restaurante_id', $restaurante->id)
+                ->where('activo', true);
+
+            if ($request->has('categoria_id') && !empty($request->categoria_id)) {
+                $query->where('categoria_id', $request->categoria_id);
+            }
+
+            if ($request->has('buscar') && !empty($request->buscar)) {
+                $buscar = $request->buscar;
+                $query->where(function($q) use ($buscar) {
+                    $q->where('nombre', 'like', "%{$buscar}%")
+                      ->orWhere('descripcion', 'like', "%{$buscar}%");
+                });
+            }
+
+            $orderBy = $request->get('order_by', 'nombre');
+            $orderDir = $request->get('order_dir', 'asc');
+            $allowedFields = ['nombre', 'precio', 'created_at'];
+            if (in_array($orderBy, $allowedFields)) {
+                $query->orderBy($orderBy, $orderDir);
+            } else {
+                $query->orderBy('nombre', 'asc');
+            }
+
+            $perPage = min($request->get('per_page', 20), 50);
+            $productos = $query->paginate($perPage);
+
+            $productosData = $productos->map(function($producto) {
+                return [
+                    'id' => $producto->id,
+                    'nombre' => $producto->nombre,
+                    'descripcion' => $producto->descripcion,
+                    'precio' => (float) $producto->precio,
+                    'precio_formateado' => '$' . number_format($producto->precio, 2),
+                    'imagen_url' => $producto->imagen_url,
+                    'categoria' => $producto->categoria ? [
+                        'id' => $producto->categoria->id,
+                        'nombre' => $producto->categoria->nombre,
+                        'color' => $producto->categoria->color,
+                        'icono' => $producto->categoria->icono
+                    ] : null,
+                    'disponible' => $this->checkDisponibilidadPublica($producto),
+                    'tiene_oferta' => $this->checkOfertaActiva($producto)
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $productosData,
+                'pagination' => [
+                    'current_page' => $productos->currentPage(),
+                    'per_page' => $productos->perPage(),
+                    'total' => $productos->total(),
+                    'last_page' => $productos->lastPage()
+                ],
+                'restaurante' => [
+                    'id' => $restaurante->id,
+                    'nombre' => $restaurante->nombre
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error en ProductoController@indexPublic: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener productos'
+            ], 500);
+        }
+    }
+
+    /**
+     * Mostrar un producto específico (público)
+     */
+    public function showPublic($id, Request $request)
+    {
+        try {
+            $restauranteId = $request->get('restaurante_id');
+            
+            $query = Producto::with(['categoria'])
+                ->where('id', $id)
+                ->where('activo', true);
+            
+            if ($restauranteId) {
+                $query->where('restaurante_id', $restauranteId);
+            }
+            
+            $producto = $query->firstOrFail();
+
+            $ofertas = \App\Models\Oferta::where('producto_id', $producto->id)
+                ->where('activa', true)
+                ->where('fecha_inicio', '<=', now())
+                ->where('fecha_fin', '>=', now())
+                ->get();
+
+            $precioOriginal = (float) $producto->precio;
+            $precioFinal = $precioOriginal;
+            $descuentoAplicado = null;
+
+            if ($ofertas->isNotEmpty()) {
+                $mejorOferta = $ofertas->sortByDesc('descuento_porcentaje')->first();
+                $descuentoAplicado = [
+                    'porcentaje' => (float) $mejorOferta->descuento_porcentaje,
+                    'precio_con_descuento' => (float) ($precioOriginal * (1 - $mejorOferta->descuento_porcentaje / 100)),
+                    'titulo' => $mejorOferta->titulo
+                ];
+                $precioFinal = $descuentoAplicado['precio_con_descuento'];
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'id' => $producto->id,
+                    'nombre' => $producto->nombre,
+                    'descripcion' => $producto->descripcion,
+                    'precio_original' => $precioOriginal,
+                    'precio_original_formateado' => '$' . number_format($precioOriginal, 2),
+                    'precio_final' => $precioFinal,
+                    'precio_final_formateado' => '$' . number_format($precioFinal, 2),
+                    'descuento' => $descuentoAplicado,
+                    'imagen_url' => $producto->imagen_url,
+                    'categoria' => $producto->categoria ? [
+                        'id' => $producto->categoria->id,
+                        'nombre' => $producto->categoria->nombre
+                    ] : null,
+                    'disponible' => $this->checkDisponibilidadPublica($producto),
+                    'created_at' => $producto->created_at?->format('d/m/Y')
+                ]
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Producto no encontrado'
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error('Error en ProductoController@showPublic: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener producto'
+            ], 500);
+        }
+    }
+
+    /**
+     * Productos por categoría (público)
+     */
+    public function porCategoria($categoriaId, Request $request)
+    {
+        try {
+            $restauranteId = $request->get('restaurante_id');
+            
+            $query = Producto::with(['categoria'])
+                ->where('categoria_id', $categoriaId)
+                ->where('activo', true);
+            
+            if ($restauranteId) {
+                $query->where('restaurante_id', $restauranteId);
+            }
+            
+            $productos = $query->get();
+            $categoria = \App\Models\Categoria::find($categoriaId);
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'categoria' => $categoria ? [
+                        'id' => $categoria->id,
+                        'nombre' => $categoria->nombre,
+                        'descripcion' => $categoria->descripcion
+                    ] : null,
+                    'productos' => $productos->map(function($producto) {
+                        return [
+                            'id' => $producto->id,
+                            'nombre' => $producto->nombre,
+                            'precio' => (float) $producto->precio,
+                            'precio_formateado' => '$' . number_format($producto->precio, 2),
+                            'imagen_url' => $producto->imagen_url,
+                            'disponible' => $this->checkDisponibilidadPublica($producto)
+                        ];
+                    })
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error en ProductoController@porCategoria: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener productos por categoría'
+            ], 500);
+        }
+    }
+
+    /**
+     * Productos disponibles versión pública simple
+     */
+    public function disponiblesPublic(Request $request)
+    {
+        try {
+            $restauranteId = $request->get('restaurante_id');
+            if (!$restauranteId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Se requiere restaurante_id'
+                ], 422);
+            }
+
+            $restaurante = \App\Models\Restaurante::find($restauranteId);
+            if (!$restaurante) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Restaurante no encontrado'
+                ], 404);
+            }
+
+            $productos = Producto::with(['categoria', 'ingredientes'])
+                ->where('restaurante_id', $restaurante->id)
+                ->where('activo', true)
+                ->get();
+
+            $data = $productos->map(function ($producto) {
+                
+                if ($producto->ingredientes->isEmpty()) {
+                    if ($producto->stock <= 0) {
+                        return null;
+                    }
+                    
+                    return [
+                        'id' => $producto->id,
+                        'nombre' => $producto->nombre,
+                        'descripcion' => $producto->descripcion,
+                        'precio' => (float) $producto->precio,
+                        'precio_formateado' => '$' . number_format($producto->precio, 2),
+                        'imagen_url' => $producto->imagen_url,
+                        'categoria' => $producto->categoria ? [
+                            'id' => $producto->categoria->id,
+                            'nombre' => $producto->categoria->nombre,
+                        ] : null,
+                        'disponible' => true,
+                        'stock_restante' => (int) $producto->stock
+                    ];
+                }
+
+                $stockCalculado = $producto->ingredientes->map(function ($ing) {
+                    if ($ing->pivot->cantidad <= 0) return PHP_INT_MAX;
+                    return (int) floor($ing->stock_actual / $ing->pivot->cantidad);
+                })->min();
+
+                if ($stockCalculado <= 0) {
+                    return null;
+                }
+
+                return [
+                    'id' => $producto->id,
+                    'nombre' => $producto->nombre,
+                    'descripcion' => $producto->descripcion,
+                    'precio' => (float) $producto->precio,
+                    'precio_formateado' => '$' . number_format($producto->precio, 2),
+                    'imagen_url' => $producto->imagen_url,
+                    'categoria' => $producto->categoria ? [
+                        'id' => $producto->categoria->id,
+                        'nombre' => $producto->categoria->nombre,
+                    ] : null,
+                    'disponible' => true,
+                    'stock_restante' => $stockCalculado
+                ];
+            })->filter()->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+                'restaurante' => [
+                    'id' => $restaurante->id,
+                    'nombre' => $restaurante->nombre
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error en ProductoController@disponiblesPublic: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener productos disponibles'
+            ], 500);
+        }
+    }
+
+    // =========================================================================
+    // MÉTODOS PRIVADOS
+    // =========================================================================
+
+    /**
      * Formatear respuesta de producto con ingredientes
      */
     private function formatProductoResponse($producto)
@@ -1243,9 +1594,6 @@ public function disponibles(Request $request)
         ];
     }
 
-    /**
-     * Verificar si un producto se puede preparar con los ingredientes disponibles
-     */
     private function puedePrepararse($producto)
     {
         if ($producto->ingredientes->isEmpty()) {
@@ -1258,9 +1606,6 @@ public function disponibles(Request $request)
         });
     }
 
-    /**
-     * Calcular cuántas unidades del producto se pueden preparar
-     */
     private function calcularUnidadesPosibles($producto)
     {
         if ($producto->ingredientes->isEmpty()) {
@@ -1274,9 +1619,6 @@ public function disponibles(Request $request)
         })->min();
     }
 
-    /**
-     * Métodos auxiliares
-     */
     private function getEstadoStock($stock, $stockMinimo)
     {
         if ($stock <= 0) {
@@ -1330,359 +1672,29 @@ public function disponibles(Request $request)
             return [];
         }
     }
-    /**
- * ⭐ NUEVO: Listar productos públicamente (sin autenticación)
- * Para clientes que navegan por el catálogo
- */
-public function indexPublic(Request $request)
-{
-    try {
-        // Obtener restaurante de query param
-        $restauranteId = $request->get('restaurante_id');
-        if (!$restauranteId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Se requiere restaurante_id'
-            ], 422);
+
+    private function checkDisponibilidadPublica($producto)
+    {
+        if (!$producto->activo) {
+            return false;
         }
-
-        $restaurante = \App\Models\Restaurante::find($restauranteId);
-        if (!$restaurante) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Restaurante no encontrado'
-            ], 404);
+        
+        if ($producto->ingredientes->isEmpty()) {
+            return $producto->stock > 0;
         }
-
-        // Query base: solo productos activos
-        $query = Producto::with(['categoria'])
-            ->where('restaurante_id', $restaurante->id)
-            ->where('activo', true);
-
-        // Filtros básicos para clientes
-        if ($request->has('categoria_id') && !empty($request->categoria_id)) {
-            $query->where('categoria_id', $request->categoria_id);
-        }
-
-        if ($request->has('buscar') && !empty($request->buscar)) {
-            $buscar = $request->buscar;
-            $query->where(function($q) use ($buscar) {
-                $q->where('nombre', 'like', "%{$buscar}%")
-                  ->orWhere('descripcion', 'like', "%{$buscar}%");
-            });
-        }
-
-        // Ordenamiento
-        $orderBy = $request->get('order_by', 'nombre');
-        $orderDir = $request->get('order_dir', 'asc');
-        $allowedFields = ['nombre', 'precio', 'created_at'];
-        if (in_array($orderBy, $allowedFields)) {
-            $query->orderBy($orderBy, $orderDir);
-        } else {
-            $query->orderBy('nombre', 'asc');
-        }
-
-        $perPage = min($request->get('per_page', 20), 50);
-        $productos = $query->paginate($perPage);
-
-        // Formatear respuesta para cliente (sin datos sensibles)
-        $productosData = $productos->map(function($producto) {
-            return [
-                'id' => $producto->id,
-                'nombre' => $producto->nombre,
-                'descripcion' => $producto->descripcion,
-                'precio' => (float) $producto->precio,
-                'precio_formateado' => '$' . number_format($producto->precio, 2),
-                'imagen_url' => $producto->imagen_url,
-                'categoria' => $producto->categoria ? [
-                    'id' => $producto->categoria->id,
-                    'nombre' => $producto->categoria->nombre,
-                    'color' => $producto->categoria->color,
-                    'icono' => $producto->categoria->icono
-                ] : null,
-                'disponible' => $this->checkDisponibilidadPublica($producto),
-                'tiene_oferta' => $this->checkOfertaActiva($producto)
-            ];
+        
+        return $producto->ingredientes->every(function($ing) {
+            $cantidadNecesaria = $ing->pivot->cantidad ?? 0;
+            return $cantidadNecesaria > 0 && $ing->stock_actual >= $cantidadNecesaria;
         });
-
-        return response()->json([
-            'success' => true,
-            'data' => $productosData,
-            'pagination' => [
-                'current_page' => $productos->currentPage(),
-                'per_page' => $productos->perPage(),
-                'total' => $productos->total(),
-                'last_page' => $productos->lastPage()
-            ],
-            'restaurante' => [
-                'id' => $restaurante->id,
-                'nombre' => $restaurante->nombre
-            ]
-        ]);
-
-    } catch (\Exception $e) {
-        Log::error('Error en ProductoController@indexPublic: ' . $e->getMessage());
-        return response()->json([
-            'success' => false,
-            'message' => 'Error al obtener productos'
-        ], 500);
     }
-}
 
-/**
- * ⭐ NUEVO: Mostrar un producto específico (público)
- */
-public function showPublic($id, Request $request)
-{
-    try {
-        $restauranteId = $request->get('restaurante_id');
-        
-        $query = Producto::with(['categoria'])
-            ->where('id', $id)
-            ->where('activo', true);
-        
-        if ($restauranteId) {
-            $query->where('restaurante_id', $restauranteId);
-        }
-        
-        $producto = $query->firstOrFail();
-
-        // Obtener ofertas activas para este producto
-        $ofertas = \App\Models\Oferta::where('producto_id', $producto->id)
+    private function checkOfertaActiva($producto)
+    {
+        return \App\Models\Oferta::where('producto_id', $producto->id)
             ->where('activa', true)
             ->where('fecha_inicio', '<=', now())
             ->where('fecha_fin', '>=', now())
-            ->get();
-
-        // Calcular precio con descuento si aplica
-        $precioOriginal = (float) $producto->precio;
-        $precioFinal = $precioOriginal;
-        $descuentoAplicado = null;
-
-        if ($ofertas->isNotEmpty()) {
-            $mejorOferta = $ofertas->sortByDesc('descuento_porcentaje')->first();
-            $descuentoAplicado = [
-                'porcentaje' => (float) $mejorOferta->descuento_porcentaje,
-                'precio_con_descuento' => (float) ($precioOriginal * (1 - $mejorOferta->descuento_porcentaje / 100)),
-                'titulo' => $mejorOferta->titulo
-            ];
-            $precioFinal = $descuentoAplicado['precio_con_descuento'];
-        }
-
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'id' => $producto->id,
-                'nombre' => $producto->nombre,
-                'descripcion' => $producto->descripcion,
-                'precio_original' => $precioOriginal,
-                'precio_original_formateado' => '$' . number_format($precioOriginal, 2),
-                'precio_final' => $precioFinal,
-                'precio_final_formateado' => '$' . number_format($precioFinal, 2),
-                'descuento' => $descuentoAplicado,
-                'imagen_url' => $producto->imagen_url,
-                'categoria' => $producto->categoria ? [
-                    'id' => $producto->categoria->id,
-                    'nombre' => $producto->categoria->nombre
-                ] : null,
-                'disponible' => $this->checkDisponibilidadPublica($producto),
-                'created_at' => $producto->created_at?->format('d/m/Y')
-            ]
-        ]);
-
-    } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Producto no encontrado'
-        ], 404);
-    } catch (\Exception $e) {
-        Log::error('Error en ProductoController@showPublic: ' . $e->getMessage());
-        return response()->json([
-            'success' => false,
-            'message' => 'Error al obtener producto'
-        ], 500);
+            ->exists();
     }
-}
-
-/**
- * ⭐ NUEVO: Productos por categoría (público)
- */
-public function porCategoria($categoriaId, Request $request)
-{
-    try {
-        $restauranteId = $request->get('restaurante_id');
-        
-        $query = Producto::with(['categoria'])
-            ->where('categoria_id', $categoriaId)
-            ->where('activo', true);
-        
-        if ($restauranteId) {
-            $query->where('restaurante_id', $restauranteId);
-        }
-        
-        $productos = $query->get();
-        
-        // Verificar si la categoría existe
-        $categoria = \App\Models\Categoria::find($categoriaId);
-        
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'categoria' => $categoria ? [
-                    'id' => $categoria->id,
-                    'nombre' => $categoria->nombre,
-                    'descripcion' => $categoria->descripcion
-                ] : null,
-                'productos' => $productos->map(function($producto) {
-                    return [
-                        'id' => $producto->id,
-                        'nombre' => $producto->nombre,
-                        'precio' => (float) $producto->precio,
-                        'precio_formateado' => '$' . number_format($producto->precio, 2),
-                        'imagen_url' => $producto->imagen_url,
-                        'disponible' => $this->checkDisponibilidadPublica($producto)
-                    ];
-                })
-            ]
-        ]);
-
-    } catch (\Exception $e) {
-        Log::error('Error en ProductoController@porCategoria: ' . $e->getMessage());
-        return response()->json([
-            'success' => false,
-            'message' => 'Error al obtener productos por categoría'
-        ], 500);
-    }
-}
-
-/**
- * ⭐ NUEVO: Productos disponibles (versión pública simple)
- * Similar a disponibles() pero sin necesidad de auth
- */
-public function disponiblesPublic(Request $request)
-{
-    try {
-        $restauranteId = $request->get('restaurante_id');
-        if (!$restauranteId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Se requiere restaurante_id'
-            ], 422);
-        }
-
-        $restaurante = \App\Models\Restaurante::find($restauranteId);
-        if (!$restaurante) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Restaurante no encontrado'
-            ], 404);
-        }
-
-        $productos = Producto::with(['categoria', 'ingredientes'])
-            ->where('restaurante_id', $restaurante->id)
-            ->where('activo', true)
-            ->get();
-
-        $data = $productos->map(function ($producto) {
-            
-            // Producto SIN receta
-            if ($producto->ingredientes->isEmpty()) {
-                if ($producto->stock <= 0) {
-                    return null;
-                }
-                
-                return [
-                    'id' => $producto->id,
-                    'nombre' => $producto->nombre,
-                    'descripcion' => $producto->descripcion,
-                    'precio' => (float) $producto->precio,
-                    'precio_formateado' => '$' . number_format($producto->precio, 2),
-                    'imagen_url' => $producto->imagen_url,
-                    'categoria' => $producto->categoria ? [
-                        'id' => $producto->categoria->id,
-                        'nombre' => $producto->categoria->nombre,
-                    ] : null,
-                    'disponible' => true,
-                    'stock_restante' => (int) $producto->stock
-                ];
-            }
-
-            // Producto CON receta
-            $stockCalculado = $producto->ingredientes->map(function ($ing) {
-                if ($ing->pivot->cantidad <= 0) return PHP_INT_MAX;
-                return (int) floor($ing->stock_actual / $ing->pivot->cantidad);
-            })->min();
-
-            if ($stockCalculado <= 0) {
-                return null;
-            }
-
-            return [
-                'id' => $producto->id,
-                'nombre' => $producto->nombre,
-                'descripcion' => $producto->descripcion,
-                'precio' => (float) $producto->precio,
-                'precio_formateado' => '$' . number_format($producto->precio, 2),
-                'imagen_url' => $producto->imagen_url,
-                'categoria' => $producto->categoria ? [
-                    'id' => $producto->categoria->id,
-                    'nombre' => $producto->categoria->nombre,
-                ] : null,
-                'disponible' => true,
-                'stock_restante' => $stockCalculado
-            ];
-        })->filter()->values();
-
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-            'restaurante' => [
-                'id' => $restaurante->id,
-                'nombre' => $restaurante->nombre
-            ]
-        ]);
-
-    } catch (\Exception $e) {
-        Log::error('Error en ProductoController@disponiblesPublic: ' . $e->getMessage());
-        return response()->json([
-            'success' => false,
-            'message' => 'Error al obtener productos disponibles'
-        ], 500);
-    }
-}
-
-// ========== MÉTODOS AUXILIARES PRIVADOS ==========
-
-/**
- * Verificar disponibilidad de un producto (para cliente público)
- */
-private function checkDisponibilidadPublica($producto)
-{
-    if (!$producto->activo) {
-        return false;
-    }
-    
-    // Sin receta: verificar stock directo
-    if ($producto->ingredientes->isEmpty()) {
-        return $producto->stock > 0;
-    }
-    
-    // Con receta: verificar stock de ingredientes
-    return $producto->ingredientes->every(function($ing) {
-        $cantidadNecesaria = $ing->pivot->cantidad ?? 0;
-        return $cantidadNecesaria > 0 && $ing->stock_actual >= $cantidadNecesaria;
-    });
-}
-
-/**
- * Verificar si el producto tiene oferta activa
- */
-private function checkOfertaActiva($producto)
-{
-    return \App\Models\Oferta::where('producto_id', $producto->id)
-        ->where('activa', true)
-        ->where('fecha_inicio', '<=', now())
-        ->where('fecha_fin', '>=', now())
-        ->exists();
-}
 }

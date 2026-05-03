@@ -274,16 +274,27 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     // ========== ÓRDENES ==========
     Route::prefix('ordenes')->group(function () {
-        Route::get('/resumen',  [OrdenController::class, 'resumen'])->middleware('permission:VER_ORDENES');
-        Route::get('/hoy',      [OrdenController::class, 'hoy'])->middleware('permission:VER_ORDENES');
-        Route::get('/',         [OrdenController::class, 'index'])->middleware('permission:VER_ORDENES');
-        Route::post('/',        [OrdenController::class, 'store'])->middleware('permission:CREAR_ORDENES');
-        Route::get('/{orden}',  [OrdenController::class, 'show'])->middleware('permission:VER_ORDENES');
-        Route::put('/{orden}',  [OrdenController::class, 'update'])->middleware('permission:EDITAR_ORDENES');
-        Route::put('/{orden}/station-status',                    [OrdenController::class, 'updateStationStatus'])->middleware('permission:EDITAR_ORDENES');
-        Route::post('/{orden}/actualizar-estado-estacion',       [OrdenDetalleController::class, 'actualizarEstadoPorEstacion'])->middleware('permission:EDITAR_ORDENES');
-        Route::post('/{orden}/cerrar',                           [OrdenController::class, 'cerrar'])->middleware('permission:CERRAR_ORDENES');
-    });
+    // Rutas con middleware de permisos (de la primera versión)
+    Route::get('/resumen',  [OrdenController::class, 'resumen'])->middleware('permission:VER_ORDENES');
+    Route::get('/hoy',      [OrdenController::class, 'hoy'])->middleware('permission:VER_ORDENES');
+    Route::get('/',         [OrdenController::class, 'index'])->middleware('permission:VER_ORDENES');
+    Route::post('/',        [OrdenController::class, 'store'])->middleware('permission:CREAR_ORDENES');
+    Route::get('/{orden}',  [OrdenController::class, 'show'])->middleware('permission:VER_ORDENES');
+    Route::put('/{orden}',  [OrdenController::class, 'update'])->middleware('permission:EDITAR_ORDENES');
+    
+    // Ruta combinada: put + patch para station-status
+    Route::put('/{orden}/station-status',               [OrdenController::class, 'updateStationStatus'])->middleware('permission:EDITAR_ORDENES');
+    Route::patch('/{orden}/estacion',                   [OrdenController::class, 'updateStationStatus'])->middleware('permission:EDITAR_ORDENES');
+    
+    // Ruta del OrdenDetalleController (mantenida)
+    Route::post('/{orden}/actualizar-estado-estacion',  [OrdenDetalleController::class, 'actualizarEstadoPorEstacion'])->middleware('permission:EDITAR_ORDENES');
+    
+    // Rutas de cerrar (ambas versiones son iguales)
+    Route::post('/{orden}/cerrar',  [OrdenController::class, 'cerrar'])->middleware('permission:CERRAR_ORDENES');
+    
+    // NUEVA ruta: dividir cuenta
+    Route::post('/{orden}/dividir', [OrdenController::class, 'dividirCuenta'])->middleware('permission:EDITAR_ORDENES'); // o el permiso que corresponda
+});
 
     // ========== DETALLES DE ÓRDENES ==========
     Route::prefix('ordenes/{orden}/detalles')->group(function () {

@@ -190,6 +190,11 @@ class OrdenController extends Controller
         }
     }
 
+    // =========================================================================
+    // ACTIVIDAD: Agregar productos a orden abierta de la misma mesa
+    // Si existe una orden no CERRADA para esa mesa, se anexan los productos.
+    // Si no existe, se crea una nueva orden.
+    // =========================================================================
     public function store(Request $request)
     {
         $request->validate([
@@ -214,8 +219,21 @@ class OrdenController extends Controller
 
             $restauranteActivo = app('restaurante_activo');
 
-            // Verificar productos — acepta con y sin ingredientes
-            $erroresStock     = [];
+            // -----------------------------------------------------------------
+            // ACTIVIDAD 4: Buscar orden abierta para la misma mesa
+            // Si hay una orden activa (no CERRADA) para esta mesa, se usará esa.
+            // -----------------------------------------------------------------
+            $ordenExistente = null;
+            if ($request->filled('mesa')) {
+                $ordenExistente = Orden::where('restaurante_id', $restauranteActivo->id)
+                    ->where('mesa', $request->mesa)
+                    ->whereNotIn('estado', ['CERRADA', 'CANCELADA', 'PAGADA'])
+                    ->latest()
+                    ->first();
+            }
+
+            // Verificar y preparar productos/ingredientes
+            $erroresStock         = [];
             $productosVerificados = [];
 
             foreach ($request->productos as $item) {
@@ -233,8 +251,7 @@ class OrdenController extends Controller
 
                     foreach ($paquete->productos as $pComp) {
                         $cantidadTotal = $pComp->pivot->cantidad * $item['cantidad'];
-                        
-                        // Verificar stock del producto componente
+
                         if ($pComp->ingredientes->isEmpty()) {
                             if ($pComp->stock < $cantidadTotal) {
                                 $erroresStock[] = "Stock insuficiente para '{$pComp->nombre}' (en paquete {$paquete->nombre}). Disponible: {$pComp->stock}";
@@ -252,12 +269,14 @@ class OrdenController extends Controller
 
                         if (empty($erroresStock)) {
                             $productosVerificados[] = [
-                                'producto' => $pComp,
-                                'cantidad' => $cantidadTotal,
-                                'notas'    => $item['notas'] ?? null,
-                                'precio'   => 0, // Los componentes de un paquete tienen precio 0
-                                'paquete_id' => $paquete->id,
-                                'paquete_precio' => ($pComp->id === $paquete->productos->first()->id) ? $paquete->precio * $item['cantidad'] : 0
+                                'producto'       => $pComp,
+                                'cantidad'       => $cantidadTotal,
+                                'notas'          => $item['notas'] ?? null,
+                                'precio'         => 0,
+                                'paquete_id'     => $paquete->id,
+                                'paquete_precio' => ($pComp->id === $paquete->productos->first()->id)
+                                    ? $paquete->precio * $item['cantidad']
+                                    : 0,
                             ];
                         }
                     }
@@ -275,7 +294,6 @@ class OrdenController extends Controller
                     continue;
                 }
 
-                // ✅ Producto SIN ingredientes — verificar stock directo
                 if ($producto->ingredientes->isEmpty()) {
                     if ($producto->stock < $item['cantidad']) {
                         $erroresStock[] = "Stock insuficiente para '{$producto->nombre}'. Disponible: {$producto->stock}";
@@ -284,13 +302,12 @@ class OrdenController extends Controller
                             'producto' => $producto,
                             'cantidad' => $item['cantidad'],
                             'notas'    => $item['notas'] ?? null,
-                            'precio'   => $producto->precio
+                            'precio'   => $producto->precio,
                         ];
                     }
                     continue;
                 }
 
-                // ✅ Producto CON ingredientes — verificar stock de ingredientes
                 $maxDisponible = $producto->ingredientes->map(function ($ing) use ($item) {
                     $necesario = $ing->pivot->cantidad * $item['cantidad'];
                     return $necesario > 0 ? floor($ing->stock_actual / $necesario) : PHP_INT_MAX;
@@ -303,7 +320,7 @@ class OrdenController extends Controller
                         'producto' => $producto,
                         'cantidad' => $item['cantidad'],
                         'notas'    => $item['notas'] ?? null,
-                        'precio'   => $producto->precio
+                        'precio'   => $producto->precio,
                     ];
                 }
             }
@@ -318,39 +335,45 @@ class OrdenController extends Controller
 
             DB::beginTransaction();
 
-            $orden = Orden::create([
-                'restaurante_id' => $restauranteActivo->id,
-                'cliente_id'     => $request->cliente_id,
-                'usuario_id'     => $user->id,
-                'mesa'           => $request->mesa,
-                'metodo_pago'    => $request->metodo_pago,
-                'total'          => 0,
-                'propina'        => $request->propina ?? 0,
-                'notas'          => $request->notas,
-                'estado'         => 'ABIERTA',
-            ]);
+            // -----------------------------------------------------------------
+            // ACTIVIDAD 4: Si hay orden existente, usar esa; si no, crear nueva
+            // -----------------------------------------------------------------
+            if ($ordenExistente) {
+                $orden   = $ordenExistente;
+                $esNueva = false;
+            } else {
+                $orden = Orden::create([
+                    'restaurante_id' => $restauranteActivo->id,
+                    'cliente_id'     => $request->cliente_id,
+                    'usuario_id'     => $user->id,
+                    'mesa'           => $request->mesa,
+                    'metodo_pago'    => $request->metodo_pago,
+                    'total'          => 0,
+                    'propina'        => $request->propina ?? 0,
+                    'notas'          => $request->notas,
+                    'estado'         => 'ABIERTA',
+                ]);
+                $esNueva = true;
+            }
 
-            $total    = 0;
-            $detalles = [];
+            $detalles    = [];
+            $subtotalNuevo = 0;
 
             foreach ($productosVerificados as $item) {
                 $productoModel = $item['producto'];
-                $precio = $item['precio'] ?? $productoModel->precio;
-                $paqueteId = $item['paquete_id'] ?? null;
+                $precio        = $item['precio'] ?? $productoModel->precio;
+                $paqueteId     = $item['paquete_id'] ?? null;
                 $paquetePrecio = $item['paquete_precio'] ?? 0;
+                $subtotal      = ($precio * $item['cantidad']) + $paquetePrecio;
 
-                // El subtotal para la línea será el precio del producto (0 si es parte de paquete) 
-                // MÁS el precio del paquete si es el ítem representante
-                $subtotal = ($precio * $item['cantidad']) + $paquetePrecio;
-
-                $detalle  = OrdenDetalle::create([
-                    'orden_id'        => $orden->id,
-                    'producto_id'     => $productoModel->id,
-                    'paquete_id'      => $paqueteId,
-                    'cantidad'        => $item['cantidad'],
-                    'precio_unitario' => $precio + ($item['cantidad'] > 0 ? ($paquetePrecio / $item['cantidad']) : 0),
-                    'subtotal'        => $subtotal,
-                    'notas'           => $item['notas'],
+                $detalle = OrdenDetalle::create([
+                    'orden_id'           => $orden->id,
+                    'producto_id'        => $productoModel->id,
+                    'paquete_id'         => $paqueteId,
+                    'cantidad'           => $item['cantidad'],
+                    'precio_unitario'    => $precio + ($item['cantidad'] > 0 ? ($paquetePrecio / $item['cantidad']) : 0),
+                    'subtotal'           => $subtotal,
+                    'notas'              => $item['notas'],
                     'estado_preparacion' => 'PENDIENTE',
                 ]);
 
@@ -367,39 +390,93 @@ class OrdenController extends Controller
                     'estado_preparacion'  => 'PENDIENTE',
                 ];
 
-                $total += $subtotal;
+                $subtotalNuevo += $subtotal;
+
+                // -------------------------------------------------------------
+                // ACTIVIDAD 1: Descontar stock al momento de pedir
+                // Productos SIN ingredientes: descontar stock directo
+                // Productos CON ingredientes: descontar stock de ingredientes
+                // -------------------------------------------------------------
+                if ($productoModel->ingredientes->isEmpty()) {
+                    // Producto sin ingredientes — descontar stock directo
+                    $productoModel->decrement('stock', $item['cantidad']);
+                } else {
+                    // Producto con ingredientes — descontar stock de cada ingrediente
+                    foreach ($productoModel->ingredientes as $ingrediente) {
+                        $cantidadPorPorcion = $ingrediente->pivot->cantidad ?? 0;
+                        $cantidadADescontar = $cantidadPorPorcion * $item['cantidad'];
+
+                        if ($cantidadADescontar <= 0) continue;
+
+                        $anterior = $ingrediente->stock_actual;
+                        $nueva    = $anterior - $cantidadADescontar;
+
+                        if ($nueva < 0) {
+                            // Aunque ya validamos, doble seguridad dentro de la transacción
+                            throw new \Exception(
+                                "Stock insuficiente de: {$ingrediente->nombre}. " .
+                                "Disponible: {$anterior}, Necesario: {$cantidadADescontar}"
+                            );
+                        }
+
+                        $ingrediente->decrement('stock_actual', $cantidadADescontar);
+
+                        IngredienteMovimiento::create([
+                            'ingrediente_id'      => $ingrediente->id,
+                            'user_id'             => $user->id,
+                            'tipo'                => 'salida',
+                            'cantidad_anterior'   => $anterior,
+                            'cantidad_movimiento' => $cantidadADescontar,
+                            'cantidad_nueva'      => $nueva,
+                            'motivo'              => "Venta de {$item['cantidad']}x {$productoModel->nombre} (Orden #{$orden->id})",
+                            'orden_id'            => $orden->id,
+                        ]);
+                    }
+                }
             }
 
-            $totalConPropina = $total + ($request->propina ?? 0);
+            // Recalcular total de la orden (suma de todos los detalles)
+            $totalActual   = $orden->detalles()->sum('subtotal');
+            $propina       = $esNueva ? ($request->propina ?? 0) : ($orden->propina ?? 0);
+            $totalConPropina = $totalActual + $propina;
             $orden->update(['total' => $totalConPropina]);
 
             DB::commit();
 
             $orden->load(['usuario:id,name,username', 'detalles.producto.categoria']);
 
-            // ✅ Broadcast en try/catch
             try {
-                broadcast(new \App\Events\OrdenActualizada($orden, 'creada', $restauranteActivo->id));
+                broadcast(new \App\Events\OrdenActualizada(
+                    $orden,
+                    $esNueva ? 'creada' : 'productos_agregados',
+                    $restauranteActivo->id
+                ));
             } catch (\Exception $be) {
                 \Log::warning('Broadcast orden store: ' . $be->getMessage());
             }
 
+            $mensaje = $esNueva
+                ? 'Orden creada correctamente'
+                : "Productos agregados a la orden #{$orden->id} de la mesa {$orden->mesa}";
+
             return response()->json([
-                'success' => true,
-                'message' => 'Orden creada correctamente',
-                'data'    => [
+                'success'   => true,
+                'message'   => $mensaje,
+                'es_nueva'  => $esNueva,
+                'data'      => [
                     'id'               => $orden->id,
                     'folio'            => 'ORD-' . str_pad($orden->id, 6, '0', STR_PAD_LEFT),
                     'mesa'             => $orden->mesa,
                     'total'            => (float) $totalConPropina,
                     'total_formateado' => '$' . number_format($totalConPropina, 2),
-                    'subtotal'         => (float) $total,
-                    'propina'          => (float) $orden->propina,
+                    'subtotal'         => (float) $totalActual,
+                    'propina'          => (float) $propina,
                     'estado'           => $orden->estado,
-                    'detalles'         => $detalles,
+                    'detalles_nuevos'  => $detalles,         // Solo los recién agregados
+                    'detalles_totales' => $this->transformarOrden($orden)['detalles'], // Todos
                     'created_at'       => $orden->created_at,
                 ],
-            ], 201);
+            ], $esNueva ? 201 : 200);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
@@ -443,7 +520,6 @@ class OrdenController extends Controller
             $orden->update($campos);
             $orden->load(['usuario:id,name,username', 'detalles.producto.categoria']);
 
-            // ✅ Broadcast en try/catch
             try {
                 broadcast(new \App\Events\OrdenActualizada(
                     $orden,
@@ -487,6 +563,10 @@ class OrdenController extends Controller
         }
     }
 
+    // =========================================================================
+    // ACTIVIDAD 1: cerrar() ya NO descuenta stock porque store() lo hizo
+    // Solo cambia el estado de la orden a CERRADA y registra en caja.
+    // =========================================================================
     public function cerrar(Request $request, $id)
     {
         try {
@@ -505,54 +585,13 @@ class OrdenController extends Controller
                 return response()->json(['success' => false, 'message' => 'La orden ya está cerrada'], 400);
             }
 
-            DB::transaction(function () use ($orden, $user) {
-
-                foreach ($orden->detalles as $detalle) {
-                    $producto = $detalle->producto;
-                    if (!$producto) continue;
-
-                    // ✅ Producto SIN ingredientes — descontar stock directo
-                    if (!$producto->ingredientes || $producto->ingredientes->isEmpty()) {
-                        $producto->decrement('stock', $detalle->cantidad);
-                        continue;
-                    }
-
-                    // ✅ Producto CON ingredientes — descontar stock de ingredientes
-                    foreach ($producto->ingredientes as $ingrediente) {
-                        $cantidadPorPorcion = $ingrediente->pivot->cantidad ?? 0;
-                        $cantidadADescontar = $cantidadPorPorcion * $detalle->cantidad;
-
-                        if ($cantidadADescontar <= 0) continue;
-
-                        $anterior = $ingrediente->stock_actual;
-                        $nueva    = $anterior - $cantidadADescontar;
-
-                        if ($nueva < 0) {
-                            throw new \Exception("Stock insuficiente de: {$ingrediente->nombre}. " .
-                                "Disponible: {$anterior}, Necesario: {$cantidadADescontar}");
-                        }
-
-                        $ingrediente->decrement('stock_actual', $cantidadADescontar);
-
-                        IngredienteMovimiento::create([
-                            'ingrediente_id'      => $ingrediente->id,
-                            'user_id'             => $user->id,
-                            'tipo'                => 'salida',
-                            'cantidad_anterior'   => $anterior,
-                            'cantidad_movimiento' => $cantidadADescontar,
-                            'cantidad_nueva'      => $nueva,
-                            'motivo'              => "Venta de {$detalle->cantidad}x {$producto->nombre} (Orden #{$orden->id})",
-                            'orden_id'            => $orden->id,
-                        ]);
-                    }
-                }
-
+            // El stock ya fue descontado en store(). Solo cerramos la orden.
+            DB::transaction(function () use ($orden) {
                 $orden->update(['estado' => 'CERRADA']);
             });
 
             $orden->load(['usuario:id,name,username', 'detalles.producto.categoria']);
 
-            // ✅ Broadcast en try/catch
             try {
                 broadcast(new \App\Events\OrdenActualizada($orden, 'cerrada', $restauranteActivo->id));
                 broadcast(new \App\Events\CajaActualizada('venta', $restauranteActivo->id, [
@@ -585,6 +624,132 @@ class OrdenController extends Controller
             return response()->json(['success' => false, 'message' => 'Orden no encontrada'], 404);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error al cerrar orden', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function dividirCuenta(Request $request, $id)
+    {
+        $request->validate([
+            'metodo'                   => 'required|in:equitativo,manual',
+            'comensales'               => 'required_if:metodo,equitativo|integer|min:2|max:20',
+            'divisiones'               => 'required_if:metodo,manual|array|min:2',
+            'divisiones.*.comensal'    => 'required|integer|min:1',
+            'divisiones.*.detalles'    => 'required|array|min:1',
+            'divisiones.*.detalles.*'  => 'integer|exists:orden_detalles,id',
+        ]);
+
+        try {
+            $user = $request->user();
+            if (!$user->hasPermission('EDITAR_ORDENES')) {
+                return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
+            }
+
+            $restauranteActivo = app('restaurante_activo');
+            $orden = Orden::with(['detalles.producto'])
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->where('id', $id)
+                ->firstOrFail();
+
+            if ($orden->estado === 'CERRADA') {
+                return response()->json(['success' => false, 'message' => 'No se puede dividir una orden cerrada'], 400);
+            }
+
+            $totalOrden = (float) $orden->total;
+            $cuentas    = [];
+
+            if ($request->metodo === 'equitativo') {
+                // -----------------------------------------------------------------
+                // División equitativa: el total se divide entre N comensales.
+                // Los detalles individuales no se mueven; el monto sí.
+                // -----------------------------------------------------------------
+                $numComensales = (int) $request->comensales;
+                $montoPorPersona = round($totalOrden / $numComensales, 2);
+                // Ajustar el último para cubrir residuo de centavos
+                $montoUltimo = $totalOrden - ($montoPorPersona * ($numComensales - 1));
+
+                for ($i = 1; $i <= $numComensales; $i++) {
+                    $cuentas[] = [
+                        'comensal'  => $i,
+                        'monto'     => $i === $numComensales ? $montoUltimo : $montoPorPersona,
+                        'monto_fmt' => '$' . number_format($i === $numComensales ? $montoUltimo : $montoPorPersona, 2),
+                        'detalles'  => [], // Sin asignación específica de platillos
+                    ];
+                }
+
+            } else {
+                // -----------------------------------------------------------------
+                // División manual: cada comensal tiene detalles específicos.
+                // Se valida que todos los detalles pertenezcan a la orden
+                // y que no haya detalles sin asignar.
+                // -----------------------------------------------------------------
+                $idsAsignados    = [];
+                $idsEnOrden      = $orden->detalles->pluck('id')->toArray();
+                $detallesMap     = $orden->detalles->keyBy('id');
+
+                foreach ($request->divisiones as $div) {
+                    $subtotalComensal = 0;
+                    $detallesComensal = [];
+
+                    foreach ($div['detalles'] as $detalleId) {
+                        if (!in_array($detalleId, $idsEnOrden)) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => "El detalle #{$detalleId} no pertenece a esta orden",
+                            ], 422);
+                        }
+                        if (in_array($detalleId, $idsAsignados)) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => "El detalle #{$detalleId} fue asignado a más de un comensal",
+                            ], 422);
+                        }
+
+                        $idsAsignados[] = $detalleId;
+                        $det = $detallesMap[$detalleId];
+                        $subtotalComensal += (float) $det->subtotal;
+                        $detallesComensal[] = [
+                            'id'              => $det->id,
+                            'producto_nombre' => $det->producto->nombre ?? 'Producto eliminado',
+                            'cantidad'        => $det->cantidad,
+                            'subtotal'        => (float) $det->subtotal,
+                            'subtotal_fmt'    => '$' . number_format($det->subtotal, 2),
+                        ];
+                    }
+
+                    $cuentas[] = [
+                        'comensal'  => $div['comensal'],
+                        'monto'     => $subtotalComensal,
+                        'monto_fmt' => '$' . number_format($subtotalComensal, 2),
+                        'detalles'  => $detallesComensal,
+                    ];
+                }
+
+                // Verificar que todos los detalles de la orden estén asignados
+                $sinAsignar = array_diff($idsEnOrden, $idsAsignados);
+                if (!empty($sinAsignar)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Hay productos sin asignar a ningún comensal',
+                        'detalles_sin_asignar' => array_values($sinAsignar),
+                    ], 422);
+                }
+            }
+
+            return response()->json([
+                'success'     => true,
+                'message'     => 'División de cuenta calculada',
+                'orden_id'    => $orden->id,
+                'folio'       => 'ORD-' . str_pad($orden->id, 6, '0', STR_PAD_LEFT),
+                'total'       => $totalOrden,
+                'total_fmt'   => '$' . number_format($totalOrden, 2),
+                'metodo'      => $request->metodo,
+                'cuentas'     => $cuentas,
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['success' => false, 'message' => 'Orden no encontrada'], 404);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error al dividir cuenta', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -704,35 +869,32 @@ class OrdenController extends Controller
     public function updateStationStatus(Request $request, $id)
     {
         $request->validate([
-            'detalles' => 'required|array|min:1',
-            'detalles.*' => 'exists:orden_detalles,id',
-            'estado_preparacion' => 'required|in:PENDIENTE,EN_PREPARACION,LISTO,ENTREGADO'
+            'detalles'           => 'required|array|min:1',
+            'detalles.*'         => 'exists:orden_detalles,id',
+            'estado_preparacion' => 'required|in:PENDIENTE,EN_PREPARACION,LISTO,ENTREGADO',
         ]);
 
         try {
-            $user = $request->user();
             $restauranteActivo = app('restaurante_activo');
-            
+
             $orden = Orden::with('detalles')
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();
 
-            // Actualizar detalles seleccionados
             OrdenDetalle::whereIn('id', $request->detalles)
                 ->where('orden_id', $orden->id)
                 ->update(['estado_preparacion' => $request->estado_preparacion]);
 
-            // Verificar y actualizar estado global de la orden
             $orden->verificarYActualizarEstadoGlobal();
 
             return response()->json([
                 'success' => true,
                 'message' => 'Estado de preparación actualizado',
-                'data' => [
-                    'orden_id' => $orden->id,
-                    'nuevo_estado_orden' => $orden->estado
-                ]
+                'data'    => [
+                    'orden_id'          => $orden->id,
+                    'nuevo_estado_orden' => $orden->estado,
+                ],
             ]);
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
