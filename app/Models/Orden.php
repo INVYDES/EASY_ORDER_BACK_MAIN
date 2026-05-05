@@ -239,10 +239,14 @@ class Orden extends Model
         } 
         // Por defecto
         else {
-            $nuevoEstado = 'POR_PREPARAR';
+            if ($this->estado === 'ABIERTA') {
+                $nuevoEstado = 'ABIERTA';
+            } else {
+                $nuevoEstado = 'POR_PREPARAR';
+            }
         }
 
-        if ($this->estado !== $nuevoEstado && !in_array($this->estado, ['ENTREGADA', 'CERRADA', 'CANCELADA', 'PAGADA'])) {
+        if ($this->estado !== $nuevoEstado && !in_array($this->estado, ['CERRADA', 'CANCELADA', 'PAGADA'])) {
             $this->update(['estado' => $nuevoEstado]);
             
             // Emitir evento si es necesario (el controlador lo debería hacer, pero aseguramos estado correcto)

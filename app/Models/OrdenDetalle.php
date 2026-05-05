@@ -17,6 +17,7 @@ class OrdenDetalle extends Model
         'precio_unitario',  // ✅ NOMBRE CORRECTO
         'subtotal',
         'notas',
+        'nom_comensal',
         'estado_preparacion'
     ];
 
