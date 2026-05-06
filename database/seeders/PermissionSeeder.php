@@ -104,6 +104,11 @@ class PermissionSeeder extends Seeder
 
             // Postres (67)
             ['id' => 67, 'nombre' => 'VER_POSTRES', 'descripcion' => 'Ver postres'],
+
+            // RRHH / Nómina (68-70)
+            ['id' => 68, 'nombre' => 'VER_EMPLEADOS', 'descripcion' => 'Ver catálogo de empleados y ficha'],
+            ['id' => 69, 'nombre' => 'VER_ASISTENCIA', 'descripcion' => 'Ver y registrar asistencias'],
+            ['id' => 70, 'nombre' => 'VER_NOMINA', 'descripcion' => 'Ver y generar nóminas'],
         ];
 
         foreach ($permissions as $perm) {

@@ -99,6 +99,7 @@ class MercadoPagoController extends Controller
             $payment = $paymentClient->get($paymentId);
 
             if (!$payment || $payment->status !== 'approved') {
+                \Log::info('Webhook MP: Pago no aprobado, estado: ' . ($payment->status ?? 'nulo'));
                 return response()->json(['ok' => true]);
             }
 
@@ -106,33 +107,68 @@ class MercadoPagoController extends Controller
             $reference = $payment->external_reference;
 
             if (str_starts_with($reference, 'LIC-')) {
+                // Extraer licencia_id y propietario_id de la referencia
+                // La referencia es: LIC-{licencia_id}-{propietario_id}
+                $parts = explode('-', $reference);
 
-                [$prefix, $licenciaId, $propietarioId] = explode('-', $reference);
+                // Validar que tengamos al menos 3 partes
+                if (count($parts) < 3) {
+                    \Log::warning('Webhook MP: Referencia inválida - ' . $reference);
+                    return response()->json(['ok' => true, 'message' => 'Referencia inválida']);
+                }
 
-                PropietarioLicencia::where('propietario_id', $propietarioId)
+                $licenciaId = $parts[1];
+                $propietarioId = $parts[2];
+
+                // Buscar el registro pendiente y actualizarlo
+                $propLicencia = PropietarioLicencia::where('propietario_id', $propietarioId)
                     ->where('licencia_id', $licenciaId)
                     ->where('estado', 'PENDIENTE')
-                    ->update([
+                    ->first();
+
+                if ($propLicencia) {
+                    $propLicencia->update([
                         'estado' => 'ACTIVA',
-                        'mp_payment_id' => $paymentId
+                        'mercadopago_payment_id' => $paymentId,
+                        'ultimo_pago_at' => now()
                     ]);
+                    \Log::info('Webhook MP: Licencia activada', [
+                        'prop_licencia_id' => $propLicencia->id,
+                        'payment_id' => $paymentId
+                    ]);
+                } else {
+                    \Log::warning('Webhook MP: No se encontró PropietarioLicencia pendiente', [
+                        'propietario_id' => $propietarioId,
+                        'licencia_id' => $licenciaId
+                    ]);
+                }
             }
 
             return response()->json(['ok' => true]);
 
         } catch (\MercadoPago\Exceptions\MPApiException $e) {
+            $response = $e->getApiResponse();
 
-    $response = $e->getApiResponse();
+            \Log::error('MP API ERROR', [
+                'status' => $response->getStatusCode(),
+                'content' => $response->getContent()
+            ]);
 
-    \Log::error('MP ERROR', [
-        'status' => $response->getStatusCode(),
-        'content' => $response->getContent()
-    ]);
+            return response()->json([
+                'success' => false,
+                'error' => $response->getContent()
+            ], 500);
+        } catch (\Exception $e) {
+            \Log::error('MP Webhook Exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
 
-    return response()->json([
-        'success' => false,
-        'error' => $response->getContent()
-    ], 500);
-}
+            return response()->json([
+                'success' => false,
+                'error' => 'Error en el webhook'
+            ], 500);
+        }
     }
 }

@@ -52,4 +52,14 @@ class Restaurante extends Model
     {
         return $this->hasMany(Orden::class);
     }
+
+    public function asistencias()
+    {
+        return $this->hasMany(Asistencia::class);
+    }
+
+    public function nominas()
+    {
+        return $this->hasMany(Nomina::class);
+    }
 }

@@ -69,6 +69,16 @@ class User extends Authenticatable
         return $this->hasMany(Restaurante::class, 'propietario_id', 'propietario_id');
     }
 
+    public function asistencias()
+    {
+        return $this->hasMany(Asistencia::class);
+    }
+
+    public function nominas()
+    {
+        return $this->hasMany(Nomina::class);
+    }
+
     /*
     |--------------------------------------------------------------------------
     | MÉTODOS DE ROLES Y PERMISOS

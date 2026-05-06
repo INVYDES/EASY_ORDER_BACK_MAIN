@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\CajaController;
 use App\Http\Controllers\Api\AnuncioController;
 use App\Http\Controllers\Api\GastoController;
 use App\Http\Controllers\Api\IngredienteController;
+use App\Http\Controllers\Api\EmpleadoController;
 use App\Http\Controllers\Api\OfertaController;
 use App\Http\Controllers\Api\PayPalController;
 use App\Http\Controllers\Api\LicenciaPagoController;
@@ -91,7 +92,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me',                   [AuthController::class, 'me']);
     Route::post('/cambiar-restaurante', [AuthController::class, 'cambiarRestaurante']);
     Route::post('/change-password',     [AuthController::class, 'changePassword']);
-    Route::post('/empleados',           [AuthController::class, 'registerEmpleado']);
+    /** Registro de usuario-empleado (login app). El CRUD de personal va en /empleados con middleware tenant. */
+    Route::post('/register-empleado',   [AuthController::class, 'registerEmpleado']);
 
     // ========== PERFIL DE USUARIO ==========
     Route::get('/user',                   [UserController::class, 'show']);
@@ -361,6 +363,36 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::get('/',          [LogController::class, 'index'])->middleware('permission:VER_LOGS');
         Route::delete('/limpiar',[LogController::class, 'limpiar'])->middleware('permission:ELIMINAR_LOGS');
         Route::get('/{log}',     [LogController::class, 'show'])->middleware('permission:VER_LOGS');
+    });
+
+    // ========== EMPLEADOS ==========
+    Route::prefix('empleados')->middleware('permission:VER_EMPLEADOS')->group(function () {
+        Route::get('/',                 [EmpleadoController::class, 'index']);
+        Route::post('/',                [EmpleadoController::class, 'store']);
+        Route::get('/{empleado}',       [EmpleadoController::class, 'show']);
+        Route::put('/{empleado}',       [EmpleadoController::class, 'update']);
+        Route::delete('/{empleado}',    [EmpleadoController::class, 'destroy']);
+    });
+
+    // ========== ASISTENCIAS ==========
+    Route::prefix('asistencias')->middleware('permission:VER_ASISTENCIA')->group(function () {
+        Route::get('/empleado/{empleado}', [EmpleadoController::class, 'getAsistencias']);
+        Route::post('/',                   [EmpleadoController::class, 'registrarAsistencia']);
+    });
+
+    // ========== NÓMINAS ==========
+    Route::prefix('nominas')->middleware('permission:VER_NOMINA')->group(function () {
+        Route::get('/',                     [EmpleadoController::class, 'getNominas']);
+        Route::post('/generar',             [EmpleadoController::class, 'generarNomina']);
+        Route::put('/{nomina}',             [EmpleadoController::class, 'actualizarEstadoNomina']);
+    });
+
+    // ========== KPIs ==========
+    Route::prefix('kpis')->middleware('permission:VER_REPORTES')->group(function () {
+        Route::get('/meseros',    [EmpleadoController::class, 'getKpiMeseros']);
+        Route::get('/cocina',     [EmpleadoController::class, 'getKpiCocina']);
+        Route::get('/admin',      [EmpleadoController::class, 'getKpiAdmin']);
+        Route::get('/dashboard',  [EmpleadoController::class, 'getKpiDashboard']);
     });
 
 });
