@@ -212,17 +212,62 @@ class ReporteController extends Controller
 
     public function tiempoPromedioPreparacion(Request $request): JsonResponse
     {
-        // Columnas no existen en el esquema real; se informa adecuadamente.
-        return response()->json([
-            'success' => true,
-            'warning' => 'Las columnas de tiempo de preparación (tiempo_inicio_prep, tiempo_fin_prep, tipo_estacion) no existen en esta instalación.',
-            'data'    => array_fill_keys(['cocina', 'barra', 'postres'], [
-                'total_items'      => 0,
-                'promedio_minutos' => null,
-                'minimo_minutos'   => null,
-                'maximo_minutos'   => null,
-            ]),
-        ]);
+        try {
+            $restauranteActivo = app('restaurante_activo');
+
+            $request->validate([
+                'fecha_inicio' => 'sometimes|date',
+                'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
+                'grupo'        => 'sometimes|in:dia,semana,mes',
+            ]);
+
+            $grupo = $request->get('grupo', 'dia');
+            
+            $query = DB::table('orden_detalles')
+                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->whereIn('orden_detalles.estado_preparacion', ['LISTO', 'ENTREGADO']);
+
+            if ($request->filled('fecha_inicio')) {
+                $query->where('orden_detalles.created_at', '>=', $request->fecha_inicio . ' 00:00:00');
+            }
+            if ($request->filled('fecha_fin')) {
+                $query->where('orden_detalles.created_at', '<=', $request->fecha_fin . ' 23:59:59');
+            }
+
+            $selectRaw = match ($grupo) {
+                'dia' => 'DATE(orden_detalles.created_at) as periodo',
+                'semana' => 'YEARWEEK(orden_detalles.created_at, 1) as periodo',
+                'mes' => 'DATE_FORMAT(orden_detalles.created_at, "%Y-%m") as periodo',
+            };
+
+            $tiempos = $query->select(
+                DB::raw($selectRaw),
+                DB::raw('COALESCE(categorias.nombre, "Sin categoría") as estacion'),
+                DB::raw('COUNT(*) as total_items'),
+                DB::raw('ROUND(AVG(TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at)), 2) as promedio_minutos'),
+                DB::raw('MIN(TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at)) as minimo_minutos'),
+                DB::raw('MAX(TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at)) as maximo_minutos')
+            )
+            ->groupBy('periodo', 'estacion')
+            ->orderBy('periodo')
+            ->get();
+
+            return response()->json([
+                'success' => true,
+                'data'    => $tiempos,
+                'filtros' => [
+                    'grupo' => $grupo,
+                    'fecha_inicio' => $request->fecha_inicio,
+                    'fecha_fin' => $request->fecha_fin
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return $this->error('Error al generar reporte de tiempos de preparación', $e);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -231,11 +276,41 @@ class ReporteController extends Controller
 
     public function productosConRetrasoPreparacion(Request $request): JsonResponse
     {
-        return response()->json([
-            'success' => true,
-            'warning' => 'Las columnas de tiempo de preparación no existen en esta instalación.',
-            'data'    => ['hoy' => [], 'ultimos_7_dias' => [], 'ultimo_mes' => []],
-        ]);
+        try {
+            $restauranteActivo = app('restaurante_activo');
+
+            $query = DB::table('orden_detalles')
+                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->whereIn('orden_detalles.estado_preparacion', ['LISTO', 'ENTREGADO'])
+                ->whereRaw('TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) > productos.minutos_produccion')
+                ->select(
+                    'productos.nombre as producto',
+                    'categorias.nombre as estacion',
+                    'productos.minutos_produccion as tiempo_estimado',
+                    DB::raw('TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) as tiempo_real'),
+                    'ordenes.id as orden_id',
+                    'orden_detalles.created_at as fecha'
+                );
+
+            $hoy = (clone $query)->whereDate('orden_detalles.created_at', today())->get();
+            $semana = (clone $query)->where('orden_detalles.created_at', '>=', now()->subDays(7))->get();
+            $mes = (clone $query)->where('orden_detalles.created_at', '>=', now()->subMonths(1))->get();
+
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'hoy' => $hoy,
+                    'ultimos_7_dias' => $semana,
+                    'ultimo_mes' => $mes,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            return $this->error('Error al generar reporte de retrasos', $e);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -352,7 +427,10 @@ class ReporteController extends Controller
             $request->validate([
                 'fecha_inicio' => 'sometimes|date',
                 'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
+                'grupo'        => 'sometimes|in:dia,semana,mes',
             ]);
+
+            $grupo = $request->get('grupo', 'dia');
 
             $query = Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA');
@@ -364,27 +442,33 @@ class ReporteController extends Controller
                 $query->where('created_at', '<=', $request->fecha_fin . ' 23:59:59');
             }
 
-            $totalVentas = (float) ((clone $query)->sum('total') ?: 1);
+            $selectRaw = match ($grupo) {
+                'dia' => 'DATE(created_at) as periodo',
+                'semana' => 'YEARWEEK(created_at, 1) as periodo',
+                'mes' => 'DATE_FORMAT(created_at, "%Y-%m") as periodo',
+            };
 
-            // Usamos metodo_pago como proxy de canal (efectivo / tarjeta / transferencia)
             $canales = (clone $query)
                 ->select(
+                    DB::raw($selectRaw),
                     DB::raw('COALESCE(metodo_pago, "Sin especificar") as canal'),
                     DB::raw('COUNT(*) as total_ordenes'),
                     DB::raw('SUM(total) as total_ventas'),
                     DB::raw('ROUND(AVG(total), 2) as ticket_promedio')
                 )
-                ->groupBy('metodo_pago')
-                ->orderByDesc('total_ventas')
-                ->get()
-                ->map(function ($row) use ($totalVentas) {
-                    $row->porcentaje_ventas = round(($row->total_ventas / $totalVentas) * 100, 2);
-                    return $row;
-                });
+                ->groupBy('periodo', 'metodo_pago')
+                ->orderBy('periodo')
+                ->get();
+
+            $totalVentas = (float) ((clone $query)->sum('total') ?: 1);
+            
+            $canales = $canales->map(function ($row) use ($totalVentas) {
+                $row->porcentaje_ventas = $totalVentas > 0 ? round(($row->total_ventas / $totalVentas) * 100, 2) : 0;
+                return $row;
+            });
 
             return response()->json([
                 'success' => true,
-                'warning' => 'La BD no tiene columna canal; se usa metodo_pago como agrupador.',
                 'data'    => [
                     'canales' => $canales,
                     'totales' => [
@@ -734,7 +818,7 @@ class ReporteController extends Controller
     {
         try {
             $request->validate([
-                'tipo'         => 'required|in:ventas,productos,clientes,utilidad,propinas,canales,paquete,retrasos',
+                'tipo'         => 'required|in:ventas,productos,clientes,utilidad,propinas,canales,paquete,retrasos,tiempos',
                 'formato'      => 'required|in:pdf,excel,csv',
                 'fecha_inicio' => 'sometimes|date',
                 'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',

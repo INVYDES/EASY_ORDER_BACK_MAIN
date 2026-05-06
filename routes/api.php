@@ -327,6 +327,10 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::get('/dashboard',                 [ReporteController::class, 'dashboard']);
         Route::get('/reporte-productos',         [ReporteController::class, 'reporteProductos']);
         Route::get('/download/{tipo}/{formato}', [ReporteController::class, 'download']);
+        Route::get('/financiero', [ReporteController::class, 'reporteFinanciero']);
+        Route::get('/reporte-productos', [ReporteController::class, 'reporteProductos']);
+        Route::get('/tiempos-preparacion', [ReporteController::class, 'tiempoPromedioPreparacion']);
+        Route::get('/canal-ventas', [ReporteController::class, 'ventasPorCanal']);
         Route::post('/exportar',                 [ReporteController::class, 'exportar'])->middleware('permission:EXPORTAR_REPORTES');
     });
 
