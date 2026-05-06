@@ -252,7 +252,8 @@ class OrdenDetalleController extends Controller
     public function update(Request $request, $ordenId, $detalleId)
     {
         $request->validate([
-            'cantidad' => 'required|integer|min:1|max:100'
+            'cantidad' => 'required|integer|min:1|max:100',
+            'notas'    => 'nullable|string|max:255'
         ]);
 
         try {
@@ -290,6 +291,7 @@ class OrdenDetalleController extends Controller
             // Actualizar detalle
             $detalle->update([
                 'cantidad' => $request->cantidad,
+                'notas'    => $request->notas,
                 'subtotal' => $nuevoSubtotal
             ]);
 
@@ -590,6 +592,28 @@ class OrdenDetalleController extends Controller
             }
 
             foreach ($detalles as $detalle) {
+                $estadoAnterior = $detalle->estado_preparacion;
+
+                // ⚡ DESCUENTO DE INVENTARIO: Solo si pasa de PENDIENTE a EN_PREPARACION
+                if ($nuevoEstado === "EN_PREPARACION" && ($estadoAnterior === "PENDIENTE" || empty($estadoAnterior))) {
+                    $producto = $detalle->producto;
+                    if ($producto && $producto->ingredientes->isNotEmpty()) {
+                        foreach ($producto->ingredientes as $ingrediente) {
+                            $cantidadADescontar = (float) $ingrediente->pivot->cantidad * (int) $detalle->cantidad;
+                            
+                            // Restar del stock actual del ingrediente
+                            \App\Models\Ingrediente::where('id', $ingrediente->id)
+                                ->decrement('stock_actual', $cantidadADescontar);
+                        }
+                        // Recalcular stock del producto final (cuántas porciones quedan ahora)
+                        $producto->recalcularStockDesdeIngredientes();
+                    } else if ($producto) {
+                        // PRODUCTO SIN RECETA: Descontamos del stock directo del producto
+                        \App\Models\Producto::where('id', $producto->id)
+                            ->decrement('stock', $detalle->cantidad);
+                    }
+                }
+
                 $detalle->update(["estado_preparacion" => $nuevoEstado]);
             }
 

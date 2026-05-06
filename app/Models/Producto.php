@@ -20,6 +20,8 @@ class Producto extends Model
         'precio',
         'stock',
         'stock_minimo',
+        'minutos_produccion',
+        'nomina_diaria',
         'activo',
         'imagen'  // 👈 CAMPO PARA LA IMAGEN
     ];
@@ -208,6 +210,32 @@ class Producto extends Model
             return storage_path('app/public/productos/' . $this->imagen);
         }
         return null;
+    }
+
+    /**
+     * Recalcula el stock del producto basándose en el ingrediente más limitante
+     */
+    public function recalcularStockDesdeIngredientes()
+    {
+        $this->load('ingredientes');
+        
+        if ($this->ingredientes->isEmpty()) {
+            return $this->stock; // Si no tiene receta, mantenemos el stock manual
+        }
+
+        $unidadesPosibles = $this->ingredientes->map(function($ing) {
+            $cantidadNecesaria = $ing->pivot->cantidad ?? 0;
+            if ($cantidadNecesaria <= 0) return PHP_INT_MAX;
+            return floor($ing->stock_actual / $cantidadNecesaria);
+        });
+
+        $nuevoStock = $unidadesPosibles->min();
+        if ($nuevoStock === PHP_INT_MAX) $nuevoStock = 0;
+
+        $this->stock = $nuevoStock;
+        $this->save();
+
+        return $nuevoStock;
     }
 
     /**

@@ -26,6 +26,7 @@ class CajaController extends Controller
             SUM(CASE WHEN metodo_pago NOT IN (
                 "efectivo","tarjeta","transferencia","paypal","mercadopago"
             ) THEN total ELSE 0 END) as ventas_otros,
+            SUM(CASE WHEN metodo_pago = "efectivo"       THEN propina ELSE 0 END) as propinas_efectivo,
             COUNT(*) as total_ordenes
         ';
     }
@@ -34,13 +35,14 @@ class CajaController extends Controller
     private function formatVentas($ventas): array
     {
         return [
-            'efectivo'      => (float) ($ventas->ventas_efectivo ?? 0),
-            'tarjeta'       => (float) ($ventas->ventas_tarjeta ?? 0),
-            'transferencia' => (float) ($ventas->ventas_transferencia ?? 0),
-            'paypal'        => (float) ($ventas->ventas_paypal ?? 0),
-            'mercadopago'   => (float) ($ventas->ventas_mercadopago ?? 0),
-            'otros'         => (float) ($ventas->ventas_otros ?? 0),
-            'total_ordenes' => (int)   ($ventas->total_ordenes ?? 0),
+            'efectivo'          => (float) ($ventas->ventas_efectivo ?? 0),
+            'tarjeta'           => (float) ($ventas->ventas_tarjeta ?? 0),
+            'transferencia'     => (float) ($ventas->ventas_transferencia ?? 0),
+            'paypal'            => (float) ($ventas->ventas_paypal ?? 0),
+            'mercadopago'       => (float) ($ventas->ventas_mercadopago ?? 0),
+            'otros'             => (float) ($ventas->ventas_otros ?? 0),
+            'propinas_efectivo' => (float) ($ventas->propinas_efectivo ?? 0),
+            'total_ordenes'     => (int)   ($ventas->total_ordenes ?? 0),
         ];
     }
 
@@ -109,8 +111,8 @@ class CajaController extends Controller
                     'is_open'          => true,
                     'caja_id'          => $caja->id,
                     'opening_amount'   => (float) $caja->monto_inicial,
-                    // Efectivo real en caja = apertura + ventas efectivo + ingresos manuales − egresos manuales
-                    'cash_in_register' => (float) ($caja->monto_inicial + $v['efectivo'] + $TotalIngresos - $TotalEgresos),
+                    // Efectivo real en caja = apertura + ventas efectivo + propinas efectivo + ingresos manuales − egresos manuales
+                    'cash_in_register' => (float) ($caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $TotalIngresos - $TotalEgresos),
                     'daily_sales'      => $v['efectivo'],
                     'card_sales'       => $v['tarjeta'],
                     'transfer_sales'   => $v['transferencia'],
@@ -231,7 +233,7 @@ class CajaController extends Controller
             $ingresos = CajaMovimientos::where('caja_id',$caja->id)->where('tipo','ingreso')->sum('monto');
             $egresos  = CajaMovimientos::where('caja_id',$caja->id)->where('tipo','egreso')->sum('monto');
 
-            $efectivoEsperado = $caja->monto_inicial + $v['efectivo'] + $ingresos - $egresos;
+            $efectivoEsperado = $caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $ingresos - $egresos;
             $diferencia       = $request->efectivo_final - $efectivoEsperado;
 
             $caja->update([

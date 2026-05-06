@@ -143,6 +143,8 @@ class ProductoController extends Controller
                     
                     'precio' => (float) $producto->precio,
                     'precio_formateado' => '$' . number_format($producto->precio, 2),
+                    'minutos_produccion' => (float) $producto->minutos_produccion,
+                    'nomina_diaria' => (float) $producto->nomina_diaria,
                     
                     'stock' => (int) $producto->stock,
                     'stock_minimo' => (int) $producto->stock_minimo,
@@ -286,6 +288,8 @@ class ProductoController extends Controller
                     
                     'precio' => (float) $producto->precio,
                     'precio_formateado' => '$' . number_format($producto->precio, 2),
+                    'minutos_produccion' => (float) $producto->minutos_produccion,
+                    'nomina_diaria' => (float) $producto->nomina_diaria,
                     
                     'stock' => (int) $producto->stock,
                     'stock_minimo' => (int) $producto->stock_minimo,
@@ -1579,6 +1583,8 @@ class ProductoController extends Controller
 
             'precio' => (float) $producto->precio,
             'precio_formateado' => '$' . number_format($producto->precio, 2),
+            'minutos_produccion' => (float) $producto->minutos_produccion,
+            'nomina_diaria' => (float) $producto->nomina_diaria,
             
             'stock' => (int) $producto->stock,
             'stock_minimo' => (int) $producto->stock_minimo,

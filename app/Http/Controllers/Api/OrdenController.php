@@ -205,6 +205,7 @@ class OrdenController extends Controller
             'productos.*.paquete_id'  => 'required_without:productos.*.producto_id|nullable|exists:paquetes,id',
             'productos.*.cantidad'    => 'required|integer|min:1|max:100',
             'productos.*.notas'       => 'nullable|string|max:300',
+            'productos.*.nom_comensal'=> 'nullable|string|max:100',
             'notas'                   => 'nullable|string|max:500',
             'mesa'                    => 'nullable|integer|min:1',
             'metodo_pago'             => 'nullable|string|max:50',
@@ -272,6 +273,7 @@ class OrdenController extends Controller
                                 'producto'       => $pComp,
                                 'cantidad'       => $cantidadTotal,
                                 'notas'          => $item['notas'] ?? null,
+                                'nom_comensal'   => $item['nom_comensal'] ?? null,
                                 'precio'         => 0,
                                 'paquete_id'     => $paquete->id,
                                 'paquete_precio' => ($pComp->id === $paquete->productos->first()->id)
@@ -302,6 +304,7 @@ class OrdenController extends Controller
                             'producto' => $producto,
                             'cantidad' => $item['cantidad'],
                             'notas'    => $item['notas'] ?? null,
+                            'nom_comensal' => $item['nom_comensal'] ?? null,
                             'precio'   => $producto->precio,
                         ];
                     }
@@ -320,6 +323,7 @@ class OrdenController extends Controller
                         'producto' => $producto,
                         'cantidad' => $item['cantidad'],
                         'notas'    => $item['notas'] ?? null,
+                        'nom_comensal' => $item['nom_comensal'] ?? null,
                         'precio'   => $producto->precio,
                     ];
                 }
@@ -374,6 +378,7 @@ class OrdenController extends Controller
                     'precio_unitario'    => $precio + ($item['cantidad'] > 0 ? ($paquetePrecio / $item['cantidad']) : 0),
                     'subtotal'           => $subtotal,
                     'notas'              => $item['notas'],
+                    'nom_comensal'       => $item['nom_comensal'],
                     'estado_preparacion' => 'PENDIENTE',
                 ]);
 
@@ -387,52 +392,12 @@ class OrdenController extends Controller
                     'precio_unitario'     => (float) $detalle->precio_unitario,
                     'subtotal'            => (float) $subtotal,
                     'subtotal_formateado' => '$' . number_format($subtotal, 2),
+                    'notas'               => $item['notas'],
+                    'nom_comensal'        => $item['nom_comensal'],
                     'estado_preparacion'  => 'PENDIENTE',
                 ];
 
                 $subtotalNuevo += $subtotal;
-
-                // -------------------------------------------------------------
-                // ACTIVIDAD 1: Descontar stock al momento de pedir
-                // Productos SIN ingredientes: descontar stock directo
-                // Productos CON ingredientes: descontar stock de ingredientes
-                // -------------------------------------------------------------
-                if ($productoModel->ingredientes->isEmpty()) {
-                    // Producto sin ingredientes — descontar stock directo
-                    $productoModel->decrement('stock', $item['cantidad']);
-                } else {
-                    // Producto con ingredientes — descontar stock de cada ingrediente
-                    foreach ($productoModel->ingredientes as $ingrediente) {
-                        $cantidadPorPorcion = $ingrediente->pivot->cantidad ?? 0;
-                        $cantidadADescontar = $cantidadPorPorcion * $item['cantidad'];
-
-                        if ($cantidadADescontar <= 0) continue;
-
-                        $anterior = $ingrediente->stock_actual;
-                        $nueva    = $anterior - $cantidadADescontar;
-
-                        if ($nueva < 0) {
-                            // Aunque ya validamos, doble seguridad dentro de la transacción
-                            throw new \Exception(
-                                "Stock insuficiente de: {$ingrediente->nombre}. " .
-                                "Disponible: {$anterior}, Necesario: {$cantidadADescontar}"
-                            );
-                        }
-
-                        $ingrediente->decrement('stock_actual', $cantidadADescontar);
-
-                        IngredienteMovimiento::create([
-                            'ingrediente_id'      => $ingrediente->id,
-                            'user_id'             => $user->id,
-                            'tipo'                => 'salida',
-                            'cantidad_anterior'   => $anterior,
-                            'cantidad_movimiento' => $cantidadADescontar,
-                            'cantidad_nueva'      => $nueva,
-                            'motivo'              => "Venta de {$item['cantidad']}x {$productoModel->nombre} (Orden #{$orden->id})",
-                            'orden_id'            => $orden->id,
-                        ]);
-                    }
-                }
             }
 
             // Recalcular total de la orden (suma de todos los detalles)
@@ -440,6 +405,9 @@ class OrdenController extends Controller
             $propina       = $esNueva ? ($request->propina ?? 0) : ($orden->propina ?? 0);
             $totalConPropina = $totalActual + $propina;
             $orden->update(['total' => $totalConPropina]);
+
+            // Actualizar estado por si se agregaron items a una orden ya entregada
+            $orden->verificarYActualizarEstadoGlobal();
 
             DB::commit();
 
@@ -575,6 +543,12 @@ class OrdenController extends Controller
                 return response()->json(['success' => false, 'message' => 'No tienes permiso para cerrar órdenes'], 403);
             }
 
+            $request->validate([
+                'metodo_pago' => 'nullable|string|max:50',
+                'propina'     => 'nullable|numeric|min:0',
+                'pagos'       => 'nullable|array'
+            ]);
+
             $restauranteActivo = app('restaurante_activo');
             $orden = Orden::with(['detalles.producto.ingredientes', 'detalles.producto.categoria'])
                 ->where('restaurante_id', $restauranteActivo->id)
@@ -585,21 +559,102 @@ class OrdenController extends Controller
                 return response()->json(['success' => false, 'message' => 'La orden ya está cerrada'], 400);
             }
 
+            $caja = \App\Models\Caja::where('restaurante_id', $restauranteActivo->id)
+                ->whereDate('fecha_apertura', now()->format('Y-m-d'))
+                ->whereNull('fecha_cierre')->first();
+
+            $ordenesCreadas = [];
             // El stock ya fue descontado en store(). Solo cerramos la orden.
-            DB::transaction(function () use ($orden) {
-                $orden->update(['estado' => 'CERRADA']);
+            DB::transaction(function () use ($orden, $request, $caja, $user, &$ordenesCreadas) {
+                if ($request->filled('pagos')) {
+                    foreach ($request->pagos as $index => $p) {
+                        $pTotal = (float)$p['monto'] + (float)($p['propina'] ?? 0);
+                        
+                        if ($index === 0) {
+                            // Actualizar la orden original con la primera parte
+                            $orden->update([
+                                'estado'      => 'CERRADA',
+                                'metodo_pago' => $p['metodo'],
+                                'propina'     => (float)($p['propina'] ?? 0),
+                                'total'       => $pTotal,
+                                'cliente_id'  => ($orden->cliente_id > 0) ? $orden->cliente_id : null
+                            ]);
+                            $orderIdForLog = $orden->id;
+                            $ordenesCreadas[] = $orden->id;
+                        } else {
+                            // Crear una nueva orden para las otras partes
+                            $nuevaOrden = Orden::create([
+                                'restaurante_id' => $orden->restaurante_id,
+                                'cliente_id'     => ($orden->cliente_id > 0) ? $orden->cliente_id : null,
+                                'usuario_id'     => $orden->usuario_id,
+                                'mesa'           => $orden->mesa,
+                                'estado'         => 'CERRADA',
+                                'metodo_pago'    => $p['metodo'],
+                                'propina'        => (float)($p['propina'] ?? 0),
+                                'total'          => $pTotal
+                            ]);
+                            
+                            // Mover los detalles a la nueva orden
+                            if (!empty($p['detalles'])) {
+                                \App\Models\OrdenDetalle::whereIn('id', $p['detalles'])
+                                    ->update(['orden_id' => $nuevaOrden->id]);
+                            }
+                            $orderIdForLog = $nuevaOrden->id;
+                            $ordenesCreadas[] = $nuevaOrden->id;
+                        }
+
+                        // Registrar movimiento en CajaMovimientos si hay caja abierta
+                        if ($caja) {
+                            \App\Models\CajaMovimientos::create([
+                                'caja_id'     => $caja->id,
+                                'usuario_id'  => $user->id,
+                                'tipo'        => 'ingreso',
+                                'monto'       => $pTotal,
+                                'descripcion' => "Venta Dividida (" . ($p['comensal'] ?? 'Ticket') . ") - Orden #{$orderIdForLog}",
+                                'referencia'  => $p['referencia'] ?? '',
+                            ]);
+                        }
+
+                        // Broadcast de actualización para cada ticket (como venta individual)
+                        try {
+                            broadcast(new \App\Events\CajaActualizada('venta', $orden->restaurante_id, [
+                                'orden_id'    => $orderIdForLog,
+                                'total'       => (float) $p['monto'],
+                                'metodo_pago' => $p['metodo'],
+                                'propina'     => (float) ($p['propina'] ?? 0),
+                                'comensal'    => $p['comensal'] ?? ''
+                            ]));
+                        } catch (\Exception $e) {
+                            \Log::warning('Broadcast CajaActualizada failed: ' . $e->getMessage());
+                        }
+                    }
+                } else {
+                    $campos = ['estado' => 'CERRADA'];
+                    if ($request->filled('metodo_pago')) {
+                        $campos['metodo_pago'] = $request->metodo_pago;
+                    }
+                    if ($request->has('propina')) {
+                        $campos['propina'] = $request->propina ?? 0;
+                        $campos['total'] = $orden->detalles()->sum('subtotal') + (float)$campos['propina'];
+                    }
+                    $orden->update($campos);
+
+                    try {
+                        broadcast(new \App\Events\CajaActualizada('venta', $orden->restaurante_id, [
+                            'orden_id'    => $orden->id,
+                            'total'       => (float) $orden->total,
+                            'metodo_pago' => $orden->metodo_pago,
+                            'propina'     => (float) ($orden->propina ?? 0),
+                        ]));
+                    } catch (\Exception $e) {
+                        \Log::warning('Broadcast CajaActualizada fallback failed: ' . $e->getMessage());
+                    }
+                }
             });
 
             $orden->load(['usuario:id,name,username', 'detalles.producto.categoria']);
-
             try {
                 broadcast(new \App\Events\OrdenActualizada($orden, 'cerrada', $restauranteActivo->id));
-                broadcast(new \App\Events\CajaActualizada('venta', $restauranteActivo->id, [
-                    'orden_id'    => $orden->id,
-                    'total'       => (float) $orden->total,
-                    'metodo_pago' => $orden->metodo_pago,
-                    'propina'     => (float) ($orden->propina ?? 0),
-                ]));
             } catch (\Exception $be) {
                 \Log::warning('Broadcast orden cerrar: ' . $be->getMessage());
             }
@@ -617,6 +672,7 @@ class OrdenController extends Controller
                     'estado'           => 'CERRADA',
                     'total'            => (float) $orden->total,
                     'total_formateado' => '$' . number_format($orden->total, 2),
+                    'ordenes_ids'      => $ordenesCreadas
                 ],
             ]);
 
@@ -833,6 +889,7 @@ class OrdenController extends Controller
                 'subtotal'            => (float) $d->subtotal,
                 'subtotal_formateado' => '$' . number_format($d->subtotal, 2),
                 'notas'               => $d->notas ?? null,
+                'nom_comensal'        => $d->nom_comensal ?? null,
                 'estado_preparacion'  => $d->estado_preparacion ?? 'PENDIENTE',
             ]),
             'created_at'            => $orden->created_at,
