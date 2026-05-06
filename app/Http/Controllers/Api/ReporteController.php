@@ -795,4 +795,76 @@ class ReporteController extends Controller
 
         return response()->json($payload, 500);
     }
+    public function reporteFinanciero(Request $request): JsonResponse
+{
+    try {
+        $restauranteActivo = app('restaurante_activo');
+
+        $fechaInicio = $request->get('fecha_inicio', now()->startOfMonth()->format('Y-m-d'));
+        $fechaFin    = $request->get('fecha_fin', now()->format('Y-m-d'));
+
+        $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
+            ->where('estado', 'CERRADA')
+            ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+            ->sum('total');
+
+        $gastos = DB::table('gastos')
+            ->where('restaurante_id', $restauranteActivo->id)
+            ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+            ->sum('monto');
+
+        $nominas = 0;
+        if (Schema::hasTable('nomina_diaria')) {
+            $nominas = DB::table('nomina_diaria')
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->whereBetween('fecha', [$fechaInicio, $fechaFin])
+                ->sum('total_mano_obra');
+        }
+
+        $ganancia = $ventas - ($gastos + $nominas);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'ventas_totales'  => round($ventas, 2),
+                'gastos_totales'  => round($gastos, 2),
+                'nominas_totales' => round($nominas, 2),
+                'ganancia_neta'   => round($ganancia, 2),
+                'periodo' => [
+                    'inicio' => $fechaInicio,
+                    'fin'    => $fechaFin
+                ]
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        return $this->error('Error al generar reporte financiero', $e);
+    }
+}
+public function reporteProductos(Request $request): JsonResponse
+{
+    try {
+        $restauranteActivo = app('restaurante_activo');
+
+        $productos = $this->baseDetallesQuery($restauranteActivo->id, $request)
+            ->select(
+                'productos.id',
+                'productos.nombre',
+                DB::raw('SUM(orden_detalles.cantidad) as total_vendidos'),
+                DB::raw('SUM(orden_detalles.subtotal) as ingresos_totales'),
+                DB::raw('ROUND(AVG(orden_detalles.precio_unitario), 2) as precio_promedio')
+            )
+            ->groupBy('productos.id', 'productos.nombre')
+            ->orderByDesc('total_vendidos')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $productos
+        ]);
+
+    } catch (\Exception $e) {
+        return $this->error('Error al generar reporte de productos', $e);
+    }
+}
 }
