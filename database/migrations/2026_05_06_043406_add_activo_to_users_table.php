@@ -11,9 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('restaurantes', function (Blueprint $table) {
-            if (!Schema::hasColumn('restaurantes', 'total_mesas')) {
-                $table->integer('total_mesas')->default(0)->after('estado');
+        Schema::table('users', function (Blueprint $table) {
+            if (!Schema::hasColumn('users', 'activo')) {
+                $table->boolean('activo')->default(true)->after('password');
             }
         });
     }
@@ -23,8 +23,10 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('restaurantes', function (Blueprint $table) {
-            $table->dropColumn('total_mesas');
+        Schema::table('users', function (Blueprint $table) {
+            if (Schema::hasColumn('users', 'activo')) {
+                $table->dropColumn('activo');
+            }
         });
     }
 };

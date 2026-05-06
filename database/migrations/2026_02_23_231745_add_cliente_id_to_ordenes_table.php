@@ -9,9 +9,11 @@ return new class extends Migration
     public function up()
     {
         Schema::table('ordenes', function (Blueprint $table) {
-            $table->unsignedBigInteger('cliente_id')->nullable()->after('user_id');
-            $table->foreign('cliente_id')->references('id')->on('clientes')->onDelete('set null');
-            $table->index('cliente_id');
+            if (!Schema::hasColumn('ordenes', 'cliente_id')) {
+                $table->unsignedBigInteger('cliente_id')->nullable()->after('user_id');
+                $table->foreign('cliente_id')->references('id')->on('clientes')->onDelete('set null');
+                $table->index('cliente_id');
+            }
         });
     }
 

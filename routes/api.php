@@ -375,6 +375,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::post('/',                [EmpleadoController::class, 'store']);
         Route::get('/{empleado}',       [EmpleadoController::class, 'show']);
         Route::put('/{empleado}',       [EmpleadoController::class, 'update']);
+        Route::patch('/{empleado}/toggle-activo', [EmpleadoController::class, 'toggleActivo']);
         Route::delete('/{empleado}',    [EmpleadoController::class, 'destroy']);
     });
 

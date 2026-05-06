@@ -84,6 +84,10 @@ class EmpleadoController extends Controller
                 $query->where('name', 'LIKE', '%' . $request->nombre . '%');
             }
 
+            if ($request->has('activo')) {
+                $query->where('activo', filter_var($request->activo, FILTER_VALIDATE_BOOLEAN));
+            }
+
             $empleados = $query->orderBy('created_at', 'desc')->get()->map(function (User $u) {
                 $staffRole = $u->roles->first(fn ($r) => in_array($r->nombre, $this->staffRoleNombres(), true));
 
@@ -92,6 +96,7 @@ class EmpleadoController extends Controller
                     'name' => $u->name,
                     'email' => $u->email,
                     'username' => $u->username,
+                    'activo' => (bool) $u->activo,
                     'puesto' => $staffRole ? strtolower($staffRole->nombre) : null,
                     'roles' => $u->roles,
                     'created_at' => $u->created_at,
@@ -200,6 +205,7 @@ class EmpleadoController extends Controller
                     'name' => $empleado->name,
                     'email' => $empleado->email,
                     'username' => $empleado->username,
+                    'activo' => (bool) $empleado->activo,
                     'puesto' => $staffRole ? strtolower($staffRole->nombre) : null,
                     'roles' => $empleado->roles,
                     'created_at' => $empleado->created_at,
@@ -234,6 +240,7 @@ class EmpleadoController extends Controller
                 'name' => 'sometimes|string|max:255',
                 'password' => 'sometimes|string|min:8|confirmed',
                 'rol_id' => 'sometimes|exists:roles,id',
+                'activo' => 'sometimes|boolean',
             ]);
 
             if ($validator->fails()) {
@@ -254,6 +261,9 @@ class EmpleadoController extends Controller
                 if ($request->filled('password')) {
                     $empleado->password = Hash::make($request->password);
                 }
+                if ($request->has('activo')) {
+                    $empleado->activo = filter_var($request->activo, FILTER_VALIDATE_BOOLEAN);
+                }
                 $empleado->save();
 
                 if ($request->filled('rol_id')) {
@@ -272,8 +282,45 @@ class EmpleadoController extends Controller
                     'name' => $empleado->name,
                     'email' => $empleado->email,
                     'username' => $empleado->username,
+                    'activo' => (bool) $empleado->activo,
                     'puesto' => $staffRole ? strtolower($staffRole->nombre) : null,
                     'roles' => $empleado->roles,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Alternar estado activo/inactivo.
+     * PATCH /api/empleados/{empleado}/toggle-activo
+     */
+    public function toggleActivo(Request $request, $empleadoId)
+    {
+        try {
+            $authUser = $request->user();
+            $restauranteId = (int) $this->getRestauranteId($authUser);
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
+            }
+
+            $empleado = $this->findStaffUser((int) $empleadoId, $restauranteId);
+
+            if (!$empleado) {
+                return response()->json(['success' => false, 'message' => 'Empleado no encontrado'], 404);
+            }
+
+            $empleado->activo = !$empleado->activo;
+            $empleado->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Estado del empleado actualizado: ' . ($empleado->activo ? 'Activo' : 'Inactivo'),
+                'data' => [
+                    'id' => $empleado->id,
+                    'activo' => (bool) $empleado->activo,
                 ],
             ]);
         } catch (\Exception $e) {

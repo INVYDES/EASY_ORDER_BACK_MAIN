@@ -25,7 +25,8 @@ class User extends Authenticatable
         'name',
         'email',
         'username',
-        'password'
+        'password',
+        'activo'
     ];
 
     protected $hidden = [
@@ -35,6 +36,7 @@ class User extends Authenticatable
 
     protected $casts = [
         'password' => 'hashed',
+        'activo' => 'boolean',
     ];
 
     /*
@@ -114,6 +116,17 @@ class User extends Authenticatable
                 $query->where('nombre', $permission);
             })
             ->exists();
+    }
+
+
+    public function scopeActivos($query)
+    {
+        return $query->where('activo', true);
+    }
+
+    public function scopeInactivos($query)
+    {
+        return $query->where('activo', false);
     }
 
     /*

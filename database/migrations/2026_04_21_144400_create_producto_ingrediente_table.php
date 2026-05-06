@@ -11,16 +11,18 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('producto_ingrediente', function (Blueprint $blueprint) {
-            $blueprint->id();
-            $blueprint->foreignId('producto_id')->constrained('productos')->onDelete('cascade');
-            $blueprint->foreignId('ingrediente_id')->constrained('ingredientes')->onDelete('cascade');
-            $blueprint->decimal('cantidad', 12, 4)->default(0);
-            $blueprint->timestamps();
-
-            // Índice para mejorar rendimiento de búsquedas de recetas
-            $blueprint->index(['producto_id', 'ingrediente_id']);
-        });
+        if (!Schema::hasTable('producto_ingrediente')) {
+            Schema::create('producto_ingrediente', function (Blueprint $blueprint) {
+                $blueprint->id();
+                $blueprint->foreignId('producto_id')->constrained('productos')->onDelete('cascade');
+                $blueprint->foreignId('ingrediente_id')->constrained('ingredientes')->onDelete('cascade');
+                $blueprint->decimal('cantidad', 12, 4)->default(0);
+                $blueprint->timestamps();
+    
+                // Índice para mejorar rendimiento de búsquedas de recetas
+                $blueprint->index(['producto_id', 'ingrediente_id']);
+            });
+        }
     }
 
     /**
