@@ -8,6 +8,7 @@ use Illuminate\Http\JsonResponse;
 use App\Models\Orden;
 use App\Models\Producto;
 use App\Models\Cliente;
+use App\Models\Nomina;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
@@ -144,9 +145,6 @@ class ReporteController extends Controller
 
     // ─────────────────────────────────────────────────────────────────────────
     // PRODUCTOS CON MAYOR MARGEN PERO MENOS VENDIDOS
-    // NOTA: productos no tiene columna `costo` en la BD real.
-    //       Se usa minutos_produccion * nomina_diaria como aproximación de costo
-    //       si están disponibles; si no, margen = 0.
     // ─────────────────────────────────────────────────────────────────────────
 
     public function productosMayorMargenMenosVendidos(Request $request): JsonResponse
@@ -171,9 +169,6 @@ class ReporteController extends Controller
                 ->pluck('productos.id')
                 ->toArray();
 
-            // Costo estimado = (minutos_produccion / 60) * (nomina_diaria / horas_dia)
-            // Como aproximación simple usamos precio como referencia de "margen"
-            // ya que la BD no tiene columna costo.
             $productos = (clone $query)
                 ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
                 ->select(
@@ -207,7 +202,6 @@ class ReporteController extends Controller
 
     // ─────────────────────────────────────────────────────────────────────────
     // TIEMPO PROMEDIO DE PREPARACIÓN
-    // NOTA: orden_detalles no tiene tiempo_inicio_prep / tiempo_fin_prep / tipo_estacion.
     // ─────────────────────────────────────────────────────────────────────────
 
     public function tiempoPromedioPreparacion(Request $request): JsonResponse
@@ -222,7 +216,7 @@ class ReporteController extends Controller
             ]);
 
             $grupo = $request->get('grupo', 'dia');
-            
+
             $query = DB::table('orden_detalles')
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
@@ -238,9 +232,9 @@ class ReporteController extends Controller
             }
 
             $selectRaw = match ($grupo) {
-                'dia' => 'DATE(orden_detalles.created_at) as periodo',
+                'dia'    => 'DATE(orden_detalles.created_at) as periodo',
                 'semana' => 'YEARWEEK(orden_detalles.created_at, 1) as periodo',
-                'mes' => 'DATE_FORMAT(orden_detalles.created_at, "%Y-%m") as periodo',
+                'mes'    => 'DATE_FORMAT(orden_detalles.created_at, "%Y-%m") as periodo',
             };
 
             $tiempos = $query->select(
@@ -259,10 +253,10 @@ class ReporteController extends Controller
                 'success' => true,
                 'data'    => $tiempos,
                 'filtros' => [
-                    'grupo' => $grupo,
+                    'grupo'        => $grupo,
                     'fecha_inicio' => $request->fecha_inicio,
-                    'fecha_fin' => $request->fecha_fin
-                ]
+                    'fecha_fin'    => $request->fecha_fin,
+                ],
             ]);
 
         } catch (\Exception $e) {
@@ -295,16 +289,16 @@ class ReporteController extends Controller
                     'orden_detalles.created_at as fecha'
                 );
 
-            $hoy = (clone $query)->whereDate('orden_detalles.created_at', today())->get();
+            $hoy    = (clone $query)->whereDate('orden_detalles.created_at', today())->get();
             $semana = (clone $query)->where('orden_detalles.created_at', '>=', now()->subDays(7))->get();
-            $mes = (clone $query)->where('orden_detalles.created_at', '>=', now()->subMonths(1))->get();
+            $mes    = (clone $query)->where('orden_detalles.created_at', '>=', now()->subMonths(1))->get();
 
             return response()->json([
                 'success' => true,
                 'data'    => [
-                    'hoy' => $hoy,
+                    'hoy'            => $hoy,
                     'ultimos_7_dias' => $semana,
-                    'ultimo_mes' => $mes,
+                    'ultimo_mes'     => $mes,
                 ],
             ]);
 
@@ -315,7 +309,6 @@ class ReporteController extends Controller
 
     // ─────────────────────────────────────────────────────────────────────────
     // RECOMENDACIÓN DE PAQUETE ESTRATÉGICO
-    // Ajustado: usa categorias.nombre para filtrar, precio en lugar de precio_venta.
     // ─────────────────────────────────────────────────────────────────────────
 
     public function recomendacionPaquete(Request $request): JsonResponse
@@ -328,7 +321,6 @@ class ReporteController extends Controller
                 'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
             ]);
 
-            // Nombres de categorías según datos reales en la BD
             $categoriasCocina = ['cocina'];
             $categoriasBebida = ['barra'];
             $categoriasPostre = ['postres'];
@@ -354,7 +346,6 @@ class ReporteController extends Controller
 
             $groupByBase = ['productos.id', 'productos.nombre', 'categorias.nombre', 'productos.precio'];
 
-            // Platillo: mayor precio fuera del top 10 (proxy de mayor margen)
             $platillo = (clone $query)
                 ->select($camposProducto)
                 ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasCocina)
@@ -363,7 +354,6 @@ class ReporteController extends Controller
                 ->orderByDesc('productos.precio')
                 ->first();
 
-            // Bebida: #1 en ventas
             $bebida = (clone $query)
                 ->select($camposProducto)
                 ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasBebida)
@@ -371,7 +361,6 @@ class ReporteController extends Controller
                 ->orderByDesc('total_vendido')
                 ->first();
 
-            // Postre: menos vendido (con al menos 1 venta)
             $postre = (clone $query)
                 ->select($camposProducto)
                 ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasPostre)
@@ -415,8 +404,6 @@ class ReporteController extends Controller
 
     // ─────────────────────────────────────────────────────────────────────────
     // VENTAS POR CANAL
-    // NOTA: ordenes no tiene columna `canal` en el esquema real.
-    //       Se agrupa por metodo_pago como sustituto.
     // ─────────────────────────────────────────────────────────────────────────
 
     public function ventasPorCanal(Request $request): JsonResponse
@@ -443,9 +430,9 @@ class ReporteController extends Controller
             }
 
             $selectRaw = match ($grupo) {
-                'dia' => 'DATE(created_at) as periodo',
+                'dia'    => 'DATE(created_at) as periodo',
                 'semana' => 'YEARWEEK(created_at, 1) as periodo',
-                'mes' => 'DATE_FORMAT(created_at, "%Y-%m") as periodo',
+                'mes'    => 'DATE_FORMAT(created_at, "%Y-%m") as periodo',
             };
 
             $canales = (clone $query)
@@ -461,9 +448,11 @@ class ReporteController extends Controller
                 ->get();
 
             $totalVentas = (float) ((clone $query)->sum('total') ?: 1);
-            
+
             $canales = $canales->map(function ($row) use ($totalVentas) {
-                $row->porcentaje_ventas = $totalVentas > 0 ? round(($row->total_ventas / $totalVentas) * 100, 2) : 0;
+                $row->porcentaje_ventas = $totalVentas > 0
+                    ? round(($row->total_ventas / $totalVentas) * 100, 2)
+                    : 0;
                 return $row;
             });
 
@@ -485,8 +474,6 @@ class ReporteController extends Controller
 
     // ─────────────────────────────────────────────────────────────────────────
     // INVERSIÓN Y UTILIDAD
-    // NOTA: productos no tiene columna costo → inversión en producto = 0.
-    //       Se retorna igualmente la estructura para no romper clientes.
     // ─────────────────────────────────────────────────────────────────────────
 
     public function inversionYUtilidad(Request $request): JsonResponse
@@ -509,10 +496,8 @@ class ReporteController extends Controller
                 $queryOrdenes->where('created_at', '<=', $request->fecha_fin . ' 23:59:59');
             }
 
-            $totalVentas = (float) ($queryOrdenes->sum('total') ?? 0);
-
-            // Sin columna costo en productos, inversión = 0
-            $inversionProducto = 0.0;
+            $totalVentas       = (float) ($queryOrdenes->sum('total') ?? 0);
+            $inversionProducto = 0.0; // BD no tiene columna costo
 
             $inversionManoObra = 0.0;
             if (Schema::hasTable('nomina_diaria')) {
@@ -547,7 +532,6 @@ class ReporteController extends Controller
 
     // ─────────────────────────────────────────────────────────────────────────
     // PROPINAS
-    // NOTA: ordenes tiene `propina` (campo único), NO propina_terminal / propina_transferencia.
     // ─────────────────────────────────────────────────────────────────────────
 
     public function totalPropinas(Request $request): JsonResponse
@@ -609,7 +593,6 @@ class ReporteController extends Controller
                 ->whereDate('created_at', $fecha)
                 ->sum('total');
 
-            // Sin columna costo, inversión producto = 0
             $costoProducto = 0.0;
 
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
@@ -686,7 +669,6 @@ class ReporteController extends Controller
             $tasaCancelacion = $totalOrdenesHoy > 0
                 ? round(($canceladasHoy / $totalOrdenesHoy) * 100, 2) : 0;
 
-            // Agrupado por metodo_pago (proxy de canal)
             $ventasPorMetodo = (clone $queryHoy)
                 ->select(
                     DB::raw('COALESCE(metodo_pago, "Sin especificar") as metodo_pago'),
@@ -696,11 +678,9 @@ class ReporteController extends Controller
                 ->groupBy('metodo_pago')
                 ->get();
 
-            // Propina única
-            $propinaHoy = (float) ((clone $queryHoy)->sum('propina') ?? 0);
-
-            // Sin costo en productos
+            $propinaHoy  = (float) ((clone $queryHoy)->sum('propina') ?? 0);
             $manoObraHoy = 0.0;
+
             if (Schema::hasTable('nomina_diaria')) {
                 $manoObraHoy = (float) DB::table('nomina_diaria')
                     ->where('restaurante_id', $restauranteActivo->id)
@@ -708,10 +688,9 @@ class ReporteController extends Controller
                     ->sum('total_mano_obra');
             }
 
-            $utilidadBrutaHoy = $ventasHoy; // sin costo de producto
+            $utilidadBrutaHoy = $ventasHoy;
             $utilidadNetaHoy  = $utilidadBrutaHoy - $manoObraHoy;
 
-            // Clientes (sin total_compras / gasto_total en BD real)
             $topClientes = [];
             if (class_exists('App\Models\Cliente')) {
                 $topClientes = Cliente::where('restaurante_id', $restauranteActivo->id)
@@ -770,7 +749,6 @@ class ReporteController extends Controller
 
     // ─────────────────────────────────────────────────────────────────────────
     // CLIENTES FRECUENTES
-    // NOTA: clientes solo tiene id, restaurante_id, nombre, email, telefono.
     // ─────────────────────────────────────────────────────────────────────────
 
     public function clientesFrecuentes(Request $request): JsonResponse
@@ -783,7 +761,6 @@ class ReporteController extends Controller
             $restauranteActivo = app('restaurante_activo');
             $limite = (int) $request->get('limite', 10);
 
-            // Sin total_compras/gasto_total → ordenamos por número de órdenes vinculadas
             $clientes = DB::table('clientes')
                 ->where('clientes.restaurante_id', $restauranteActivo->id)
                 ->leftJoin('ordenes', function ($join) {
@@ -811,6 +788,85 @@ class ReporteController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // REPORTE FINANCIERO
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function reporteFinanciero(Request $request): JsonResponse
+    {
+        try {
+            $restauranteActivo = app('restaurante_activo');
+
+            $fechaInicio = $request->get('fecha_inicio', now()->startOfMonth()->format('Y-m-d'));
+            $fechaFin    = $request->get('fecha_fin', now()->format('Y-m-d'));
+
+            $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
+                ->where('estado', 'CERRADA')
+                ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+                ->sum('total');
+
+            $gastos = DB::table('gastos')
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+                ->sum('monto');
+
+            $nominas = 0;
+            if (Schema::hasTable('nomina_diaria')) {
+                $nominas = DB::table('nomina_diaria')
+                    ->where('restaurante_id', $restauranteActivo->id)
+                    ->whereBetween('fecha', [$fechaInicio, $fechaFin])
+                    ->sum('total_mano_obra');
+            }
+
+            $ganancia = $ventas - ($gastos + $nominas);
+
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'ventas_totales'  => round($ventas, 2),
+                    'gastos_totales'  => round($gastos, 2),
+                    'nominas_totales' => round($nominas, 2),
+                    'ganancia_neta'   => round($ganancia, 2),
+                    'periodo'         => [
+                        'inicio' => $fechaInicio,
+                        'fin'    => $fechaFin,
+                    ],
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            return $this->error('Error al generar reporte financiero', $e);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // REPORTE PRODUCTOS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function reporteProductos(Request $request): JsonResponse
+    {
+        try {
+            $restauranteActivo = app('restaurante_activo');
+
+            $productos = $this->baseDetallesQuery($restauranteActivo->id, $request)
+                ->select(
+                    'productos.id',
+                    'productos.nombre',
+                    DB::raw('SUM(orden_detalles.cantidad) as total_vendidos'),
+                    DB::raw('SUM(orden_detalles.subtotal) as ingresos_totales'),
+                    DB::raw('ROUND(AVG(orden_detalles.precio_unitario), 2) as precio_promedio')
+                )
+                ->groupBy('productos.id', 'productos.nombre')
+                ->orderByDesc('total_vendidos')
+                ->get();
+
+            return response()->json(['success' => true, 'data' => $productos]);
+
+        } catch (\Exception $e) {
+            return $this->error('Error al generar reporte de productos', $e);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // EXPORTAR
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -818,7 +874,7 @@ class ReporteController extends Controller
     {
         try {
             $request->validate([
-                'tipo'         => 'required|in:ventas,productos,clientes,utilidad,propinas,canales,paquete,retrasos,tiempos',
+                'tipo'         => 'required|in:ventas,productos,clientes,utilidad,propinas,canales,paquete,retrasos,tiempos,roi',
                 'formato'      => 'required|in:pdf,excel,csv',
                 'fecha_inicio' => 'sometimes|date',
                 'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
@@ -843,6 +899,259 @@ class ReporteController extends Controller
             return response()->json(['success' => false, 'message' => 'Datos inválidos.', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
             return $this->error('Error al exportar reporte', $e);
+        }
+    }
+
+    // =========================================================================
+    // ROI — CONFIGURACIÓN
+    // =========================================================================
+
+    /**
+     * GET /api/reportes/roi/config
+     * Leer parámetros fijos del restaurante (inversión inicial, objetivos, gastos fijos).
+     */
+    public function roiObtenerConfig(Request $request): JsonResponse
+    {
+        try {
+            $restauranteActivo = app('restaurante_activo');
+
+            $config = \App\Models\RoiConfig::firstOrCreate(
+                ['restaurante_id' => $restauranteActivo->id],
+                [
+                    'inversion_inicial' => 0,
+                    'utilidad_objetivo' => 0,
+                    'gasto_renta'       => 0,
+                    'gasto_servicios'   => 0,
+                    'gasto_software'    => 0,
+                    'gasto_marketing'   => 0,
+                ]
+            );
+
+            return response()->json(['success' => true, 'data' => $config]);
+
+        } catch (\Exception $e) {
+            return $this->error('Error al obtener configuración ROI', $e);
+        }
+    }
+
+    /**
+     * PUT /api/reportes/roi/config
+     * Guardar / actualizar parámetros fijos del restaurante.
+     */
+    public function roiGuardarConfig(Request $request): JsonResponse
+    {
+        try {
+            $restauranteActivo = app('restaurante_activo');
+
+            $request->validate([
+                'inversion_inicial' => 'sometimes|numeric|min:0',
+                'utilidad_objetivo' => 'sometimes|numeric|min:0',
+                'gasto_renta'       => 'sometimes|numeric|min:0',
+                'gasto_servicios'   => 'sometimes|numeric|min:0',
+                'gasto_software'    => 'sometimes|numeric|min:0',
+                'gasto_marketing'   => 'sometimes|numeric|min:0',
+            ]);
+
+            $config = \App\Models\RoiConfig::updateOrCreate(
+                ['restaurante_id' => $restauranteActivo->id],
+                $request->only([
+                    'inversion_inicial',
+                    'utilidad_objetivo',
+                    'gasto_renta',
+                    'gasto_servicios',
+                    'gasto_software',
+                    'gasto_marketing',
+                ])
+            );
+
+            return response()->json(['success' => true, 'data' => $config]);
+
+        } catch (\Exception $e) {
+            return $this->error('Error al guardar configuración ROI', $e);
+        }
+    }
+
+    // =========================================================================
+    // ROI — CÁLCULO COMPLETO
+    // =========================================================================
+
+    /**
+     * GET /api/reportes/roi
+     * Calcula el ROI completo del período indicado.
+     *
+     * Query params opcionales:
+     *   fecha_inicio  (default: primer día del mes en curso)
+     *   fecha_fin     (default: hoy)
+     */
+    public function roiCompleto(Request $request): JsonResponse
+    {
+        try {
+            $restauranteActivo = app('restaurante_activo');
+
+            $request->validate([
+                'fecha_inicio' => 'sometimes|date',
+                'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
+            ]);
+
+            $fechaInicio = $request->get('fecha_inicio', now()->startOfMonth()->format('Y-m-d'));
+            $fechaFin    = $request->get('fecha_fin',    now()->format('Y-m-d'));
+
+            // ── Configuración fija del restaurante ───────────────────────────
+            $config = \App\Models\RoiConfig::firstOrCreate(
+                ['restaurante_id' => $restauranteActivo->id],
+                [
+                    'inversion_inicial' => 0, 'utilidad_objetivo' => 0,
+                    'gasto_renta' => 0, 'gasto_servicios' => 0,
+                    'gasto_software' => 0, 'gasto_marketing' => 0,
+                ]
+            );
+
+            $inversionInicial = (float) $config->inversion_inicial;
+            $utilidadObjetivo = (float) $config->utilidad_objetivo;
+
+            // ── Ventas del período ────────────────────────────────────────────
+            $ventasMes = (float) Orden::where('restaurante_id', $restauranteActivo->id)
+                ->where('estado', 'CERRADA')
+                ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+                ->sum('total');
+
+            // ── Gastos variables (tabla gastos: insumos, empaque, comisiones) ─
+            $gastosVariables = (float) DB::table('gastos')
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+                ->sum('monto');
+
+            // ── Nómina del período (tabla nominas, estado PAGADA) ─────────────
+            $nominaMes = (float) Nomina::where('restaurante_id', $restauranteActivo->id)
+                ->where('estado', 'PAGADA')
+                ->whereBetween('periodo_fin', [$fechaInicio, $fechaFin])
+                ->sum('pago_total');
+
+            // ── Gastos operativos = fijos (config) + nómina ───────────────────
+            $gastosOperativos = round(
+                (float) $config->gasto_renta    +
+                (float) $config->gasto_servicios +
+                (float) $config->gasto_software  +
+                (float) $config->gasto_marketing +
+                $nominaMes,
+                2
+            );
+
+            // ── Ganancia neta ─────────────────────────────────────────────────
+            $gananciaNeta = round($ventasMes - $gastosVariables - $gastosOperativos, 2);
+
+            // ── Margen de contribución: 1 - (CostosVariables / Ventas) ────────
+            $margenContribucion = $ventasMes > 0
+                ? round(1 - ($gastosVariables / $ventasMes), 4)
+                : 0;
+
+            // ── Punto de equilibrio: GastosFijos / MargenContribucion ─────────
+            $puntoEquilibrio = $margenContribucion > 0
+                ? round($gastosOperativos / $margenContribucion, 2)
+                : null;
+
+            // ── % Cumplimiento ventas vs punto de equilibrio ──────────────────
+            $pctCumplimientoPE = ($puntoEquilibrio && $puntoEquilibrio > 0)
+                ? round(($ventasMes / $puntoEquilibrio) * 100, 2)
+                : null;
+
+            // ── ROI general: (GananciaNeta / InversiónInicial) * 100 ──────────
+            $roiGeneral = $inversionInicial > 0
+                ? round(($gananciaNeta / $inversionInicial) * 100, 2)
+                : null;
+
+            // ── % Utilidad: (GananciaNeta / Ventas) * 100 ────────────────────
+            $pctUtilidad = $ventasMes > 0
+                ? round(($gananciaNeta / $ventasMes) * 100, 2)
+                : 0;
+
+            // ── % Cumplimiento objetivo ───────────────────────────────────────
+            $pctCumplimientoObjetivo = $utilidadObjetivo > 0
+                ? round(($gananciaNeta / $utilidadObjetivo) * 100, 2)
+                : null;
+
+            // ── Semáforo ROI ──────────────────────────────────────────────────
+            $semaforo = match (true) {
+                $roiGeneral === null => 'sin_datos', // ROI < 5%  → rojo
+                $roiGeneral < 5      => 'rojo',      // ROI 5-15% → amarillo
+                $roiGeneral <= 15    => 'amarillo',  // ROI > 15% → verde
+                default              => 'verde',
+            };
+
+            // ── ROI por producto (top 10 por ingreso) ─────────────────────────
+            // roi_producto = (utilidad / costo) * 100
+            // Sin columna costo en productos → se retorna null por ahora.
+            $roiProductos = DB::table('orden_detalles')
+                ->join('ordenes',   'orden_detalles.orden_id',    '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->where('ordenes.estado', 'CERRADA')
+                ->whereBetween('ordenes.created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+                ->select(
+                    'productos.id',
+                    'productos.nombre',
+                    DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
+                    'productos.precio',
+                    DB::raw('SUM(orden_detalles.cantidad) as unidades_vendidas'),
+                    DB::raw('SUM(orden_detalles.subtotal) as ingreso_total'),
+                    // Cuando exista columna costo:
+                    // DB::raw('ROUND((productos.precio - productos.costo) / NULLIF(productos.costo,0) * 100, 2) as roi_producto'),
+                    DB::raw('NULL as roi_producto')
+                )
+                ->groupBy('productos.id', 'productos.nombre', 'categorias.nombre', 'productos.precio')
+                ->orderByDesc('ingreso_total')
+                ->limit(10)
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'periodo' => [
+                        'inicio' => $fechaInicio,
+                        'fin'    => $fechaFin,
+                    ],
+
+                    // Parámetros capturados en config
+                    'config' => [
+                        'inversion_inicial' => $inversionInicial,
+                        'utilidad_objetivo' => $utilidadObjetivo,
+                        'gasto_renta'       => (float) $config->gasto_renta,
+                        'gasto_servicios'   => (float) $config->gasto_servicios,
+                        'gasto_software'    => (float) $config->gasto_software,
+                        'gasto_marketing'   => (float) $config->gasto_marketing,
+                    ],
+
+                    // Flujo financiero del período
+                    'financiero' => [
+                        'venta_mes'         => round($ventasMes, 2),
+                        'gastos_variables'  => round($gastosVariables, 2),   // insumos, empaque, comisiones
+                        'nomina_mes'        => round($nominaMes, 2),
+                        'gastos_operativos' => round($gastosOperativos, 2),  // fijos + nómina
+                        'ganancia_neta'     => $gananciaNeta,
+                    ],
+
+                    // KPIs calculados
+                    'kpis' => [
+                        'utilidad_objetivo'       => $utilidadObjetivo,
+                        'utilidad_real'           => $gananciaNeta,
+                        'pct_cumplimiento_obj'    => $pctCumplimientoObjetivo, // null si no hay objetivo
+                        'roi_general'             => $roiGeneral,              // null si no hay inversión inicial
+                        'semaforo'                => $semaforo,                // rojo | amarillo | verde | sin_datos
+                        'margen_contribucion'     => $margenContribucion,      // 0-1
+                        'punto_equilibrio'        => $puntoEquilibrio,         // $ que hay que vender para no perder
+                        'pct_cumplimiento_pe'     => $pctCumplimientoPE,       // ventas / punto_equilibrio * 100
+                        'pct_utilidad'            => $pctUtilidad,             // ganancia / ventas * 100
+                    ],
+
+                    'roi_por_producto' => $roiProductos,
+
+                    'nota' => 'roi_producto = null: agrega columna `costo` a productos para habilitarlo.',
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            return $this->error('Error al calcular ROI', $e);
         }
     }
 
@@ -879,76 +1188,4 @@ class ReporteController extends Controller
 
         return response()->json($payload, 500);
     }
-    public function reporteFinanciero(Request $request): JsonResponse
-{
-    try {
-        $restauranteActivo = app('restaurante_activo');
-
-        $fechaInicio = $request->get('fecha_inicio', now()->startOfMonth()->format('Y-m-d'));
-        $fechaFin    = $request->get('fecha_fin', now()->format('Y-m-d'));
-
-        $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
-            ->where('estado', 'CERRADA')
-            ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
-            ->sum('total');
-
-        $gastos = DB::table('gastos')
-            ->where('restaurante_id', $restauranteActivo->id)
-            ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
-            ->sum('monto');
-
-        $nominas = 0;
-        if (Schema::hasTable('nomina_diaria')) {
-            $nominas = DB::table('nomina_diaria')
-                ->where('restaurante_id', $restauranteActivo->id)
-                ->whereBetween('fecha', [$fechaInicio, $fechaFin])
-                ->sum('total_mano_obra');
-        }
-
-        $ganancia = $ventas - ($gastos + $nominas);
-
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'ventas_totales'  => round($ventas, 2),
-                'gastos_totales'  => round($gastos, 2),
-                'nominas_totales' => round($nominas, 2),
-                'ganancia_neta'   => round($ganancia, 2),
-                'periodo' => [
-                    'inicio' => $fechaInicio,
-                    'fin'    => $fechaFin
-                ]
-            ]
-        ]);
-
-    } catch (\Exception $e) {
-        return $this->error('Error al generar reporte financiero', $e);
-    }
-}
-public function reporteProductos(Request $request): JsonResponse
-{
-    try {
-        $restauranteActivo = app('restaurante_activo');
-
-        $productos = $this->baseDetallesQuery($restauranteActivo->id, $request)
-            ->select(
-                'productos.id',
-                'productos.nombre',
-                DB::raw('SUM(orden_detalles.cantidad) as total_vendidos'),
-                DB::raw('SUM(orden_detalles.subtotal) as ingresos_totales'),
-                DB::raw('ROUND(AVG(orden_detalles.precio_unitario), 2) as precio_promedio')
-            )
-            ->groupBy('productos.id', 'productos.nombre')
-            ->orderByDesc('total_vendidos')
-            ->get();
-
-        return response()->json([
-            'success' => true,
-            'data' => $productos
-        ]);
-
-    } catch (\Exception $e) {
-        return $this->error('Error al generar reporte de productos', $e);
-    }
-}
 }
