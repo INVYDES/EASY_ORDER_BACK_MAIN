@@ -51,7 +51,41 @@ class UserController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al actualizar perfil', 'error' => $e->getMessage()], 500);
         }
     }
+/**
+ * Alternar estado activo/inactivo de un usuario (Admin)
+ * PATCH /api/users/{id}/toggle-activo
+ */
+public function toggleActivo(Request $request, $id)
+{
+    try {
+        $admin = $request->user();
+        $user = User::findOrFail($id);
 
+        // Verificar permisos
+        if ($admin->propietario_id !== $user->propietario_id && $admin->id !== $user->propietario_id) {
+            return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
+        }
+
+        if ($admin->id == $user->id) {
+            return response()->json(['success' => false, 'message' => 'No puedes desactivar tu propia cuenta'], 400);
+        }
+
+        $user->activo = !$user->activo;
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => $user->activo ? 'Usuario activado' : 'Usuario desactivado',
+            'data' => [
+                'id' => $user->id,
+                'activo' => (bool) $user->activo
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+    }
+}
     /**
      * Actualizar un usuario por ID (Uso administrativo)
      */

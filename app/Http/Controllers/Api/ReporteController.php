@@ -1186,4 +1186,96 @@ class ReporteController extends Controller
 
         return response()->json($payload, 500);
     }
+    /**
+ * Ventas por canal (Local, Pickup, Delivery) - Gráfica Donut
+ * GET /api/reportes/ventas-por-canal-tipo
+ */
+public function ventasPorCanalTipo(Request $request): JsonResponse
+{
+    try {
+        $restauranteActivo = app('restaurante_activo');
+
+        $request->validate([
+            'fecha_inicio' => 'sometimes|date',
+            'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
+        ]);
+
+        $query = Orden::where('restaurante_id', $restauranteActivo->id)
+            ->where('estado', 'CERRADA');
+
+        if ($request->filled('fecha_inicio')) {
+            $query->whereDate('created_at', '>=', $request->fecha_inicio);
+        }
+        if ($request->filled('fecha_fin')) {
+            $query->whereDate('created_at', '<=', $request->fecha_fin);
+        }
+
+        $ventasPorTipo = (clone $query)
+            ->select(
+                'tipo_orden',
+                DB::raw('COUNT(*) as total_ordenes'),
+                DB::raw('COALESCE(SUM(total), 0) as total_ventas'),
+                DB::raw('ROUND(AVG(total), 2) as ticket_promedio')
+            )
+            ->groupBy('tipo_orden')
+            ->get();
+
+        $totalVentas = (clone $query)->sum('total');
+        $totalOrdenes = (clone $query)->count();
+
+        // Preparar datos para gráfica donut
+        $labels = [];
+        $datasets = [];
+        $colors = [
+            'local' => '#3B82F6',
+            'pickup' => '#10B981',
+            'delivery' => '#F59E0B',
+        ];
+        $icons = [
+            'local' => '🏠',
+            'pickup' => '📦',
+            'delivery' => '🛵',
+        ];
+        $textos = [
+            'local' => 'Comer en local',
+            'pickup' => 'Para llevar',
+            'delivery' => 'Delivery',
+        ];
+
+        foreach ($ventasPorTipo as $item) {
+            $labels[] = $textos[$item->tipo_orden] ?? $item->tipo_orden;
+            $datasets[] = [
+                'label' => $textos[$item->tipo_orden] ?? $item->tipo_orden,
+                'value' => round($item->total_ventas, 2),
+                'percentage' => $totalVentas > 0 ? round(($item->total_ventas / $totalVentas) * 100, 2) : 0,
+                'color' => $colors[$item->tipo_orden] ?? '#6B7280',
+                'icon' => $icons[$item->tipo_orden] ?? '📋',
+                'ordenes' => (int) $item->total_ordenes,
+                'ticket_promedio' => (float) $item->ticket_promedio,
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'grafica_donut' => [
+                    'labels' => $labels,
+                    'datasets' => $datasets,
+                ],
+                'resumen' => [
+                    'total_ventas' => round($totalVentas, 2),
+                    'total_ordenes' => $totalOrdenes,
+                    'ticket_promedio_general' => $totalOrdenes > 0 ? round($totalVentas / $totalOrdenes, 2) : 0,
+                ],
+                'periodo' => [
+                    'desde' => $request->fecha_inicio,
+                    'hasta' => $request->fecha_fin,
+                ],
+            ],
+        ]);
+
+    } catch (\Exception $e) {
+        return $this->error('Error al obtener ventas por canal', $e);
+    }
+}
 }
