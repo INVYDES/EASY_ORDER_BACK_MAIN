@@ -12,30 +12,45 @@ class Orden extends Model
 
     protected $table = 'ordenes';
 
+    public static $tiposOrden = [
+        'local'    => 'Local',
+        'pickup'   => 'Para llevar',
+        'delivery' => 'Domicilio'
+    ];
+
     protected $fillable = [
         'restaurante_id',
         'cliente_id',
-        'usuario_id',      // 👈 ASÍ SE LLAMA EN TU BD, NO user_id
-        'mesa',            // 👈 NUEVO
-        'metodo_pago',     // 👈 NUEVO
+        'usuario_id',
+        'mesa',
+        'tipo_orden',
+        'direccion_entrega',
+        'telefono_contacto',
+        'costo_envio',
+        'tiempo_estimado_entrega',
+        'metodo_pago',
         'total',
-        'propina',         // 👈 NUEVO
-        'estado'
-        // Nota: No incluyas 'fecha' porque usas created_at/updated_at
+        'propina',
+        'estado',
+        'paypal_order_id'
     ];
 
     protected $casts = [
         'total' => 'decimal:2',
         'propina' => 'decimal:2',
+        'costo_envio' => 'decimal:2',
         'mesa' => 'integer',
+        'tiempo_estimado_entrega' => 'integer',
         'created_at' => 'datetime',
         'updated_at' => 'datetime'
     ];
 
     protected $attributes = [
         'estado' => 'ABIERTA',
+        'tipo_orden' => 'local',
         'total' => 0,
-        'propina' => 0
+        'propina' => 0,
+        'costo_envio' => 0
     ];
 
     /**
@@ -109,6 +124,20 @@ class Orden extends Model
     /**
      * ACCESORS
      */
+    public function getTipoOrdenTextoAttribute(): string
+    {
+        return self::$tiposOrden[$this->tipo_orden] ?? $this->tipo_orden ?? 'Local';
+    }
+
+    public function getTipoOrdenBadgeAttribute(): array
+    {
+        return match ($this->tipo_orden) {
+            'pickup'   => ['color' => 'orange', 'icono' => '🛍️', 'texto' => 'Recoger'],
+            'delivery' => ['color' => 'purple', 'icono' => '🛵', 'texto' => 'Domicilio'],
+            default    => ['color' => 'blue',   'icono' => '🏠', 'texto' => 'Local'],
+        };
+    }
+
     public function getFolioAttribute(): string
     {
         return 'ORD-' . str_pad($this->id, 6, '0', STR_PAD_LEFT);

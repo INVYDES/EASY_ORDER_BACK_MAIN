@@ -264,5 +264,68 @@ class OfertaController extends Controller
 {
     return $this->activas($request);
 }
-
+/**
+ * Obtener ofertas de un producto específico
+ * GET /api/ofertas/producto/{productoId}
+ */
+public function porProducto($productoId, Request $request)
+{
+    try {
+        $restauranteId = $request->get('restaurante_id');
+        $diaSemana = strtolower(date('l'));
+        
+        $ofertas = Oferta::where('restaurante_id', $restauranteId)
+            ->where('activo', true)
+            ->whereHas('productos', function($q) use ($productoId) {
+                $q->where('productos.id', $productoId);
+            })
+            ->where(function($query) use ($diaSemana) {
+                $query->whereNull('dias_semana')
+                    ->orWhereRaw('JSON_CONTAINS(dias_semana, ?)', [json_encode($diaSemana)]);
+            })
+            ->get();
+        
+        return response()->json([
+            'success' => true,
+            'data' => $ofertas
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error al cargar ofertas del producto: ' . $e->getMessage()
+        ], 500);
+    }
+}
+/**
+ * Clonar una oferta (crear una copia)
+ * POST /api/ofertas/{id}/clonar
+ */
+public function clonar($id, Request $request)
+{
+    try {
+        $ofertaOriginal = Oferta::findOrFail($id);
+        $restauranteId = $request->get('restaurante_id');
+        
+        $nuevaOferta = $ofertaOriginal->replicate();
+        $nuevaOferta->titulo = $ofertaOriginal->titulo . ' (Copia)';
+        $nuevaOferta->activo = false;
+        $nuevaOferta->created_at = now();
+        $nuevaOferta->save();
+        
+        // Clonar productos asociados
+        $productosIds = $ofertaOriginal->productos->pluck('id')->toArray();
+        $nuevaOferta->productos()->sync($productosIds);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Oferta clonada exitosamente',
+            'data' => $nuevaOferta->load('productos')
+        ], 201);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error al clonar oferta: ' . $e->getMessage()
+        ], 500);
+    }
+}
 }

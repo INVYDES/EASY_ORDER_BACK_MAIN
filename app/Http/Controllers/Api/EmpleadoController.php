@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Asistencia;
 use App\Models\Nomina;
+use App\Models\NominaDetalle;
+use App\Models\ConfiguracionNomina;
 use App\Models\Restaurante;
 use App\Models\Role;
 use App\Models\User;
@@ -17,7 +19,7 @@ use Illuminate\Support\Str;
 
 class EmpleadoController extends Controller
 {
-    /** Roles de personal operativo (tabla `users` + `restaurante_user`, sin tabla `empleados`). */
+    /** Roles de personal operativo */
     private function staffRoleNombres(): array
     {
         return ['MESERO', 'COCINA', 'CAJA', 'ADMIN'];
@@ -49,16 +51,23 @@ class EmpleadoController extends Controller
         };
     }
 
-    /** Compat: body/query puede usar `user_id` o `empleado_id` (mismo valor: users.id). */
     private function resolveUserId(Request $request): ?int
     {
         $v = $request->input('user_id', $request->input('empleado_id'));
-
         return $v !== null && $v !== '' ? (int) $v : null;
     }
 
+    private function getRestauranteId($user)
+    {
+        $headerId = request()->header('X-Restaurante-Id');
+        $userRestId = is_object($user->restaurante_activo) ? $user->restaurante_activo->id : $user->restaurante_activo;
+        $requestId = request()->restaurante_id;
+
+        return (!empty($headerId)) ? $headerId : ((!empty($userRestId)) ? $userRestId : $requestId);
+    }
+
     /**
-     * Listar personal del restaurante (usuarios con rol operativo vinculados a la sucursal).
+     * Listar personal del restaurante
      * GET /api/empleados
      */
     public function index(Request $request)
@@ -98,6 +107,11 @@ class EmpleadoController extends Controller
                     'username' => $u->username,
                     'activo' => (bool) $u->activo,
                     'puesto' => $staffRole ? strtolower($staffRole->nombre) : null,
+                    'tipo_empleado' => $u->tipo_empleado,
+                    'salario_base' => $u->salario_base,
+                    'salario_por_hora' => $u->salario_por_hora,
+                    'comision_por_venta' => $u->comision_por_venta,
+                    'fecha_contratacion' => $u->fecha_contratacion,
                     'roles' => $u->roles,
                     'created_at' => $u->created_at,
                     'updated_at' => $u->updated_at,
@@ -114,7 +128,7 @@ class EmpleadoController extends Controller
     }
 
     /**
-     * Alta de personal (crea fila en `users` y vínculos como registerEmpleado).
+     * Alta de personal
      * POST /api/empleados
      */
     public function store(Request $request)
@@ -136,6 +150,9 @@ class EmpleadoController extends Controller
                 'name' => 'required|string|max:255',
                 'password' => 'required|string|min:8|confirmed',
                 'rol_id' => 'required|exists:roles,id',
+                'tipo_empleado' => 'nullable|in:cocina,mesero,caja,administrativo,gerente',
+                'salario_base' => 'nullable|numeric|min:0',
+                'comision_por_venta' => 'nullable|numeric|min:0|max:100',
             ]);
 
             if ($validator->fails()) {
@@ -150,6 +167,19 @@ class EmpleadoController extends Controller
             $nuevo = DB::transaction(function () use ($request, $restaurante, $restauranteId) {
                 $email = 'emp_' . $restaurante->propietario_id . '_' . Str::random(8) . '@sin-correo.local';
 
+                // Determinar salario base
+                $salarioBase = $request->input('salario_base', 0);
+                if ($salarioBase == 0) {
+                    $salarioBase = match ($request->input('tipo_empleado', 'cocina')) {
+                        'gerente' => 12000,
+                        'administrativo' => 10000,
+                        'cocina' => 8000,
+                        'mesero' => 6000,
+                        'caja' => 7000,
+                        default => 8000,
+                    };
+                }
+
                 $empleadoUser = User::create([
                     'propietario_id' => $restaurante->propietario_id,
                     'name' => $request->name,
@@ -157,6 +187,11 @@ class EmpleadoController extends Controller
                     'username' => 'tmp_' . Str::random(10),
                     'password' => Hash::make($request->password),
                     'restaurante_activo' => $restauranteId,
+                    'tipo_empleado' => $request->input('tipo_empleado'),
+                    'salario_base' => $salarioBase,
+                    'salario_por_hora' => $salarioBase / 160,
+                    'comision_por_venta' => $request->input('comision_por_venta', $request->input('tipo_empleado') === 'mesero' ? 5 : 0),
+                    'fecha_contratacion' => now()->toDateString(),
                 ]);
 
                 $empleadoUser->update(['username' => (string) $restaurante->propietario_id . $empleadoUser->id]);
@@ -178,7 +213,7 @@ class EmpleadoController extends Controller
     }
 
     /**
-     * GET /api/empleados/{empleado}  (id = users.id)
+     * GET /api/empleados/{empleado}
      */
     public function show(Request $request, $empleadoId)
     {
@@ -207,6 +242,11 @@ class EmpleadoController extends Controller
                     'username' => $empleado->username,
                     'activo' => (bool) $empleado->activo,
                     'puesto' => $staffRole ? strtolower($staffRole->nombre) : null,
+                    'tipo_empleado' => $empleado->tipo_empleado,
+                    'salario_base' => $empleado->salario_base,
+                    'salario_por_hora' => $empleado->salario_por_hora,
+                    'comision_por_venta' => $empleado->comision_por_venta,
+                    'fecha_contratacion' => $empleado->fecha_contratacion,
                     'roles' => $empleado->roles,
                     'created_at' => $empleado->created_at,
                     'updated_at' => $empleado->updated_at,
@@ -241,6 +281,9 @@ class EmpleadoController extends Controller
                 'password' => 'sometimes|string|min:8|confirmed',
                 'rol_id' => 'sometimes|exists:roles,id',
                 'activo' => 'sometimes|boolean',
+                'tipo_empleado' => 'nullable|in:cocina,mesero,caja,administrativo,gerente',
+                'salario_base' => 'nullable|numeric|min:0',
+                'comision_por_venta' => 'nullable|numeric|min:0|max:100',
             ]);
 
             if ($validator->fails()) {
@@ -264,6 +307,16 @@ class EmpleadoController extends Controller
                 if ($request->has('activo')) {
                     $empleado->activo = filter_var($request->activo, FILTER_VALIDATE_BOOLEAN);
                 }
+                if ($request->filled('tipo_empleado')) {
+                    $empleado->tipo_empleado = $request->tipo_empleado;
+                }
+                if ($request->filled('salario_base')) {
+                    $empleado->salario_base = $request->salario_base;
+                    $empleado->salario_por_hora = $request->salario_base / 160;
+                }
+                if ($request->filled('comision_por_venta')) {
+                    $empleado->comision_por_venta = $request->comision_por_venta;
+                }
                 $empleado->save();
 
                 if ($request->filled('rol_id')) {
@@ -284,6 +337,11 @@ class EmpleadoController extends Controller
                     'username' => $empleado->username,
                     'activo' => (bool) $empleado->activo,
                     'puesto' => $staffRole ? strtolower($staffRole->nombre) : null,
+                    'tipo_empleado' => $empleado->tipo_empleado,
+                    'salario_base' => $empleado->salario_base,
+                    'salario_por_hora' => $empleado->salario_por_hora,
+                    'comision_por_venta' => $empleado->comision_por_venta,
+                    'fecha_contratacion' => $empleado->fecha_contratacion,
                     'roles' => $empleado->roles,
                 ],
             ]);
@@ -293,7 +351,7 @@ class EmpleadoController extends Controller
     }
 
     /**
-     * Alternar estado activo/inactivo.
+     * Alternar estado activo/inactivo
      * PATCH /api/empleados/{empleado}/toggle-activo
      */
     public function toggleActivo(Request $request, $empleadoId)
@@ -329,7 +387,7 @@ class EmpleadoController extends Controller
     }
 
     /**
-     * Quitar al usuario de la sucursal (no borra el usuario).
+     * Eliminar empleado (desvincular de sucursal)
      * DELETE /api/empleados/{empleado}
      */
     public function destroy(Request $request, $empleadoId)
@@ -430,7 +488,7 @@ class EmpleadoController extends Controller
     }
 
     /**
-     * GET /api/asistencias/empleado/{empleado} (id = users.id)
+     * GET /api/asistencias/empleado/{empleado}
      */
     public function getAsistencias(Request $request, $empleadoId)
     {
@@ -476,7 +534,12 @@ class EmpleadoController extends Controller
         }
     }
 
+    // ==========================================
+    // MÓDULO DE NÓMINAS COMPLETO
+    // ==========================================
+
     /**
+     * Generar nómina para un empleado
      * POST /api/nominas/generar
      */
     public function generarNomina(Request $request)
@@ -495,11 +558,12 @@ class EmpleadoController extends Controller
                 'user_id' => 'required|exists:users,id',
                 'periodo_inicio' => 'required|date',
                 'periodo_fin' => 'required|date|after_or_equal:periodo_inicio',
-                'valor_hora' => 'required|numeric|min:0',
+                'valor_hora' => 'nullable|numeric|min:0',
                 'salario_base' => 'nullable|numeric|min:0',
                 'comision_ventas' => 'nullable|numeric|min:0',
                 'bonos' => 'nullable|numeric|min:0',
                 'descuentos' => 'nullable|numeric|min:0',
+                'observaciones' => 'nullable|string',
             ]);
 
             if ($validator->fails()) {
@@ -510,18 +574,46 @@ class EmpleadoController extends Controller
                 return response()->json(['success' => false, 'message' => 'Empleado no encontrado'], 404);
             }
 
+            $empleado = User::find($userId);
+            
+            // Calcular horas trabajadas en el período
             $horasTotales = (float) Asistencia::where('user_id', $userId)
                 ->where('restaurante_id', $restauranteId)
                 ->whereDate('fecha', '>=', $request->periodo_inicio)
                 ->whereDate('fecha', '<=', $request->periodo_fin)
                 ->sum('horas_trabajadas');
 
-            $valorHora = (float) $request->valor_hora;
+            // Calcular ventas generadas en el período
+            $ventasGeneradas = (float) Asistencia::where('user_id', $userId)
+                ->where('restaurante_id', $restauranteId)
+                ->whereDate('fecha', '>=', $request->periodo_inicio)
+                ->whereDate('fecha', '<=', $request->periodo_fin)
+                ->sum('ventas_generadas');
+
+            // Obtener configuración de nómina
+            $config = ConfiguracionNomina::where('restaurante_id', $restauranteId)->first();
+            
+            // Usar valores de entrada o los del empleado/configuración
+            $valorHora = $request->filled('valor_hora') 
+                ? (float) $request->valor_hora 
+                : ($empleado->salario_por_hora > 0 ? $empleado->salario_por_hora : ($config->valor_hora_por_defecto ?? 50));
+            
+            $salarioBase = $request->filled('salario_base') 
+                ? (float) $request->salario_base 
+                : ($empleado->salario_base > 0 ? $empleado->salario_base : ($config->salario_base_por_defecto ?? 8000));
+            
             $pagoHoras = round($valorHora * $horasTotales, 2);
-            $salarioBase = $request->filled('salario_base') ? round((float) $request->salario_base, 2) : $pagoHoras;
-            $comisionVentas = round((float) $request->input('comision_ventas', 0), 2);
-            $bonos = round((float) $request->input('bonos', 0), 2);
-            $descuentos = round((float) $request->input('descuentos', 0), 2);
+            
+            $comisionPorcentaje = $empleado->comision_por_venta > 0 
+                ? $empleado->comision_por_venta 
+                : ($config->porcentaje_comision_ventas ?? 5);
+            
+            $comisionVentas = $request->filled('comision_ventas')
+                ? (float) $request->comision_ventas
+                : round($ventasGeneradas * ($comisionPorcentaje / 100), 2);
+            
+            $bonos = (float) $request->input('bonos', 0);
+            $descuentos = (float) $request->input('descuentos', 0);
 
             $nomina = DB::transaction(function () use (
                 $userId,
@@ -535,7 +627,7 @@ class EmpleadoController extends Controller
                 $bonos,
                 $descuentos
             ) {
-                $row = Nomina::updateOrCreate(
+                $nomina = Nomina::updateOrCreate(
                     [
                         'user_id' => $userId,
                         'periodo_inicio' => $request->periodo_inicio,
@@ -550,16 +642,21 @@ class EmpleadoController extends Controller
                         'comision_ventas' => $comisionVentas,
                         'bonos' => $bonos,
                         'descuentos' => $descuentos,
+                        'observaciones' => $request->input('observaciones'),
                         'estado' => 'PENDIENTE',
                     ]
                 );
-                $row->pago_total = round(
-                    (float) $row->salario_base + (float) $row->comision_ventas + (float) $row->bonos - (float) $row->descuentos,
+                
+                $nomina->pago_total = round(
+                    (float) $nomina->salario_base + 
+                    (float) $nomina->comision_ventas + 
+                    (float) $nomina->bonos - 
+                    (float) $nomina->descuentos,
                     2
                 );
-                $row->save();
+                $nomina->save();
 
-                return $row->fresh();
+                return $nomina->fresh();
             });
 
             return response()->json([
@@ -573,6 +670,7 @@ class EmpleadoController extends Controller
     }
 
     /**
+     * Obtener listado de nóminas
      * GET /api/nominas
      */
     public function getNominas(Request $request)
@@ -603,7 +701,8 @@ class EmpleadoController extends Controller
                 $query->whereDate('periodo_fin', '<=', $request->fecha_hasta);
             }
 
-            $nominas = $query->orderBy('created_at', 'desc')->get();
+            $perPage = $request->input('per_page', 20);
+            $nominas = $query->orderBy('created_at', 'desc')->paginate($perPage);
 
             return response()->json([
                 'success' => true,
@@ -615,7 +714,138 @@ class EmpleadoController extends Controller
     }
 
     /**
-     * PUT /api/nominas/{nomina}
+     * Obtener una nómina específica
+     * GET /api/nominas/{id}
+     */
+    public function getNomina(Request $request, $nominaId)
+    {
+        try {
+            $authUser = $request->user();
+            $restauranteId = (int) $this->getRestauranteId($authUser);
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
+            }
+
+            $nomina = Nomina::where('id', $nominaId)
+                ->where('restaurante_id', $restauranteId)
+                ->with('user')
+                ->first();
+
+            if (!$nomina) {
+                return response()->json(['success' => false, 'message' => 'Nómina no encontrada'], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $nomina,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * EDITAR/ACTUALIZAR nómina existente
+     * PUT /api/nominas/{id}
+     */
+    public function updateNomina(Request $request, $nominaId)
+    {
+        try {
+            $authUser = $request->user();
+            $restauranteId = (int) $this->getRestauranteId($authUser);
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
+            }
+
+            $nomina = Nomina::where('id', $nominaId)
+                ->where('restaurante_id', $restauranteId)
+                ->first();
+
+            if (!$nomina) {
+                return response()->json(['success' => false, 'message' => 'Nómina no encontrada'], 404);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'periodo_inicio' => 'sometimes|date',
+                'periodo_fin' => 'sometimes|date|after_or_equal:periodo_inicio',
+                'horas_totales' => 'nullable|numeric|min:0',
+                'salario_base' => 'nullable|numeric|min:0',
+                'valor_hora' => 'nullable|numeric|min:0',
+                'pago_horas' => 'nullable|numeric|min:0',
+                'comision_ventas' => 'nullable|numeric|min:0',
+                'bonos' => 'nullable|numeric|min:0',
+                'descuentos' => 'nullable|numeric|min:0',
+                'observaciones' => 'nullable|string',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+
+            DB::transaction(function () use ($request, $nomina) {
+                $camposActualizar = [];
+                
+                if ($request->has('periodo_inicio')) {
+                    $camposActualizar['periodo_inicio'] = $request->periodo_inicio;
+                }
+                if ($request->has('periodo_fin')) {
+                    $camposActualizar['periodo_fin'] = $request->periodo_fin;
+                }
+                if ($request->has('horas_totales')) {
+                    $camposActualizar['horas_totales'] = $request->horas_totales;
+                }
+                if ($request->has('salario_base')) {
+                    $camposActualizar['salario_base'] = $request->salario_base;
+                }
+                if ($request->has('valor_hora')) {
+                    $camposActualizar['valor_hora'] = $request->valor_hora;
+                }
+                if ($request->has('pago_horas')) {
+                    $camposActualizar['pago_horas'] = $request->pago_horas;
+                }
+                if ($request->has('comision_ventas')) {
+                    $camposActualizar['comision_ventas'] = $request->comision_ventas;
+                }
+                if ($request->has('bonos')) {
+                    $camposActualizar['bonos'] = $request->bonos;
+                }
+                if ($request->has('descuentos')) {
+                    $camposActualizar['descuentos'] = $request->descuentos;
+                }
+                if ($request->has('observaciones')) {
+                    $camposActualizar['observaciones'] = $request->observaciones;
+                }
+
+                if (!empty($camposActualizar)) {
+                    $nomina->update($camposActualizar);
+                }
+                
+                // Recalcular pago total
+                $nomina->pago_total = round(
+                    (float) $nomina->salario_base + 
+                    (float) $nomina->comision_ventas + 
+                    (float) $nomina->bonos - 
+                    (float) $nomina->descuentos,
+                    2
+                );
+                $nomina->save();
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Nómina actualizada correctamente',
+                'data' => $nomina->fresh()->load('user'),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Actualizar estado de nómina (PENDIENTE, PAGADA, ANULADA)
+     * PUT /api/nominas/{id}/estado
      */
     public function actualizarEstadoNomina(Request $request, $nominaId)
     {
@@ -636,7 +866,7 @@ class EmpleadoController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'estado' => 'required|in:PENDIENTE,PAGADA,ANULADA,pendiente,pagada,anulada',
+                'estado' => 'required|in:PENDIENTE,PAGADA,ANULADA',
                 'observaciones' => 'nullable|string',
                 'fecha_pago' => 'nullable|date',
                 'metodo_pago' => 'nullable|string|max:50',
@@ -647,20 +877,26 @@ class EmpleadoController extends Controller
                 return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
             }
 
-            $estado = strtoupper($request->estado);
-
-            $update = ['estado' => $estado];
-            foreach (['observaciones', 'fecha_pago', 'metodo_pago', 'referencia_pago'] as $field) {
-                if ($request->has($field)) {
-                    $update[$field] = $request->input($field);
-                }
+            $updateData = ['estado' => strtoupper($request->estado)];
+            
+            if ($request->filled('observaciones')) {
+                $updateData['observaciones'] = $request->observaciones;
+            }
+            if ($request->filled('fecha_pago')) {
+                $updateData['fecha_pago'] = $request->fecha_pago;
+            }
+            if ($request->filled('metodo_pago')) {
+                $updateData['metodo_pago'] = $request->metodo_pago;
+            }
+            if ($request->filled('referencia_pago')) {
+                $updateData['referencia_pago'] = $request->referencia_pago;
             }
 
-            $nomina->update($update);
+            $nomina->update($updateData);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Estado de nómina actualizado',
+                'message' => 'Estado de nómina actualizado a ' . $updateData['estado'],
                 'data' => $nomina->fresh(),
             ]);
         } catch (\Exception $e) {
@@ -669,9 +905,10 @@ class EmpleadoController extends Controller
     }
 
     /**
-     * GET /api/kpis/meseros
+     * Eliminar nómina (soft delete)
+     * DELETE /api/nominas/{id}
      */
-    public function getKpiMeseros(Request $request)
+    public function deleteNomina(Request $request, $nominaId)
     {
         try {
             $authUser = $request->user();
@@ -681,74 +918,19 @@ class EmpleadoController extends Controller
                 return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
             }
 
-            $validator = Validator::make($request->all(), [
-                'fecha_desde' => 'nullable|date',
-                'fecha_hasta' => 'nullable|date',
-            ]);
+            $nomina = Nomina::where('id', $nominaId)
+                ->where('restaurante_id', $restauranteId)
+                ->first();
 
-            if ($validator->fails()) {
-                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            if (!$nomina) {
+                return response()->json(['success' => false, 'message' => 'Nómina no encontrada'], 404);
             }
 
-            $empleados = $this->empleadosBaseQuery($restauranteId)
-                ->whereHas('roles', fn ($q) => $q->where('nombre', 'MESERO'))
-                ->get();
-
-            $data = $empleados->map(function (User $empleado) use ($request, $restauranteId) {
-                $asistenciasQuery = Asistencia::where('user_id', $empleado->id)
-                    ->where('restaurante_id', $restauranteId);
-
-                if ($request->filled('fecha_desde')) {
-                    $asistenciasQuery->whereDate('fecha', '>=', $request->fecha_desde);
-                }
-                if ($request->filled('fecha_hasta')) {
-                    $asistenciasQuery->whereDate('fecha', '<=', $request->fecha_hasta);
-                }
-
-                $asistencias = $asistenciasQuery->get();
-
-                $horasTotales = $asistencias->sum('horas_trabajadas');
-                $ventasGeneradas = $asistencias->sum('ventas_generadas');
-                $turnos = $asistencias->count();
-
-                $ventasPorMesero = $turnos > 0 ? round($ventasGeneradas / $turnos, 2) : 0;
-                $ventasPorHora = $horasTotales > 0 ? round($ventasGeneradas / $horasTotales, 2) : 0;
-                $ticketPromedio = $turnos > 0 ? round($ventasGeneradas / $turnos, 2) : 0;
-
-                return [
-                    'empleado' => $empleado->name,
-                    'empleado_id' => $empleado->id,
-                    'user_id' => $empleado->id,
-                    'puesto' => 'mesero',
-                    'horas_trabajadas' => round($horasTotales, 2),
-                    'ventas_generadas' => round($ventasGeneradas, 2),
-                    'turnos' => $turnos,
-                    'ventas_por_hora' => $ventasPorHora,
-                    'ticket_promedio' => $ticketPromedio,
-                    'ventas_por_mesero' => $ventasPorMesero,
-                ];
-            });
-
-            $totalVentas = $data->sum('ventas_generadas');
-            $totalHoras = $data->sum('horas_trabajadas');
-            $promedioTicket = $totalVentas > 0 && $data->count() > 0
-                ? round($totalVentas / $data->count(), 2)
-                : 0;
-
-            $ranking = $data->sortByDesc('ventas_generadas')->values();
+            $nomina->delete();
 
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'meseros' => $data,
-                    'ranking' => $ranking,
-                    'resumen' => [
-                        'total_ventas' => round($totalVentas, 2),
-                        'total_horas' => round($totalHoras, 2),
-                        'promedio_ticket' => $promedioTicket,
-                        'total_meseros' => $data->count(),
-                    ],
-                ],
+                'message' => 'Nómina eliminada correctamente',
             ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
@@ -756,9 +938,10 @@ class EmpleadoController extends Controller
     }
 
     /**
-     * GET /api/kpis/cocina
+     * Obtener resumen de nóminas
+     * GET /api/nominas/resumen
      */
-    public function getKpiCocina(Request $request)
+    public function resumenNominas(Request $request)
     {
         try {
             $authUser = $request->user();
@@ -768,63 +951,556 @@ class EmpleadoController extends Controller
                 return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
             }
 
-            $empleados = $this->empleadosBaseQuery($restauranteId)
-                ->whereHas('roles', fn ($q) => $q->where('nombre', 'COCINA'))
-                ->get();
+            $query = Nomina::where('restaurante_id', $restauranteId);
 
-            $data = $empleados->map(function (User $empleado) use ($request, $restauranteId) {
-                $asistenciasQuery = Asistencia::where('user_id', $empleado->id)
-                    ->where('restaurante_id', $restauranteId);
+            if ($request->filled('fecha_desde')) {
+                $query->whereDate('periodo_fin', '>=', $request->fecha_desde);
+            }
+            if ($request->filled('fecha_hasta')) {
+                $query->whereDate('periodo_inicio', '<=', $request->fecha_hasta);
+            }
 
-                if ($request->filled('fecha_desde')) {
-                    $asistenciasQuery->whereDate('fecha', '>=', $request->fecha_desde);
-                }
-                if ($request->filled('fecha_hasta')) {
-                    $asistenciasQuery->whereDate('fecha', '<=', $request->fecha_hasta);
-                }
+            $nominas = $query->get();
 
-                $asistencias = $asistenciasQuery->get();
-
-                $horasTotales = $asistencias->sum('horas_trabajadas');
-                $ordenesCompletadas = 0;
-
-                $ordenesPorHora = $horasTotales > 0 ? round($ordenesCompletadas / $horasTotales, 2) : 0;
-
-                return [
-                    'empleado' => $empleado->name,
-                    'empleado_id' => $empleado->id,
-                    'user_id' => $empleado->id,
-                    'puesto' => 'cocina',
-                    'horas_trabajadas' => round($horasTotales, 2),
-                    'ordenes_completadas' => $ordenesCompletadas,
-                    'ordenes_por_hora' => $ordenesPorHora,
-                    'tiempo_promedio_preparacion' => null,
-                    'retrasos' => 0,
-                    'errores' => 0,
-                    'desperdicio' => null,
-                ];
-            });
-
-            $totalOrdenes = $data->sum('ordenes_completadas');
-            $totalHoras = $data->sum('horas_trabajadas');
-            $promedioOrdenesHora = $totalHoras > 0 ? round($totalOrdenes / $totalHoras, 2) : 0;
+            $resumen = [
+                'total_nominas' => $nominas->count(),
+                'total_pagado' => round($nominas->where('estado', 'PAGADA')->sum('pago_total'), 2),
+                'total_pendiente' => round($nominas->where('estado', 'PENDIENTE')->sum('pago_total'), 2),
+                'total_horas' => round($nominas->sum('horas_totales'), 2),
+                'total_comisiones' => round($nominas->sum('comision_ventas'), 2),
+                'total_bonos' => round($nominas->sum('bonos'), 2),
+                'total_descuentos' => round($nominas->sum('descuentos'), 2),
+                'por_estado' => [
+                    'PENDIENTE' => $nominas->where('estado', 'PENDIENTE')->count(),
+                    'PAGADA' => $nominas->where('estado', 'PAGADA')->count(),
+                    'ANULADA' => $nominas->where('estado', 'ANULADA')->count()
+                ]
+            ];
 
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'cocina' => $data,
-                    'resumen' => [
-                        'total_ordenes' => $totalOrdenes,
-                        'total_horas' => round($totalHoras, 2),
-                        'promedio_ordenes_hora' => $promedioOrdenesHora,
-                    ],
-                ],
+                'data' => $resumen,
             ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 
+    /**
+     * Obtener configuración de nómina del restaurante
+     * GET /api/nomina/configuracion
+     */
+    public function getConfiguracionNomina(Request $request)
+    {
+        try {
+            $user = $request->user();
+            $restauranteId = (int) $this->getRestauranteId($user);
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó sucursal activa'], 400);
+            }
+
+            $config = ConfiguracionNomina::where('restaurante_id', $restauranteId)->first();
+
+            if (!$config) {
+                $config = ConfiguracionNomina::create([
+                    'restaurante_id' => $restauranteId,
+                    'salario_base_por_defecto' => 8000.00,
+                    'valor_hora_por_defecto' => 50.00,
+                    'porcentaje_comision_ventas' => 5.00,
+                    'dias_pago' => '15,30',
+                    'activo' => 1
+                ]);
+            }
+
+            return response()->json(['success' => true, 'data' => $config]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Actualizar configuración de nómina
+     * PUT /api/nomina/configuracion
+     */
+    public function updateConfiguracionNomina(Request $request)
+    {
+        try {
+            $user = $request->user();
+            $restauranteId = (int) $this->getRestauranteId($user);
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó sucursal activa'], 400);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'salario_base_por_defecto' => 'nullable|numeric|min:0',
+                'valor_hora_por_defecto' => 'nullable|numeric|min:0',
+                'porcentaje_comision_ventas' => 'nullable|numeric|min:0|max:100',
+                'dias_pago' => 'nullable|string',
+                'activo' => 'nullable|boolean'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+
+            $config = ConfiguracionNomina::where('restaurante_id', $restauranteId)->first();
+
+            if (!$config) {
+                $config = new ConfiguracionNomina();
+                $config->restaurante_id = $restauranteId;
+            }
+
+            $config->fill($request->only([
+                'salario_base_por_defecto',
+                'valor_hora_por_defecto',
+                'porcentaje_comision_ventas',
+                'dias_pago',
+                'activo'
+            ]));
+
+            $config->save();
+
+            return response()->json(['success' => true, 'data' => $config, 'message' => 'Configuración actualizada']);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+   /**
+ * GET /api/kpis/meseros
+ * Obtener KPIs de rendimiento de meseros
+ */
+public function getKpiMeseros(Request $request)
+{
+    try {
+        $authUser = $request->user();
+        $restauranteId = (int) $this->getRestauranteId($authUser);
+
+        if (empty($restauranteId)) {
+            return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'fecha_desde' => 'nullable|date',
+            'fecha_hasta' => 'nullable|date',
+            'mesero_id' => 'nullable|exists:users,id',
+            'top' => 'nullable|integer|min:1|max:50',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        // Obtener meseros del restaurante
+        $query = $this->empleadosBaseQuery($restauranteId)
+            ->whereHas('roles', fn ($q) => $q->where('nombre', 'MESERO'));
+
+        if ($request->filled('mesero_id')) {
+            $query->where('users.id', $request->mesero_id);
+        }
+
+        $empleados = $query->get();
+
+        $data = $empleados->map(function (User $empleado) use ($request, $restauranteId) {
+            // Query de asistencias
+            $asistenciasQuery = Asistencia::where('user_id', $empleado->id)
+                ->where('restaurante_id', $restauranteId);
+
+            if ($request->filled('fecha_desde')) {
+                $asistenciasQuery->whereDate('fecha', '>=', $request->fecha_desde);
+            }
+            if ($request->filled('fecha_hasta')) {
+                $asistenciasQuery->whereDate('fecha', '<=', $request->fecha_hasta);
+            }
+
+            $asistencias = $asistenciasQuery->get();
+
+            $horasTotales = $asistencias->sum('horas_trabajadas');
+            $ventasGeneradas = $asistencias->sum('ventas_generadas');
+            $turnos = $asistencias->count();
+
+            // Ventas reales desde órdenes (más preciso)
+            // Obtener mesas asignadas al mesero
+            $mesasAsignadas = \App\Models\MesaMesero::where('user_id', $empleado->id)
+                ->where('restaurante_id', $restauranteId)
+                ->pluck('numero_mesa')
+                ->toArray();
+
+            $ventasReales = 0;
+            $ordenesCompletadas = 0;
+
+            if (!empty($mesasAsignadas)) {
+                $ordenesQuery = \App\Models\Orden::where('restaurante_id', $restauranteId)
+                    ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                    ->whereIn('mesa', $mesasAsignadas);
+
+                if ($request->filled('fecha_desde')) {
+                    $ordenesQuery->whereDate('created_at', '>=', $request->fecha_desde);
+                }
+                if ($request->filled('fecha_hasta')) {
+                    $ordenesQuery->whereDate('created_at', '<=', $request->fecha_hasta);
+                }
+
+                $ventasReales = $ordenesQuery->sum('total');
+                $ordenesCompletadas = $ordenesQuery->count();
+            }
+
+            // Calcular indicadores
+            $ventasPorHora = $horasTotales > 0 ? round($ventasReales / $horasTotales, 2) : 0;
+            $ticketPromedio = $ordenesCompletadas > 0 ? round($ventasReales / $ordenesCompletadas, 2) : 0;
+            $eficiencia = $turnos > 0 ? round($ventasReales / $turnos, 2) : 0;
+            
+            // Calcular comisión estimada
+            $comisionEstimada = 0;
+            if ($empleado->comision_por_venta > 0) {
+                $comisionEstimada = round($ventasReales * ($empleado->comision_por_venta / 100), 2);
+            }
+
+            // Calcular satisfacción (si tuvieras encuestas, este es un placeholder)
+            $satisfaccion = null;
+
+            return [
+                'empleado' => $empleado->name,
+                'empleado_id' => $empleado->id,
+                'user_id' => $empleado->id,
+                'puesto' => 'mesero',
+                'tipo_empleado' => $empleado->tipo_empleado,
+                'salario_base' => $empleado->salario_base,
+                'comision_por_venta' => $empleado->comision_por_venta,
+                
+                // Métricas de asistencia
+                'horas_trabajadas' => round($horasTotales, 2),
+                'turnos' => $turnos,
+                'dias_trabajados' => $turnos,
+                'promedio_horas_dia' => $turnos > 0 ? round($horasTotales / $turnos, 2) : 0,
+                
+                // Métricas de ventas
+                'ventas_generadas' => round($ventasReales, 2),
+                'ventas_por_hora' => $ventasPorHora,
+                'ticket_promedio' => $ticketPromedio,
+                'ventas_por_turno' => $eficiencia,
+                'ordenes_atendidas' => $ordenesCompletadas,
+                'mesas_atendidas' => count($mesasAsignadas),
+                
+                // Comisiones y compensación
+                'comision_estimada' => $comisionEstimada,
+                'ingreso_total_estimado' => round($empleado->salario_base + $comisionEstimada, 2),
+                
+                // Eficiencia
+                'eficiencia_ventas' => $ordenesCompletadas > 0 ? round($ventasReales / $ordenesCompletadas, 2) : 0,
+                'satisfaccion' => $satisfaccion,
+            ];
+        });
+
+        // Ordenar por ventas generadas
+        $data = $data->sortByDesc('ventas_generadas')->values();
+
+        // Aplicar límite de top si se especifica
+        $top = $request->input('top');
+        if ($top && $top > 0) {
+            $data = $data->take($top);
+        }
+
+        // Calcular totales generales
+        $totalVentas = $data->sum('ventas_generadas');
+        $totalHoras = $data->sum('horas_trabajadas');
+        $totalOrdenes = $data->sum('ordenes_atendidas');
+        $totalComisiones = $data->sum('comision_estimada');
+        
+        $promedioTicket = $totalOrdenes > 0 ? round($totalVentas / $totalOrdenes, 2) : 0;
+        $productividadGeneral = $totalHoras > 0 ? round($totalVentas / $totalHoras, 2) : 0;
+
+        // Ranking de meseros
+        $ranking = $data->map(function($item, $index) {
+            return [
+                'posicion' => $index + 1,
+                'mesero_id' => $item['empleado_id'],
+                'mesero_nombre' => $item['empleado'],
+                'total_ventas' => $item['ventas_generadas'],
+                'total_ordenes' => $item['ordenes_atendidas'],
+                'ticket_promedio' => $item['ticket_promedio'],
+            ];
+        });
+
+        // Mejor mesero del período
+        $mejorMesero = $data->isNotEmpty() ? $data->first() : null;
+
+        // Datos para gráficos
+        $graficoData = [
+            'labels' => $data->pluck('empleado')->toArray(),
+            'ventas' => $data->pluck('ventas_generadas')->toArray(),
+            'ordenes' => $data->pluck('ordenes_atendidas')->toArray(),
+            'horas' => $data->pluck('horas_trabajadas')->toArray(),
+            'ticket_promedio' => $data->pluck('ticket_promedio')->toArray(),
+            'comisiones' => $data->pluck('comision_estimada')->toArray(),
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'meseros' => $data,
+                'ranking' => $ranking,
+                'top_mesero' => $mejorMesero ? [
+                    'id' => $mejorMesero['empleado_id'],
+                    'nombre' => $mejorMesero['empleado'],
+                    'total_ventas' => $mejorMesero['ventas_generadas'],
+                    'total_ordenes' => $mejorMesero['ordenes_atendidas'],
+                    'ticket_promedio' => $mejorMesero['ticket_promedio'],
+                    'horas_trabajadas' => $mejorMesero['horas_trabajadas']
+                ] : null,
+                'resumen' => [
+                    'total_meseros' => $data->count(),
+                    'total_ventas' => round($totalVentas, 2),
+                    'total_horas' => round($totalHoras, 2),
+                    'total_ordenes' => $totalOrdenes,
+                    'total_comisiones' => round($totalComisiones, 2),
+                    'promedio_ticket' => $promedioTicket,
+                    'productividad_general' => $productividadGeneral,
+                    'promedio_ventas_por_mesero' => $data->count() > 0 ? round($totalVentas / $data->count(), 2) : 0,
+                    'periodo' => [
+                        'desde' => $request->filled('fecha_desde') ? $request->fecha_desde : null,
+                        'hasta' => $request->filled('fecha_hasta') ? $request->fecha_hasta : null,
+                    ]
+                ],
+                'data_para_grafico' => $graficoData,
+            ],
+        ]);
+
+    } catch (\Exception $e) {
+        \Log::error('Error en getKpiMeseros: ' . $e->getMessage(), [
+            'trace' => $e->getTraceAsString(),
+            'restaurante_id' => $restauranteId ?? null
+        ]);
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Error al obtener KPIs de meseros: ' . $e->getMessage()
+        ], 500);
+    }
+}
+
+    /**
+ * GET /api/kpis/cocina
+ */
+public function getKpiCocina(Request $request)
+{
+    try {
+        $authUser = $request->user();
+        $restauranteId = (int) $this->getRestauranteId($authUser);
+
+        if (empty($restauranteId)) {
+            return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
+        }
+
+        $empleados = $this->empleadosBaseQuery($restauranteId)
+            ->whereHas('roles', fn ($q) => $q->where('nombre', 'COCINA'))
+            ->get();
+
+        $data = $empleados->map(function (User $empleado) use ($request, $restauranteId) {
+            $asistenciasQuery = Asistencia::where('user_id', $empleado->id)
+                ->where('restaurante_id', $restauranteId);
+
+            if ($request->filled('fecha_desde')) {
+                $asistenciasQuery->whereDate('fecha', '>=', $request->fecha_desde);
+            }
+            if ($request->filled('fecha_hasta')) {
+                $asistenciasQuery->whereDate('fecha', '<=', $request->fecha_hasta);
+            }
+
+            $asistencias = $asistenciasQuery->get();
+            $horasTotales = $asistencias->sum('horas_trabajadas');
+
+            // ========== CALCULAR ÓRDENES COMPLETADAS POR COCINERO (REAL) ==========
+            $ordenesCompletadas = DB::table('orden_detalles as od')
+                ->join('ordenes as o', 'o.id', '=', 'od.orden_id')
+                ->where('o.restaurante_id', $restauranteId)
+                ->where('od.estado_preparacion', 'LISTO')
+                ->when($request->filled('fecha_desde'), fn($q) => 
+                    $q->whereDate('od.updated_at', '>=', $request->fecha_desde))
+                ->when($request->filled('fecha_hasta'), fn($q) => 
+                    $q->whereDate('od.updated_at', '<=', $request->fecha_hasta))
+                ->count();
+
+            // ========== CALCULAR ÓRDENES POR HORA ==========
+            $ordenesPorHora = $horasTotales > 0 ? round($ordenesCompletadas / $horasTotales, 2) : 0;
+
+            return [
+                'empleado' => $empleado->name,
+                'empleado_id' => $empleado->id,
+                'user_id' => $empleado->id,
+                'puesto' => 'cocina',
+                'tipo_empleado' => $empleado->tipo_empleado,
+                'horas_trabajadas' => round($horasTotales, 2),
+                'ordenes_completadas' => $ordenesCompletadas,
+                'ordenes_por_hora' => $ordenesPorHora,
+                'tiempo_promedio_preparacion' => null,
+                'retrasos' => 0,
+                'errores' => 0,
+                'desperdicio' => null,
+            ];
+        });
+
+        $totalOrdenes = $data->sum('ordenes_completadas');
+        $totalHoras = $data->sum('horas_trabajadas');
+        $promedioOrdenesHora = $totalHoras > 0 ? round($totalOrdenes / $totalHoras, 2) : 0;
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'cocina' => $data,
+                'resumen' => [
+                    'total_ordenes' => $totalOrdenes,
+                    'total_horas' => round($totalHoras, 2),
+                    'promedio_ordenes_hora' => $promedioOrdenesHora,
+                ],
+            ],
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+    }
+}
+/**
+ * GET /api/kpis/cocina/retrasos
+ * Porcentaje de órdenes que rebasaron el tiempo estimado
+ */
+public function getKpiCocinaRetrasos(Request $request)
+{
+    try {
+        $authUser = $request->user();
+        $restauranteId = (int) $this->getRestauranteId($authUser);
+
+        if (empty($restauranteId)) {
+            return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
+        }
+
+        $query = DB::table('orden_detalles')
+            ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+            ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+            ->where('ordenes.restaurante_id', $restauranteId)
+            ->whereIn('orden_detalles.estado_preparacion', ['LISTO', 'ENTREGADO'])
+            ->whereNotNull('productos.minutos_produccion')
+            ->where('productos.minutos_produccion', '>', 0);
+
+        if ($request->filled('fecha_desde')) {
+            $query->whereDate('orden_detalles.created_at', '>=', $request->fecha_desde);
+        }
+        if ($request->filled('fecha_hasta')) {
+            $query->whereDate('orden_detalles.created_at', '<=', $request->fecha_hasta);
+        }
+
+        // Total de items
+        $totalItems = (clone $query)->count();
+
+        // Items retrasados (tiempo_real > tiempo_estimado)
+        $itemsRetrasados = (clone $query)
+            ->whereRaw('TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) > productos.minutos_produccion')
+            ->count();
+
+        $porcentajeRetrasos = $totalItems > 0 ? round(($itemsRetrasados / $totalItems) * 100, 2) : 0;
+
+        // Datos para gráfica
+        $retrasosPorEstacion = DB::table('orden_detalles')
+            ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+            ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+            ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
+            ->where('ordenes.restaurante_id', $restauranteId)
+            ->whereIn('orden_detalles.estado_preparacion', ['LISTO', 'ENTREGADO'])
+            ->whereNotNull('productos.minutos_produccion')
+            ->where('productos.minutos_produccion', '>', 0)
+            ->when($request->filled('fecha_desde'), fn($q) => 
+                $q->whereDate('orden_detalles.created_at', '>=', $request->fecha_desde))
+            ->when($request->filled('fecha_hasta'), fn($q) => 
+                $q->whereDate('orden_detalles.created_at', '<=', $request->fecha_hasta))
+            ->select(
+                DB::raw('COALESCE(categorias.nombre, "Sin categoría") as estacion'),
+                DB::raw('COUNT(*) as total'),
+                DB::raw('SUM(CASE WHEN TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) > productos.minutos_produccion THEN 1 ELSE 0 END) as retrasados')
+            )
+            ->groupBy('estacion')
+            ->get()
+            ->map(fn($item) => [
+                'estacion' => $item->estacion,
+                'total' => $item->total,
+                'retrasados' => $item->retrasados,
+                'porcentaje' => $item->total > 0 ? round(($item->retrasados / $item->total) * 100, 2) : 0,
+            ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'resumen' => [
+                    'total_items' => $totalItems,
+                    'items_retrasados' => $itemsRetrasados,
+                    'porcentaje_retrasos' => $porcentajeRetrasos,
+                    'semafoto' => $porcentajeRetrasos <= 10 ? 'verde' : ($porcentajeRetrasos <= 20 ? 'amarillo' : 'rojo'),
+                ],
+                'por_estacion' => $retrasosPorEstacion,
+                'periodo' => [
+                    'desde' => $request->fecha_desde,
+                    'hasta' => $request->fecha_hasta,
+                ],
+            ],
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+    }
+}
+/**
+ * GET /api/kpis/cocina/reprocesos
+ * Porcentaje de platillos devueltos/reprocesados
+ */
+public function getKpiCocinaReprocesos(Request $request)
+{
+    try {
+        $authUser = $request->user();
+        $restauranteId = (int) $this->getRestauranteId($authUser);
+
+        if (empty($restauranteId)) {
+            return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
+        }
+
+        // NOTA: Para reprocesos, necesitarías una tabla de devoluciones o un campo en orden_detalles
+        // Como no existe, este es un placeholder. Si tienes un campo "devuelto" o "reprocesado", ajústalo.
+        
+        // Placeholder: asumimos que reprocesos son detalles que volvieron a estado PENDIENTE después de estar LISTO
+        $query = DB::table('orden_detalles')
+            ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+            ->where('ordenes.restaurante_id', $restauranteId);
+
+        if ($request->filled('fecha_desde')) {
+            $query->whereDate('orden_detalles.created_at', '>=', $request->fecha_desde);
+        }
+        if ($request->filled('fecha_hasta')) {
+            $query->whereDate('orden_detalles.created_at', '<=', $request->fecha_hasta);
+        }
+
+        $totalItems = (clone $query)->count();
+
+        // Reprocesos: detalles que tienen más de una actualización o campo específico
+        // Por ahora, placeholder con 0
+        $reprocesos = 0;
+        $porcentajeReprocesos = $totalItems > 0 ? round(($reprocesos / $totalItems) * 100, 2) : 0;
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'total_platillos' => $totalItems,
+                'reprocesos' => $reprocesos,
+                'porcentaje_reprocesos' => $porcentajeReprocesos,
+                'nota' => 'Para calcular reprocesos reales, se necesita una tabla de devoluciones o campo "reprocesado" en orden_detalles',
+            ],
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+    }
+}
     /**
      * GET /api/kpis/admin
      */
@@ -1014,14 +1690,5 @@ class EmpleadoController extends Controller
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
-    }
-
-    private function getRestauranteId($user)
-    {
-        $headerId = request()->header('X-Restaurante-Id');
-        $userRestId = is_object($user->restaurante_activo) ? $user->restaurante_activo->id : $user->restaurante_activo;
-        $requestId = request()->restaurante_id;
-
-        return (!empty($headerId)) ? $headerId : ((!empty($userRestId)) ? $userRestId : $requestId);
     }
 }

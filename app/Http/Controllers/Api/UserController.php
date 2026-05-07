@@ -12,6 +12,7 @@ use App\Models\Propietario;
 use App\Models\Restaurante;
 use App\Models\Log;
 use Illuminate\Support\Facades\DB;
+use App\Http\Controllers\Api\EmpleadoController;
 
 class UserController extends Controller
 {
@@ -55,67 +56,83 @@ class UserController extends Controller
      * Actualizar un usuario por ID (Uso administrativo)
      */
     public function updateById(Request $request, $id)
-    {
-        try {
-            $admin = $request->user();
-            $user = User::findOrFail($id);
+{
+    try {
+        $admin = $request->user();
+        $user = User::findOrFail($id);
 
-            if ($admin->propietario_id !== $user->propietario_id && $admin->id !== $user->propietario_id) {
-                return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
-            }
-
-            $allData = $request->all();
-            if (empty($allData)) {
-                $allData = json_decode($request->getContent(), true) ?? [];
-            }
-
-            // Lógica de extracción MULTI-CAMPO (Mantenemos la lógica ganadora)
-            $raId = null;
-            if (isset($allData['restaurante_id']) && $allData['restaurante_id'] !== null) {
-                $raId = (int)$allData['restaurante_id'];
-            } elseif (isset($allData['restaurante_activo'])) {
-                $raRaw = $allData['restaurante_activo'];
-                if (is_numeric($raRaw)) {
-                    $raId = (int)$raRaw;
-                } elseif (is_array($raRaw)) {
-                    $raId = $raRaw['id'] ?? null;
-                } elseif (is_object($raRaw)) {
-                    $raId = $raRaw->id ?? null;
-                }
-            }
-
-            $fields = [];
-            $params = [];
-            
-            if (isset($allData['name'])) { $fields[] = 'name = ?'; $params[] = $allData['name']; }
-            if (isset($allData['email'])) { $fields[] = 'email = ?'; $params[] = $allData['email']; }
-            if (isset($allData['username'])) { $fields[] = 'username = ?'; $params[] = $allData['username']; }
-            if (!empty($allData['password'])) { $fields[] = 'password = ?'; $params[] = Hash::make($allData['password']); }
-            
-            if ($raId !== null) { 
-                $fields[] = 'restaurante_activo = ?'; 
-                $params[] = (int)$raId; 
-                $user->restaurantes()->sync([(int)$raId]);
-            }
-            
-            if (!empty($fields)) {
-                $fields[] = 'updated_at = ?';
-                $params[] = now();
-                $params[] = $id;
-                DB::statement("UPDATE users SET " . implode(', ', $fields) . " WHERE id = ?", $params);
-            }
-
-            $user = User::with(['roles', 'restauranteActivo'])->find($id);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Usuario actualizado correctamente',
-                'data' => $user
-            ]);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        if ($admin->propietario_id !== $user->propietario_id && $admin->id !== $user->propietario_id) {
+            return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
         }
+
+        $allData = $request->all();
+        if (empty($allData)) {
+            $allData = json_decode($request->getContent(), true) ?? [];
+        }
+
+        $raId = null;
+        if (isset($allData['restaurante_id']) && $allData['restaurante_id'] !== null) {
+            $raId = (int)$allData['restaurante_id'];
+        } elseif (isset($allData['restaurante_activo'])) {
+            $raRaw = $allData['restaurante_activo'];
+            if (is_numeric($raRaw)) {
+                $raId = (int)$raRaw;
+            } elseif (is_array($raRaw)) {
+                $raId = $raRaw['id'] ?? null;
+            } elseif (is_object($raRaw)) {
+                $raId = $raRaw->id ?? null;
+            }
+        }
+
+        $fields = [];
+        $params = [];
+
+        if (isset($allData['name']))     { $fields[] = 'name = ?';     $params[] = $allData['name']; }
+        if (isset($allData['email']))    { $fields[] = 'email = ?';    $params[] = $allData['email']; }
+        if (isset($allData['username'])) { $fields[] = 'username = ?'; $params[] = $allData['username']; }
+        if (!empty($allData['password'])) { $fields[] = 'password = ?'; $params[] = Hash::make($allData['password']); }
+
+        // ✅ Toggle activo con manejo robusto de tipos
+        if (isset($allData['activo'])) {
+            $activo = $allData['activo'];
+
+            if (is_string($activo)) {
+                $activoVal = in_array(strtolower(trim($activo)), ['true', '1', 'yes', 'on']) ? 1 : 0;
+            } elseif (is_bool($activo)) {
+                $activoVal = $activo ? 1 : 0;
+            } else {
+                $activoVal = (int)$activo ? 1 : 0;
+            }
+
+            $fields[] = 'activo = ?';
+            $params[] = $activoVal;
+        }
+
+        if ($raId !== null) {
+            $fields[] = 'restaurante_activo = ?';
+            $params[] = (int)$raId;
+            $user->restaurantes()->sync([(int)$raId]);
+        }
+
+        if (!empty($fields)) {
+            $fields[] = 'updated_at = ?';
+            $params[] = now();
+            $params[] = $id;
+            DB::statement("UPDATE users SET " . implode(', ', $fields) . " WHERE id = ?", $params);
+        }
+
+        $user = User::with(['roles', 'restauranteActivo'])->find($id);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Usuario actualizado correctamente',
+            'data' => $user
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
     }
+}
 
     /**
      * Obtener todos los restaurantes del dueño del administrador

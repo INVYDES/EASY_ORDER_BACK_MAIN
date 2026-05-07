@@ -173,50 +173,51 @@ class AnuncioController extends Controller
         return ['info'=>'blue','promo'=>'emerald','alerta'=>'amber','producto'=>'indigo'][$tipo] ?? 'indigo';
     }
     // Anuncios públicos con filtro — para frontend de cliente
-    public function indexPublic(Request $request)
-    {
-        try {
-            $restauranteId  = $request->get('restaurante_id');
-            
-            // Forzamos la detección del usuario aunque la ruta sea pública para la vista previa admin
-            $user = auth('sanctum')->user();
-            if (!$restauranteId && $user) {
-                $restauranteId = $user->restaurante_id;
-            }
-
-            $mostrarCliente = $request->boolean('mostrar_cliente', false);
-            $mostrarInterno = $request->boolean('mostrar_interno', false);
-
-            $query = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
-                ->where('activo', true);
-
-            // Obligamos a filtrar por restaurante para evitar mezclas
-            if ($restauranteId) {
-                $query->where('restaurante_id', $restauranteId);
-            } else {
-                // Si de plano no hay ID, no mostramos nada para seguridad
-                return response()->json(['success' => true, 'data' => []]);
-            }
-
-            if ($mostrarCliente) {
-                $query->where('mostrar_cliente', true);
-            }
-
-            if ($mostrarInterno) {
-                $query->where('mostrar_interno', true);
-            }
-
-            $anuncios = $query->orderBy('orden')->get();
-
-            return response()->json([
-                'success' => true,
-                'data'    => $anuncios->map(fn($a) => $this->transform($a))
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error', 'error' => $e->getMessage()], 500);
+   public function indexPublic(Request $request)
+{
+    try {
+        $restauranteId  = $request->get('restaurante_id');
+        
+        // Forzamos la detección del usuario aunque la ruta sea pública para la vista previa admin
+        $user = auth('sanctum')->user();
+        
+        // CORREGIDO: Obtener restaurante activo del usuario
+        if (!$restauranteId && $user) {
+            $restauranteActivo = app('restaurante_activo');
+            $restauranteId = $restauranteActivo ? $restauranteActivo->id : null;
         }
-    } 
+
+        $mostrarCliente = $request->boolean('mostrar_cliente', false);
+        $mostrarInterno = $request->boolean('mostrar_interno', false);
+
+        $query = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
+            ->where('activo', true);
+
+        if ($restauranteId) {
+            $query->where('restaurante_id', $restauranteId);
+        } else {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        if ($mostrarCliente) {
+            $query->where('mostrar_cliente', true);
+        }
+
+        if ($mostrarInterno) {
+            $query->where('mostrar_interno', true);
+        }
+
+        $anuncios = $query->orderBy('orden')->get();
+
+        return response()->json([
+            'success' => true,
+            'data'    => $anuncios->map(fn($a) => $this->transform($a))
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'message' => 'Error', 'error' => $e->getMessage()], 500);
+    }
+}
 
     // Anuncios vigentes públicos (sin autenticación) — para marquesina del cliente
     public function vigentesPublic(Request $request)
@@ -249,4 +250,69 @@ class AnuncioController extends Controller
             return response()->json(['success' => false, 'message' => 'Error', 'error' => $e->getMessage()], 500);
         }
     }
+    // En app/Models/Anuncio.php
+public function scopeVigentes($query)
+{
+    $hoy = now()->format('Y-m-d H:i:s');
+    
+    return $query->where('activo', true)
+        ->where(function($q) use ($hoy) {
+            $q->whereNull('fecha_inicio')
+              ->orWhere('fecha_inicio', '<=', $hoy);
+        })
+        ->where(function($q) use ($hoy) {
+            $q->whereNull('fecha_fin')
+              ->orWhere('fecha_fin', '>=', $hoy);
+        });
+}
+/**
+ * Activar/Desactivar un anuncio
+ * PATCH /api/admin/anuncios/{id}/toggle
+ */
+public function toggleActivo($id)
+{
+    try {
+        $restaurante = app('restaurante_activo');
+        $anuncio = Anuncio::where('restaurante_id', $restaurante->id)->findOrFail($id);
+        $anuncio->activo = !$anuncio->activo;
+        $anuncio->save();
+        
+        return response()->json([
+            'success' => true,
+            'message' => $anuncio->activo ? 'Anuncio activado' : 'Anuncio desactivado',
+            'data' => ['activo' => $anuncio->activo]
+        ]);
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'message' => 'Error', 'error' => $e->getMessage()], 500);
+    }
+}
+/**
+ * Reordenar anuncios (drag & drop)
+ * POST /api/admin/anuncios/reordenar
+ */
+public function reordenar(Request $request)
+{
+    try {
+        $request->validate([
+            'ordenes' => 'required|array',
+            'ordenes.*.id' => 'required|exists:anuncios,id',
+            'ordenes.*.orden' => 'required|integer|min:0',
+        ]);
+        
+        $restaurante = app('restaurante_activo');
+        
+        foreach ($request->ordenes as $item) {
+            Anuncio::where('restaurante_id', $restaurante->id)
+                ->where('id', $item['id'])
+                ->update(['orden' => $item['orden']]);
+        }
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Orden actualizado correctamente'
+        ]);
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'message' => 'Error', 'error' => $e->getMessage()], 500);
+    }
+}
 }

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class RoiConfig extends Model
 {
@@ -19,11 +20,39 @@ class RoiConfig extends Model
     ];
 
     protected $casts = [
-        'inversion_inicial' => 'float',
-        'utilidad_objetivo' => 'float',
-        'gasto_renta'       => 'float',
-        'gasto_servicios'   => 'float',
-        'gasto_software'    => 'float',
-        'gasto_marketing'   => 'float',
+        'inversion_inicial' => 'decimal:2',
+        'utilidad_objetivo' => 'decimal:2',
+        'gasto_renta'       => 'decimal:2',
+        'gasto_servicios'   => 'decimal:2',
+        'gasto_software'    => 'decimal:2',
+        'gasto_marketing'   => 'decimal:2',
     ];
+
+    /**
+     * Relación con el restaurante
+     */
+    public function restaurante(): BelongsTo
+    {
+        return $this->belongsTo(Restaurante::class);
+    }
+
+    /**
+     * Calcular gastos operativos totales
+     */
+    public function getGastosOperativosTotalesAttribute(): float
+    {
+        return $this->gasto_renta + 
+               $this->gasto_servicios + 
+               $this->gasto_software + 
+               $this->gasto_marketing;
+    }
+
+    /**
+     * Verificar si la configuración está completa
+     */
+    public function isCompleta(): bool
+    {
+        return $this->inversion_inicial > 0 && 
+               $this->utilidad_objetivo > 0;
+    }
 }

@@ -13,8 +13,6 @@ use Illuminate\Support\Facades\Broadcast;
 class CajaController extends Controller
 {
     // ── Helper: selectRaw unificado de ventas por método de pago ──────────────
-    // Agrupa efectivo, tarjeta, transferencia, paypal y mercadopago.
-    // Cualquier otro método cae en "otros".
     private function ventasSelectRaw(): string
     {
         return '
@@ -65,12 +63,11 @@ class CajaController extends Controller
     public function estado(Request $request)
     {
         try {
-            // Sin restricción de permiso — cualquier rol autenticado puede ver
-            // si la caja está abierta (mesero necesita saberlo para cobrar)
             $restauranteActivo = app('restaurante_activo');
             $hoy = now()->format('Y-m-d');
 
-            $caja = Caja::where('restaurante_id', $restauranteActivo->id)
+            $caja = Caja::with('usuarioApertura')
+                ->where('restaurante_id', $restauranteActivo->id)
                 ->whereDate('fecha_apertura', $hoy)
                 ->whereNull('fecha_cierre')
                 ->first();
@@ -111,13 +108,12 @@ class CajaController extends Controller
                     'is_open'          => true,
                     'caja_id'          => $caja->id,
                     'opening_amount'   => (float) $caja->monto_inicial,
-                    // Efectivo real en caja = apertura + ventas efectivo + propinas efectivo + ingresos manuales − egresos manuales
                     'cash_in_register' => (float) ($caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $TotalIngresos - $TotalEgresos),
                     'daily_sales'      => $v['efectivo'],
                     'card_sales'       => $v['tarjeta'],
                     'transfer_sales'   => $v['transferencia'],
                     'paypal_sales'     => $v['paypal'],
-                    'mercadopago_sales'   => $v['mercadopago'],
+                    'mercadopago_sales'=> $v['mercadopago'],
                     'other_sales'      => $v['otros'],
                     'total_orders'     => $v['total_ordenes'],
                     'movements_count'  => $movimientos->count(),
@@ -149,7 +145,10 @@ class CajaController extends Controller
             $restauranteActivo = app('restaurante_activo');
             $hoy = now()->format('Y-m-d');
 
-            if (Caja::where('restaurante_id', $restauranteActivo->id)->whereDate('fecha_apertura', $hoy)->whereNull('fecha_cierre')->exists()) {
+            if (Caja::where('restaurante_id', $restauranteActivo->id)
+                ->whereDate('fecha_apertura', $hoy)
+                ->whereNull('fecha_cierre')
+                ->exists()) {
                 return response()->json(['success'=>false,'message'=>'Ya hay una caja abierta para hoy'], 409);
             }
 
@@ -180,12 +179,18 @@ class CajaController extends Controller
 
             try {
                 Broadcast::event(new \App\Events\CajaActualizada('abierta', $restauranteActivo->id, ['caja_id' => $caja->id]));
-            } catch (\Exception $be) { \Log::warning('Broadcast abrir caja: '.$be->getMessage()); }
+            } catch (\Exception $be) { 
+                \Log::warning('Broadcast abrir caja: '.$be->getMessage()); 
+            }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Caja abierta correctamente',
-                'data'    => ['caja_id'=>$caja->id, 'monto_inicial'=>(float)$caja->monto_inicial, 'fecha_apertura'=>$caja->fecha_apertura],
+                'data'    => [
+                    'caja_id'        => $caja->id,
+                    'monto_inicial'  => (float)$caja->monto_inicial,
+                    'fecha_apertura' => $caja->fecha_apertura,
+                ],
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -215,8 +220,11 @@ class CajaController extends Controller
             $restauranteActivo = app('restaurante_activo');
             $hoy = now()->format('Y-m-d');
 
-            $caja = Caja::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', $hoy)->whereNull('fecha_cierre')->first();
+            $caja = Caja::with(['usuarioApertura', 'usuarioCierre'])
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->whereDate('fecha_apertura', $hoy)
+                ->whereNull('fecha_cierre')
+                ->first();
 
             if (!$caja) {
                 return response()->json(['success'=>false,'message'=>'No hay una caja abierta para hoy'], 404);
@@ -225,16 +233,20 @@ class CajaController extends Controller
             DB::beginTransaction();
 
             $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('updated_at', '>=', $caja->fecha_apertura)->where('estado','CERRADA')
-                ->selectRaw($this->ventasSelectRaw())->first();
+                ->where('updated_at', '>=', $caja->fecha_apertura)
+                ->where('estado', 'CERRADA')
+                ->selectRaw($this->ventasSelectRaw())
+                ->first();
 
             $v = $this->formatVentas($ventas);
 
-            $ingresos = CajaMovimientos::where('caja_id',$caja->id)->where('tipo','ingreso')->sum('monto');
-            $egresos  = CajaMovimientos::where('caja_id',$caja->id)->where('tipo','egreso')->sum('monto');
+            $ingresos = CajaMovimientos::where('caja_id', $caja->id)->where('tipo', 'ingreso')->sum('monto');
+            $egresos  = CajaMovimientos::where('caja_id', $caja->id)->where('tipo', 'egreso')->sum('monto');
 
             $efectivoEsperado = $caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $ingresos - $egresos;
             $diferencia       = $request->efectivo_final - $efectivoEsperado;
+
+            $totalVentas = $this->totalVentas($ventas);
 
             $caja->update([
                 'fecha_cierre'          => now(),
@@ -259,7 +271,9 @@ class CajaController extends Controller
 
             try {
                 Broadcast::event(new \App\Events\CajaActualizada('cerrada', $restauranteActivo->id, ['caja_id' => $caja->id]));
-            } catch (\Exception $be) { \Log::warning('Broadcast cerrar caja: '.$be->getMessage()); }
+            } catch (\Exception $be) { 
+                \Log::warning('Broadcast cerrar caja: '.$be->getMessage()); 
+            }
 
             return response()->json([
                 'success' => true,
@@ -270,7 +284,7 @@ class CajaController extends Controller
                     'efectivo_final'   => (float) $request->efectivo_final,
                     'diferencia'       => (float) $diferencia,
                     'ventas'           => $v,
-                    'total_ventas'     => $this->totalVentas($ventas),
+                    'total_ventas'     => $totalVentas,
                 ],
             ]);
 
@@ -300,9 +314,19 @@ class CajaController extends Controller
                 'referencia'  => 'nullable|string|max:100',
             ]);
 
+            // ✅ Validación adicional: límite para egresos sin autorización
+            if ($request->tipo === 'egreso' && $request->monto > 10000) {
+                return response()->json([
+                    'success' => false, 
+                    'message' => 'Los egresos no pueden superar los $10,000 sin autorización del administrador'
+                ], 422);
+            }
+
             $restauranteActivo = app('restaurante_activo');
             $caja = Caja::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', now()->format('Y-m-d'))->whereNull('fecha_cierre')->first();
+                ->whereDate('fecha_apertura', now()->format('Y-m-d'))
+                ->whereNull('fecha_cierre')
+                ->first();
 
             if (!$caja) {
                 return response()->json(['success'=>false,'message'=>'No hay una caja abierta para hoy'], 404);
@@ -324,9 +348,15 @@ class CajaController extends Controller
                     'tipo'  => $request->tipo,
                     'monto' => (float) $request->monto,
                 ]));
-            } catch (\Exception $be) { \Log::warning('Broadcast movimiento: '.$be->getMessage()); }
+            } catch (\Exception $be) { 
+                \Log::warning('Broadcast movimiento: '.$be->getMessage()); 
+            }
 
-            return response()->json(['success'=>true,'message'=>'Movimiento registrado correctamente','data'=>$movimiento], 201);
+            return response()->json([
+                'success' => true, 
+                'message' => 'Movimiento registrado correctamente', 
+                'data'    => $movimiento
+            ], 201);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json(['success'=>false,'message'=>'Error de validación','errors'=>$e->errors()], 422);
@@ -349,12 +379,17 @@ class CajaController extends Controller
 
             $restauranteActivo = app('restaurante_activo');
             $caja = Caja::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', now()->format('Y-m-d'))->first();
+                ->whereDate('fecha_apertura', now()->format('Y-m-d'))
+                ->first();
 
-            if (!$caja) return response()->json(['success'=>true,'data'=>[]]);
+            if (!$caja) {
+                return response()->json(['success'=>true,'data'=>[]]);
+            }
 
             $movimientos = CajaMovimientos::with('usuario')
-                ->where('caja_id', $caja->id)->orderByDesc('created_at')->get();
+                ->where('caja_id', $caja->id)
+                ->orderByDesc('created_at')
+                ->get();
 
             return response()->json([
                 'success' => true,
@@ -377,6 +412,61 @@ class CajaController extends Controller
     }
 
     // ═════════════════════════════════════════════════════════════════════════
+    // MOVIMIENTOS POR FECHA (nuevo método)
+    // ═════════════════════════════════════════════════════════════════════════
+    public function movimientosPorFecha(Request $request)
+    {
+        try {
+            $user = $request->user();
+            if (!$user->hasPermission('VER_CAJA')) {
+                return response()->json(['success'=>false,'message'=>'No tienes permiso'], 403);
+            }
+
+            $request->validate([
+                'fecha_inicio' => 'required|date',
+                'fecha_fin'    => 'required|date|after_or_equal:fecha_inicio',
+            ]);
+
+            $restauranteActivo = app('restaurante_activo');
+
+            $cajas = Caja::where('restaurante_id', $restauranteActivo->id)
+                ->whereBetween('fecha_apertura', [
+                    $request->fecha_inicio . ' 00:00:00',
+                    $request->fecha_fin . ' 23:59:59'
+                ])
+                ->pluck('id');
+
+            $movimientos = CajaMovimientos::with('usuario')
+                ->whereIn('caja_id', $cajas)
+                ->orderByDesc('created_at')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $movimientos->map(fn($m) => [
+                    'id'          => $m->id,
+                    'tipo'        => $m->tipo,
+                    'monto'       => (float) $m->monto,
+                    'descripcion' => $m->descripcion,
+                    'referencia'  => $m->referencia,
+                    'usuario'     => $m->usuario?->name,
+                    'fecha'       => $m->created_at->format('d/m/Y H:i'),
+                    'caja_id'     => $m->caja_id,
+                ]),
+                'resumen' => [
+                    'total_ingresos' => (float) $movimientos->where('tipo', 'ingreso')->sum('monto'),
+                    'total_egresos'  => (float) $movimientos->where('tipo', 'egreso')->sum('monto'),
+                ]
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['success'=>false,'message'=>'Error de validación','errors'=>$e->errors()], 422);
+        } catch (\Exception $e) {
+            return response()->json(['success'=>false,'message'=>'Error al obtener movimientos','error'=>$e->getMessage()], 500);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
     // CORTE (resumen del día)
     // ═════════════════════════════════════════════════════════════════════════
     public function corte(Request $request)
@@ -392,13 +482,19 @@ class CajaController extends Controller
 
             $caja = Caja::with(['usuarioApertura','usuarioCierre'])
                 ->where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', $hoy)->first();
+                ->whereDate('fecha_apertura', $hoy)
+                ->first();
 
-            if (!$caja) return response()->json(['success'=>false,'message'=>'No hay corte para hoy'], 404);
+            if (!$caja) {
+                return response()->json(['success'=>false,'message'=>'No hay corte para hoy'], 404);
+            }
 
             $movimientos   = CajaMovimientos::where('caja_id', $caja->id)->get();
             $TotalIngresos = $movimientos->where('tipo','ingreso')->sum('monto');
             $TotalEgresos  = $movimientos->where('tipo','egreso')->sum('monto');
+
+            // ✅ Usar el accessor getTotalVentasAttribute
+            $totalVentas = $caja->total_ventas;
 
             return response()->json([
                 'success' => true,
@@ -421,7 +517,7 @@ class CajaController extends Controller
                         'transferencia' => (float) $caja->ventas_transferencia,
                         'paypal'        => (float) $caja->ventas_paypal,
                         'mercadopago'   => (float) $caja->ventas_mercadopago,
-                        'total'         => $caja->total_ventas,
+                        'total'         => $totalVentas,
                         'total_ordenes' => (int)   $caja->total_ordenes,
                     ],
                     'movimientos' => [
@@ -500,7 +596,8 @@ class CajaController extends Controller
 
             $caja = Caja::with(['usuarioApertura','usuarioCierre','movimientos.usuario'])
                 ->where('restaurante_id', $restauranteActivo->id)
-                ->where('id', $id)->firstOrFail();
+                ->where('id', $id)
+                ->firstOrFail();
 
             $movimientos   = $caja->movimientos->map(fn($m) => [
                 'id'                   => $m->id,
@@ -513,6 +610,7 @@ class CajaController extends Controller
                 'created_at'           => $m->created_at,
                 'created_at_formateado'=> $m->created_at->format('d/m/Y H:i'),
             ]);
+            
             $TotalIngresos = $caja->movimientos->where('tipo','ingreso')->sum('monto');
             $TotalEgresos  = $caja->movimientos->where('tipo','egreso')->sum('monto');
 
@@ -561,7 +659,7 @@ class CajaController extends Controller
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // CREAR PAGO CON PAYPAL (para una orden)
+    // CREAR PAGO CON PAYPAL
     // ═════════════════════════════════════════════════════════════════════════
     public function crearPagoPayPal(Request $request)
     {
@@ -594,7 +692,6 @@ class CajaController extends Controller
                 ], 400);
             }
 
-            // Verificar que la caja esté abierta
             $caja = Caja::where('restaurante_id', $restauranteActivo->id)
                 ->whereDate('fecha_apertura', now()->format('Y-m-d'))
                 ->whereNull('fecha_cierre')
@@ -607,10 +704,8 @@ class CajaController extends Controller
                 ], 400);
             }
 
-            // Crear orden en PayPal
             $paypalController = new PayPalController();
             
-            // Crear request para PayPal
             $paypalRequest = new \Illuminate\Http\Request();
             $paypalRequest->merge([
                 'total'    => $request->total,
@@ -622,7 +717,6 @@ class CajaController extends Controller
             $responseData = json_decode($paypalResponse->getContent(), true);
 
             if ($responseData['success']) {
-                // Guardar el paypal_order_id en la orden
                 $orden->paypal_order_id = $responseData['order_id'];
                 $orden->save();
 
@@ -671,10 +765,8 @@ class CajaController extends Controller
                 return redirect()->to(env('FRONTEND_URL') . '/pago-error');
             }
 
-            // Buscar la orden por paypal_order_id
             $orden = Orden::where('paypal_order_id', $orderId)->firstOrFail();
 
-            // Verificar que la caja esté abierta
             $restauranteActivo = $orden->restaurante;
             $caja = Caja::where('restaurante_id', $restauranteActivo->id)
                 ->whereDate('fecha_apertura', now()->format('Y-m-d'))
@@ -685,17 +777,13 @@ class CajaController extends Controller
                 return redirect()->to(env('FRONTEND_URL') . '/pago-error?motivo=caja_cerrada');
             }
 
-            // Capturar en PayPal
             $paypalController = new PayPalController();
             $captureResponse = $paypalController->captureOrder($request);
             
-            // Actualizar la orden
             $orden->estado = 'CERRADA';
             $orden->metodo_pago = 'paypal';
             $orden->save();
 
-            // Registrar movimiento en caja (opcional, ya que las ventas se calculan al cerrar caja)
-            // Pero puedes registrar un ingreso por si acaso
             CajaMovimientos::create([
                 'caja_id'     => $caja->id,
                 'usuario_id'  => $orden->usuario_id,
@@ -705,7 +793,6 @@ class CajaController extends Controller
                 'referencia'  => $orderId,
             ]);
 
-            // Broadcast de actualización
             try {
                 Broadcast::event(new \App\Events\CajaActualizada('venta', $restauranteActivo->id, [
                     'orden_id' => $orden->id,
@@ -719,7 +806,7 @@ class CajaController extends Controller
             return redirect()->to(env('FRONTEND_URL') . '/pago-exitoso?orden=' . $orden->id);
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            \Log::error('Orden no encontrada para PayPal: ' . $orderId);
+            \Log::error('Orden no encontrada para PayPal: ' . ($orderId ?? 'null'));
             return redirect()->to(env('FRONTEND_URL') . '/pago-error?motivo=orden_no_encontrada');
         } catch (\Exception $e) {
             \Log::error('Error capturar pago PayPal: ' . $e->getMessage());

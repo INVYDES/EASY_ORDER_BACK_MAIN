@@ -24,15 +24,17 @@ class ReporteController extends Controller
         try {
             $restauranteActivo = app('restaurante_activo');
 
+            // ✅ FIX: fecha_inicio y fecha_fin ahora son 'sometimes' con defaults
             $request->validate([
-                'fecha_inicio' => 'required|date',
-                'fecha_fin'    => 'required|date|after_or_equal:fecha_inicio',
+                'fecha_inicio' => 'sometimes|date',
+                'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
                 'grupo'        => 'sometimes|in:dia,semana,mes',
             ]);
 
             $grupo       = $request->get('grupo', 'dia');
-            $fechaInicio = $request->fecha_inicio . ' 00:00:00';
-            $fechaFin    = $request->fecha_fin    . ' 23:59:59';
+            // ✅ FIX: defaults si no se envían
+            $fechaInicio = ($request->fecha_inicio ?? now()->startOfMonth()->format('Y-m-d')) . ' 00:00:00';
+            $fechaFin    = ($request->fecha_fin    ?? now()->format('Y-m-d'))                . ' 23:59:59';
 
             $base = fn () => Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
@@ -87,8 +89,8 @@ class ReporteController extends Controller
                 'success' => true,
                 'data'    => [
                     'periodo' => [
-                        'inicio' => $request->fecha_inicio,
-                        'fin'    => $request->fecha_fin,
+                        'inicio' => rtrim($fechaInicio, ' 00:00:00'),
+                        'fin'    => rtrim($fechaFin,    ' 23:59:59'),
                     ],
                     'ventas'  => $ventas,
                     'totales' => $totales,
@@ -111,13 +113,20 @@ class ReporteController extends Controller
         try {
             $restauranteActivo = app('restaurante_activo');
 
-            $request->validate([
-                'limite'       => 'sometimes|integer|min:1|max:100',
-                'fecha_inicio' => 'sometimes|date',
-                'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
-            ]);
+            // ✅ FIX: validación separada del ValidationException para que el catch
+            //         general no lo capture como error 500
+            try {
+                $request->validate([
+                    'limite'       => 'sometimes|integer|min:1|max:500', // ✅ ampliado de 100 a 500
+                    'fecha_inicio' => 'sometimes|date',
+                    'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
+                ]);
+            } catch (\Illuminate\Validation\ValidationException $e) {
+                return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
+            }
 
-            $limite = $request->get('limite', 10);
+            // ✅ FIX: clampear el valor entre 1 y 500 aunque pase validación
+            $limite = min(max((int) $request->get('limite', 10), 1), 500);
 
             $productos = $this->baseDetallesQuery($restauranteActivo->id, $request)
                 ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
@@ -144,6 +153,17 @@ class ReporteController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // ALIAS: RENTABILIDAD PRODUCTOS
+    // Ruta: GET /api/reportes/rentabilidad-productos
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function rentabilidadProductos(Request $request): JsonResponse
+    {
+        // Redirige al método principal con los mismos parámetros
+        return $this->productosMasVendidos($request);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // PRODUCTOS CON MAYOR MARGEN PERO MENOS VENDIDOS
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -155,10 +175,10 @@ class ReporteController extends Controller
             $request->validate([
                 'fecha_inicio' => 'sometimes|date',
                 'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
-                'limite'       => 'sometimes|integer|min:1|max:100',
+                'limite'       => 'sometimes|integer|min:1|max:500',
             ]);
 
-            $limite = $request->get('limite', 20);
+            $limite = min(max((int) $request->get('limite', 20), 1), 500);
             $query  = $this->baseDetallesQuery($restauranteActivo->id, $request);
 
             $top5Ids = (clone $query)
@@ -305,6 +325,16 @@ class ReporteController extends Controller
         } catch (\Exception $e) {
             return $this->error('Error al generar reporte de retrasos', $e);
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ALIAS: TIEMPOS REBASE (tiempos que rebasan el estimado)
+    // Ruta: GET /api/reportes/tiempos-rebase
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function tiemposRebase(Request $request): JsonResponse
+    {
+        return $this->productosConRetrasoPreparacion($request);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -497,7 +527,7 @@ class ReporteController extends Controller
             }
 
             $totalVentas       = (float) ($queryOrdenes->sum('total') ?? 0);
-            $inversionProducto = 0.0; // BD no tiene columna costo
+            $inversionProducto = 0.0;
 
             $inversionManoObra = 0.0;
             if (Schema::hasTable('nomina_diaria')) {
@@ -636,6 +666,16 @@ class ReporteController extends Controller
         } catch (\Exception $e) {
             return $this->error('Error al calcular utilidad del día', $e);
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ALIAS: FINANZAS DÍA
+    // Ruta: GET /api/reportes/finanzas-dia
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function finanzasDia(Request $request): JsonResponse
+    {
+        return $this->utilidadDiaAcumulada($request);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -906,10 +946,6 @@ class ReporteController extends Controller
     // ROI — CONFIGURACIÓN
     // =========================================================================
 
-    /**
-     * GET /api/reportes/roi/config
-     * Leer parámetros fijos del restaurante (inversión inicial, objetivos, gastos fijos).
-     */
     public function roiObtenerConfig(Request $request): JsonResponse
     {
         try {
@@ -934,10 +970,6 @@ class ReporteController extends Controller
         }
     }
 
-    /**
-     * PUT /api/reportes/roi/config
-     * Guardar / actualizar parámetros fijos del restaurante.
-     */
     public function roiGuardarConfig(Request $request): JsonResponse
     {
         try {
@@ -975,14 +1007,6 @@ class ReporteController extends Controller
     // ROI — CÁLCULO COMPLETO
     // =========================================================================
 
-    /**
-     * GET /api/reportes/roi
-     * Calcula el ROI completo del período indicado.
-     *
-     * Query params opcionales:
-     *   fecha_inicio  (default: primer día del mes en curso)
-     *   fecha_fin     (default: hoy)
-     */
     public function roiCompleto(Request $request): JsonResponse
     {
         try {
@@ -996,7 +1020,6 @@ class ReporteController extends Controller
             $fechaInicio = $request->get('fecha_inicio', now()->startOfMonth()->format('Y-m-d'));
             $fechaFin    = $request->get('fecha_fin',    now()->format('Y-m-d'));
 
-            // ── Configuración fija del restaurante ───────────────────────────
             $config = \App\Models\RoiConfig::firstOrCreate(
                 ['restaurante_id' => $restauranteActivo->id],
                 [
@@ -1009,25 +1032,21 @@ class ReporteController extends Controller
             $inversionInicial = (float) $config->inversion_inicial;
             $utilidadObjetivo = (float) $config->utilidad_objetivo;
 
-            // ── Ventas del período ────────────────────────────────────────────
             $ventasMes = (float) Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum('total');
 
-            // ── Gastos variables (tabla gastos: insumos, empaque, comisiones) ─
             $gastosVariables = (float) DB::table('gastos')
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum('monto');
 
-            // ── Nómina del período (tabla nominas, estado PAGADA) ─────────────
             $nominaMes = (float) Nomina::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'PAGADA')
                 ->whereBetween('periodo_fin', [$fechaInicio, $fechaFin])
                 ->sum('pago_total');
 
-            // ── Gastos operativos = fijos (config) + nómina ───────────────────
             $gastosOperativos = round(
                 (float) $config->gasto_renta    +
                 (float) $config->gasto_servicios +
@@ -1037,50 +1056,39 @@ class ReporteController extends Controller
                 2
             );
 
-            // ── Ganancia neta ─────────────────────────────────────────────────
             $gananciaNeta = round($ventasMes - $gastosVariables - $gastosOperativos, 2);
 
-            // ── Margen de contribución: 1 - (CostosVariables / Ventas) ────────
             $margenContribucion = $ventasMes > 0
                 ? round(1 - ($gastosVariables / $ventasMes), 4)
                 : 0;
 
-            // ── Punto de equilibrio: GastosFijos / MargenContribucion ─────────
             $puntoEquilibrio = $margenContribucion > 0
                 ? round($gastosOperativos / $margenContribucion, 2)
                 : null;
 
-            // ── % Cumplimiento ventas vs punto de equilibrio ──────────────────
-            $pctCumplimientoPE = ($puntoEquilibrio && $puntoEquilibrio > 0)
+            $pctCumplimientoPE = ($puntoEquilibrio && $puntoEquilibrio > 0 && $ventasMes > 0)
                 ? round(($ventasMes / $puntoEquilibrio) * 100, 2)
                 : null;
 
-            // ── ROI general: (GananciaNeta / InversiónInicial) * 100 ──────────
             $roiGeneral = $inversionInicial > 0
                 ? round(($gananciaNeta / $inversionInicial) * 100, 2)
                 : null;
 
-            // ── % Utilidad: (GananciaNeta / Ventas) * 100 ────────────────────
             $pctUtilidad = $ventasMes > 0
                 ? round(($gananciaNeta / $ventasMes) * 100, 2)
                 : 0;
 
-            // ── % Cumplimiento objetivo ───────────────────────────────────────
             $pctCumplimientoObjetivo = $utilidadObjetivo > 0
                 ? round(($gananciaNeta / $utilidadObjetivo) * 100, 2)
                 : null;
 
-            // ── Semáforo ROI ──────────────────────────────────────────────────
             $semaforo = match (true) {
-                $roiGeneral === null => 'sin_datos', // ROI < 5%  → rojo
-                $roiGeneral < 5      => 'rojo',      // ROI 5-15% → amarillo
-                $roiGeneral <= 15    => 'amarillo',  // ROI > 15% → verde
+                $roiGeneral === null => 'sin_datos',
+                $roiGeneral < 5      => 'rojo',
+                $roiGeneral <= 15    => 'amarillo',
                 default              => 'verde',
             };
 
-            // ── ROI por producto (top 10 por ingreso) ─────────────────────────
-            // roi_producto = (utilidad / costo) * 100
-            // Sin columna costo en productos → se retorna null por ahora.
             $roiProductos = DB::table('orden_detalles')
                 ->join('ordenes',   'orden_detalles.orden_id',    '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
@@ -1095,8 +1103,6 @@ class ReporteController extends Controller
                     'productos.precio',
                     DB::raw('SUM(orden_detalles.cantidad) as unidades_vendidas'),
                     DB::raw('SUM(orden_detalles.subtotal) as ingreso_total'),
-                    // Cuando exista columna costo:
-                    // DB::raw('ROUND((productos.precio - productos.costo) / NULLIF(productos.costo,0) * 100, 2) as roi_producto'),
                     DB::raw('NULL as roi_producto')
                 )
                 ->groupBy('productos.id', 'productos.nombre', 'categorias.nombre', 'productos.precio')
@@ -1111,8 +1117,6 @@ class ReporteController extends Controller
                         'inicio' => $fechaInicio,
                         'fin'    => $fechaFin,
                     ],
-
-                    // Parámetros capturados en config
                     'config' => [
                         'inversion_inicial' => $inversionInicial,
                         'utilidad_objetivo' => $utilidadObjetivo,
@@ -1121,31 +1125,25 @@ class ReporteController extends Controller
                         'gasto_software'    => (float) $config->gasto_software,
                         'gasto_marketing'   => (float) $config->gasto_marketing,
                     ],
-
-                    // Flujo financiero del período
                     'financiero' => [
                         'venta_mes'         => round($ventasMes, 2),
-                        'gastos_variables'  => round($gastosVariables, 2),   // insumos, empaque, comisiones
+                        'gastos_variables'  => round($gastosVariables, 2),
                         'nomina_mes'        => round($nominaMes, 2),
-                        'gastos_operativos' => round($gastosOperativos, 2),  // fijos + nómina
+                        'gastos_operativos' => round($gastosOperativos, 2),
                         'ganancia_neta'     => $gananciaNeta,
                     ],
-
-                    // KPIs calculados
                     'kpis' => [
                         'utilidad_objetivo'       => $utilidadObjetivo,
                         'utilidad_real'           => $gananciaNeta,
-                        'pct_cumplimiento_obj'    => $pctCumplimientoObjetivo, // null si no hay objetivo
-                        'roi_general'             => $roiGeneral,              // null si no hay inversión inicial
-                        'semaforo'                => $semaforo,                // rojo | amarillo | verde | sin_datos
-                        'margen_contribucion'     => $margenContribucion,      // 0-1
-                        'punto_equilibrio'        => $puntoEquilibrio,         // $ que hay que vender para no perder
-                        'pct_cumplimiento_pe'     => $pctCumplimientoPE,       // ventas / punto_equilibrio * 100
-                        'pct_utilidad'            => $pctUtilidad,             // ganancia / ventas * 100
+                        'pct_cumplimiento_obj'    => $pctCumplimientoObjetivo,
+                        'roi_general'             => $roiGeneral,
+                        'semaforo'                => $semaforo,
+                        'margen_contribucion'     => $margenContribucion,
+                        'punto_equilibrio'        => $puntoEquilibrio,
+                        'pct_cumplimiento_pe'     => $pctCumplimientoPE,
+                        'pct_utilidad'            => $pctUtilidad,
                     ],
-
                     'roi_por_producto' => $roiProductos,
-
                     'nota' => 'roi_producto = null: agrega columna `costo` a productos para habilitarlo.',
                 ],
             ]);

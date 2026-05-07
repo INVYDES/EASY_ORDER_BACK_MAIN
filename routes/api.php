@@ -26,6 +26,8 @@ use App\Http\Controllers\Api\PayPalController;
 use App\Http\Controllers\Api\LicenciaPagoController;
 use App\Http\Controllers\Api\MercadoPagoController;
 use App\Http\Controllers\Api\MeseroController;
+use App\Http\Controllers\Api\HorarioController;
+use App\Http\Controllers\Api\NominaDetalleController;
 use App\Http\Controllers\Api\PaqueteController;
 
 /*
@@ -54,11 +56,12 @@ Route::prefix('')->group(function () {
     Route::post('/mercadopago/licencia-webhook', [LicenciaController::class, 'webhookMercadoPago']);
 
     // ========== CALLBACKS PAYPAL ==========
-    Route::get('/paypal/capturar', [LicenciaPagoController::class, 'capturar']);
-    Route::get('/paypal/cancelar', [LicenciaPagoController::class, 'cancelar']);
-    Route::get('/paypal/capture',  [PayPalController::class, 'captureOrder'])->name('paypal.capture');
-    Route::get('/paypal/cancel',   [PayPalController::class, 'cancelOrder'])->name('paypal.cancel');
-
+   // ========== CALLBACKS PAYPAL ==========
+Route::get('/paypal/capturar',              [LicenciaPagoController::class, 'capturar']);
+Route::get('/paypal/cancelar',              [LicenciaPagoController::class, 'cancelar']);
+Route::get('/paypal/capture',               [PayPalController::class, 'captureOrder'])->name('paypal.capture');
+Route::get('/paypal/cancel',                [PayPalController::class, 'cancelOrder'])->name('paypal.cancel');
+Route::get('/paypal/capturar-pago',         [CajaController::class, 'capturarPayPal']); // ← FALTA (callback pago)
     // ========== ANUNCIOS ==========
     Route::get('/anuncios',          [AnuncioController::class, 'indexPublic']);
     Route::get('/anuncios/vigentes', [AnuncioController::class, 'vigentesPublic']);
@@ -123,18 +126,21 @@ Route::middleware('auth:sanctum')->group(function () {
 */
 Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
-    // ========== CAJA ==========
+ 
+       // ========== CAJA ==========
     Route::prefix('caja')->group(function () {
-        Route::get('/estado',             [CajaController::class, 'estado'])->middleware('permission:VER_CAJA');
-        Route::post('/abrir',             [CajaController::class, 'abrir'])->middleware('permission:ABRIR_CAJA');
-        Route::post('/cerrar',            [CajaController::class, 'cerrar'])->middleware('permission:CERRAR_CAJA');
-        Route::get('/movimientos',        [CajaController::class, 'movimientos'])->middleware('permission:VER_CAJA');
-        Route::post('/movimientos',       [CajaController::class, 'registrarMovimiento'])->middleware('permission:EDITAR_CAJA');
-        Route::get('/corte',              [CajaController::class, 'corte'])->middleware('permission:VER_CAJA');
-        Route::get('/historial',          [CajaController::class, 'historial'])->middleware('permission:VER_CAJA');
-        Route::get('/historial/{id}',     [CajaController::class, 'show'])->middleware('permission:VER_CAJA');
-        Route::post('/paypal/crear',      [CajaController::class, 'crearPagoPayPal'])->middleware('permission:CREAR_ORDENES');
-        Route::post('/mercadopago/crear', [MercadoPagoController::class, 'crearPreferencia'])->middleware('permission:CREAR_ORDENES');
+        Route::get('/estado',                   [CajaController::class, 'estado'])->middleware('permission:VER_CAJA');
+        Route::post('/abrir',                   [CajaController::class, 'abrir'])->middleware('permission:ABRIR_CAJA');
+        Route::post('/cerrar',                  [CajaController::class, 'cerrar'])->middleware('permission:CERRAR_CAJA');
+        Route::get('/movimientos',              [CajaController::class, 'movimientos'])->middleware('permission:VER_CAJA');
+        Route::get('/movimientos-por-fecha',    [CajaController::class, 'movimientosPorFecha'])->middleware('permission:VER_CAJA');
+        Route::post('/movimientos',             [CajaController::class, 'registrarMovimiento'])->middleware('permission:EDITAR_CAJA');
+        Route::get('/corte',                    [CajaController::class, 'corte'])->middleware('permission:VER_CAJA');
+        Route::get('/historial',                [CajaController::class, 'historial'])->middleware('permission:VER_CAJA');
+        Route::get('/historial/{id}',           [CajaController::class, 'show'])->middleware('permission:VER_CAJA');
+        Route::post('/paypal/crear',            [CajaController::class, 'crearPagoPayPal'])->middleware('permission:CREAR_ORDENES');
+        Route::get('/paypal/capturar',          [CajaController::class, 'capturarPayPal']); // callback
+        Route::post('/mercadopago/crear',       [MercadoPagoController::class, 'crearPreferencia'])->middleware('permission:CREAR_ORDENES');
     });
 
     // ========== RESTAURANTES ==========
@@ -257,7 +263,6 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     });
 
     // ========== GASTOS ==========
-    // GET /api/gastos/resumen  →  ROI + financiero completo (GastoController@resumen)
     Route::prefix('gastos')->group(function () {
         Route::get('/resumen', [GastoController::class, 'resumen'])->middleware('permission:VER_REPORTES');
         Route::get('/',        [GastoController::class, 'index'])->middleware('permission:VER_REPORTES');
@@ -272,6 +277,8 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::post('/',       [AnuncioController::class, 'store'])->middleware('permission:EDITAR_RESTAURANTE');
         Route::put('/{id}',    [AnuncioController::class, 'update'])->middleware('permission:EDITAR_RESTAURANTE');
         Route::delete('/{id}', [AnuncioController::class, 'destroy'])->middleware('permission:EDITAR_RESTAURANTE');
+        Route::patch('/{id}/toggle', [AnuncioController::class, 'toggleActivo'])->middleware('permission:EDITAR_RESTAURANTE');
+Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('permission:EDITAR_RESTAURANTE');
     });
 
     // ========== ÓRDENES ==========
@@ -312,25 +319,38 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     });
 
     // ========== REPORTES ==========
-    // NOTA: el ROI completo vive en GET /api/gastos/resumen (GastoController)
-    // que incluye: punto equilibrio, margen contribución, ROI, semáforo, payback, etc.
     Route::prefix('reportes')->middleware('permission:VER_REPORTES')->group(function () {
-        Route::get('/ventas',               [ReporteController::class, 'ventasPorPeriodo']);
+
+        // ── Rutas principales ────────────────────────────────────────────────
+        Route::get('/ventas',                [ReporteController::class, 'ventasPorPeriodo']);
         Route::get('/productos-mas-vendidos',[ReporteController::class, 'productosMasVendidos']);
         Route::get('/productos-mayor-margen',[ReporteController::class, 'productosMayorMargenMenosVendidos']);
-        Route::get('/clientes-frecuentes',  [ReporteController::class, 'clientesFrecuentes']);
-        Route::get('/dashboard',            [ReporteController::class, 'dashboard']);
-        Route::get('/financiero',           [ReporteController::class, 'reporteFinanciero']);
-        Route::get('/reporte-productos',    [ReporteController::class, 'reporteProductos']);
-        Route::get('/tiempos-preparacion',  [ReporteController::class, 'tiempoPromedioPreparacion']);
-        Route::get('/retrasos-preparacion', [ReporteController::class, 'productosConRetrasoPreparacion']);
-        Route::get('/canal-ventas',         [ReporteController::class, 'ventasPorCanal']);
-        Route::get('/inversion-utilidad',   [ReporteController::class, 'inversionYUtilidad']);
-        Route::get('/propinas',             [ReporteController::class, 'totalPropinas']);
-        Route::get('/utilidad-dia',         [ReporteController::class, 'utilidadDiaAcumulada']);
-        Route::get('/paquete-recomendado',  [ReporteController::class, 'recomendacionPaquete']);
+        Route::get('/clientes-frecuentes',   [ReporteController::class, 'clientesFrecuentes']);
+        Route::get('/dashboard',             [ReporteController::class, 'dashboard']);
+        Route::get('/financiero',            [ReporteController::class, 'reporteFinanciero']);
+        Route::get('/reporte-productos',     [ReporteController::class, 'reporteProductos']);
+        Route::get('/tiempos-preparacion',   [ReporteController::class, 'tiempoPromedioPreparacion']);
+        Route::get('/retrasos-preparacion',  [ReporteController::class, 'productosConRetrasoPreparacion']);
+        Route::get('/canal-ventas',          [ReporteController::class, 'ventasPorCanal']);
+        Route::get('/inversion-utilidad',    [ReporteController::class, 'inversionYUtilidad']);
+        Route::get('/propinas',              [ReporteController::class, 'totalPropinas']);
+        Route::get('/utilidad-dia',          [ReporteController::class, 'utilidadDiaAcumulada']);
+        Route::get('/paquete-recomendado',   [ReporteController::class, 'recomendacionPaquete']);
+        Route::get('/roi',                   [ReporteController::class, 'roiCompleto']);
+        Route::get('/roi/config',            [ReporteController::class, 'roiObtenerConfig']);
+        Route::put('/roi/config',            [ReporteController::class, 'roiGuardarConfig']);
         Route::get('/download/{tipo}/{formato}', [ReporteController::class, 'download']);
-        Route::post('/exportar',            [ReporteController::class, 'exportar'])->middleware('permission:EXPORTAR_REPORTES');
+        Route::post('/exportar',             [ReporteController::class, 'exportar'])->middleware('permission:EXPORTAR_REPORTES');
+Route::get('/ventas-por-canal-tipo', [ReporteController::class, 'ventasPorCanalTipo']);
+        // ── ✅ ALIAS para rutas que pide el frontend ──────────────────────────
+        // GET /api/reportes/finanzas-dia  →  utilidadDiaAcumulada
+        Route::get('/finanzas-dia',           [ReporteController::class, 'finanzasDia']);
+
+        // GET /api/reportes/rentabilidad-productos  →  productosMasVendidos
+        Route::get('/rentabilidad-productos', [ReporteController::class, 'rentabilidadProductos']);
+
+        // GET /api/reportes/tiempos-rebase  →  productosConRetrasoPreparacion
+        Route::get('/tiempos-rebase',         [ReporteController::class, 'tiemposRebase']);
     });
 
     // ========== USUARIOS ==========
@@ -340,14 +360,16 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     });
 
     // ========== MESEROS ==========
-    Route::prefix('meseros')->group(function () {
-        Route::get('/',                  [MeseroController::class, 'index']);
-        Route::get('/mis-mesas',         [MeseroController::class, 'misMesas']);
-        Route::get('/mis-ordenes',       [MeseroController::class, 'misOrdenes']);
-        Route::post('/configurar-mesas', [MeseroController::class, 'configurarTotalMesas']);
-        Route::post('/asignar-mesas',    [MeseroController::class, 'asignarMesas']);
-        Route::get('/metricas-ventas',   [MeseroController::class, 'metricasVentas']);
-    });
+   // ========== MESEROS ==========
+Route::prefix('meseros')->group(function () {
+    Route::get('/',                         [MeseroController::class, 'index']);
+    Route::get('/mis-mesas',                [MeseroController::class, 'misMesas']);
+    Route::get('/mis-ordenes',              [MeseroController::class, 'misOrdenes']);
+    Route::post('/configurar-mesas',        [MeseroController::class, 'configurarTotalMesas']);
+    Route::post('/asignar-mesas',           [MeseroController::class, 'asignarMesas']);
+    Route::get('/metricas-ventas',          [MeseroController::class, 'metricasVentas']);
+    Route::get('/{id}/metricas-detalladas', [MeseroController::class, 'metricasDetalladas']);
+});
 
     // ========== OFERTAS ==========
     Route::prefix('ofertas')->group(function () {
@@ -383,21 +405,53 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::get('/empleado/{empleado}', [EmpleadoController::class, 'getAsistencias']);
         Route::post('/',                   [EmpleadoController::class, 'registrarAsistencia']);
     });
+// ========== HORARIOS ==========
+Route::prefix('horarios')->middleware('permission:VER_EMPLEADOS')->group(function () {
+    Route::get('/',                     [HorarioController::class, 'index']);
+    Route::post('/',                    [HorarioController::class, 'store']);
+    Route::post('/copiar',              [HorarioController::class, 'copiar']);
+    Route::get('/empleado/{empleadoId}',[HorarioController::class, 'porEmpleado']);
+    Route::get('/{id}',                 [HorarioController::class, 'show']);
+    Route::put('/{id}',                 [HorarioController::class, 'update']);
+    Route::delete('/{id}',              [HorarioController::class, 'destroy']);
+});
 
-    // ========== NÓMINAS ==========
-    Route::prefix('nominas')->middleware('permission:VER_NOMINA')->group(function () {
-        Route::get('/',             [EmpleadoController::class, 'getNominas']);
-        Route::post('/generar',     [EmpleadoController::class, 'generarNomina']);
-        Route::put('/{nomina}',     [EmpleadoController::class, 'actualizarEstadoNomina']);
+// ========== NÓMINAS ==========
+Route::prefix('nominas')->middleware('permission:VER_NOMINA')->group(function () {
+    // Rutas principales de nóminas
+    Route::get('/',                         [EmpleadoController::class, 'getNominas']);
+    Route::get('/resumen',                  [EmpleadoController::class, 'resumenNominas']);
+    Route::get('/{id}',                     [EmpleadoController::class, 'getNomina']);
+    Route::post('/generar',                 [EmpleadoController::class, 'generarNomina']);
+    Route::put('/{id}',                     [EmpleadoController::class, 'updateNomina']);
+    Route::put('/{id}/estado',              [EmpleadoController::class, 'actualizarEstadoNomina']);
+    Route::delete('/{id}',                  [EmpleadoController::class, 'deleteNomina']);
+    
+    // Rutas de detalles de nómina (anidadas dentro de nominas)
+    Route::prefix('{nominaId}/detalles')->group(function () {
+        Route::get('/',                     [NominaDetalleController::class, 'index']);
+        Route::post('/',                    [NominaDetalleController::class, 'store']);
+        Route::get('/{detalleId}',          [NominaDetalleController::class, 'show']);
+        Route::put('/{detalleId}',          [NominaDetalleController::class, 'update']);
+        Route::delete('/{detalleId}',       [NominaDetalleController::class, 'destroy']);
     });
+});
 
-    // ========== KPIs ==========
-    Route::prefix('kpis')->middleware('permission:VER_REPORTES')->group(function () {
-        Route::get('/meseros',   [EmpleadoController::class, 'getKpiMeseros']);
-        Route::get('/cocina',    [EmpleadoController::class, 'getKpiCocina']);
-        Route::get('/admin',     [EmpleadoController::class, 'getKpiAdmin']);
-        Route::get('/dashboard', [EmpleadoController::class, 'getKpiDashboard']);
-    });
+// ========== CONFIGURACIÓN NÓMINA ==========
+Route::prefix('nomina')->middleware('permission:VER_NOMINA')->group(function () {
+    Route::get('/configuracion',            [EmpleadoController::class, 'getConfiguracionNomina']);
+    Route::put('/configuracion',            [EmpleadoController::class, 'updateConfiguracionNomina']);
+});
+
+// ========== KPIs ==========
+Route::prefix('kpis')->middleware('permission:VER_REPORTES')->group(function () {
+    Route::get('/meseros',   [EmpleadoController::class, 'getKpiMeseros']);
+    Route::get('/cocina',    [EmpleadoController::class, 'getKpiCocina']);
+    Route::get('/cocina/retrasos', [EmpleadoController::class, 'getKpiCocinaRetrasos']); // ← AGREGAR
+    Route::get('/cocina/reprocesos', [EmpleadoController::class, 'getKpiCocinaReprocesos']);
+    Route::get('/admin',     [EmpleadoController::class, 'getKpiAdmin']);
+    Route::get('/dashboard', [EmpleadoController::class, 'getKpiDashboard']);
+});
 
 });
 

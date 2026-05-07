@@ -26,7 +26,12 @@ class User extends Authenticatable
         'email',
         'username',
         'password',
-        'activo'
+        'activo',
+        'tipo_empleado',
+        'salario_base',
+        'salario_por_hora',
+        'comision_por_venta',
+        'fecha_contratacion'
     ];
 
     protected $hidden = [
@@ -37,6 +42,9 @@ class User extends Authenticatable
     protected $casts = [
         'password' => 'hashed',
         'activo' => 'boolean',
+        'salario_base' => 'decimal:2',
+        'salario_por_hora' => 'decimal:2',
+        'comision_por_venta' => 'decimal:2',
     ];
 
     /*

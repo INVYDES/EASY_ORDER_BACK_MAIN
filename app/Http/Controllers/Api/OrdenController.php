@@ -7,12 +7,15 @@ use App\Models\Orden;
 use App\Models\OrdenDetalle;
 use App\Models\Producto;
 use App\Models\Paquete;
-use App\Models\IngredienteMovimiento;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class OrdenController extends Controller
 {
+    /**
+     * Listar órdenes con paginación y filtros
+     */
     public function index(Request $request)
     {
         try {
@@ -28,23 +31,28 @@ class OrdenController extends Controller
             $query = Orden::with([
                     'usuario:id,name,username,email',
                     'detalles.producto.categoria',
+                    'cliente:id,nombre,telefono'
                 ])
                 ->where('restaurante_id', $restauranteActivo->id);
 
+            // Filtros
             if ($request->filled('estado')) {
                 $query->whereIn('estado', explode(',', $request->estado));
             }
+            if ($request->filled('tipo_orden')) {
+                $query->whereIn('tipo_orden', explode(',', $request->tipo_orden));
+            }
             if ($request->filled('user_id')) {
                 $query->where('usuario_id', $request->user_id);
+            }
+            if ($request->filled('mesa')) {
+                $query->where('mesa', $request->mesa);
             }
             if ($request->filled('fecha_desde')) {
                 $query->whereDate('created_at', '>=', $request->fecha_desde);
             }
             if ($request->filled('fecha_hasta')) {
                 $query->whereDate('created_at', '<=', $request->fecha_hasta);
-            }
-            if ($request->filled('updated_at_desde')) {
-                $query->where('updated_at', '>=', $request->updated_at_desde);
             }
             if ($request->filled('fecha')) {
                 $query->whereDate('created_at', $request->fecha);
@@ -68,7 +76,7 @@ class OrdenController extends Controller
 
             $orderBy  = $request->get('order_by', 'created_at');
             $orderDir = $request->get('order_dir', 'desc');
-            if (in_array($orderBy, ['id', 'total', 'estado', 'created_at', 'updated_at'])) {
+            if (in_array($orderBy, ['id', 'total', 'estado', 'tipo_orden', 'created_at', 'updated_at'])) {
                 $query->orderBy($orderBy, $orderDir === 'asc' ? 'asc' : 'desc');
             } else {
                 $query->orderBy('created_at', 'desc');
@@ -90,6 +98,11 @@ class OrdenController extends Controller
                     'entregadas'     => Orden::where('restaurante_id', $rid)->where('estado', 'ENTREGADA')->count(),
                     'cerradas'       => Orden::where('restaurante_id', $rid)->where('estado', 'CERRADA')->count(),
                 ],
+                'por_tipo' => [
+                    'local'    => Orden::where('restaurante_id', $rid)->where('tipo_orden', 'local')->count(),
+                    'pickup'   => Orden::where('restaurante_id', $rid)->where('tipo_orden', 'pickup')->count(),
+                    'delivery' => Orden::where('restaurante_id', $rid)->where('tipo_orden', 'delivery')->count(),
+                ],
                 'total_ventas_hoy' => Orden::where('restaurante_id', $rid)->whereDate('created_at', $hoy)->where('estado', 'CERRADA')->sum('total'),
                 'ordenes_hoy'      => Orden::where('restaurante_id', $rid)->whereDate('created_at', $hoy)->count(),
             ];
@@ -110,6 +123,7 @@ class OrdenController extends Controller
                 ],
                 'filters'    => [
                     'estado'      => $request->estado      ?? null,
+                    'tipo_orden'  => $request->tipo_orden  ?? null,
                     'user_id'     => $request->user_id     ?? null,
                     'fecha_desde' => $request->fecha_desde ?? null,
                     'fecha_hasta' => $request->fecha_hasta ?? null,
@@ -125,6 +139,9 @@ class OrdenController extends Controller
         }
     }
 
+    /**
+     * Órdenes del día de hoy
+     */
     public function hoy(Request $request)
     {
         try {
@@ -135,12 +152,15 @@ class OrdenController extends Controller
 
             $restauranteActivo = app('restaurante_activo');
             $hoy   = now()->format('Y-m-d');
-            $query = Orden::with(['usuario:id,name,username,email', 'detalles.producto.categoria'])
+            $query = Orden::with(['usuario:id,name,username,email', 'detalles.producto.categoria', 'cliente'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->whereDate('created_at', $hoy);
 
             if ($request->filled('estado')) {
                 $query->whereIn('estado', explode(',', $request->estado));
+            }
+            if ($request->filled('tipo_orden')) {
+                $query->where('tipo_orden', $request->tipo_orden);
             }
 
             $ordenes = $query->orderBy('created_at', 'desc')->get();
@@ -158,6 +178,11 @@ class OrdenController extends Controller
                         'ENTREGADA'      => $ordenes->where('estado', 'ENTREGADA')->count(),
                         'CERRADA'        => $ordenes->where('estado', 'CERRADA')->count(),
                     ],
+                    'por_tipo' => [
+                        'local'    => $ordenes->where('tipo_orden', 'local')->count(),
+                        'pickup'   => $ordenes->where('tipo_orden', 'pickup')->count(),
+                        'delivery' => $ordenes->where('tipo_orden', 'delivery')->count(),
+                    ],
                     'ventas_totales' => $ordenes->where('estado', 'CERRADA')->sum('total'),
                 ],
             ]);
@@ -167,6 +192,9 @@ class OrdenController extends Controller
         }
     }
 
+    /**
+     * Mostrar una orden específica
+     */
     public function show(Request $request, $id)
     {
         try {
@@ -176,7 +204,7 @@ class OrdenController extends Controller
             }
 
             $restauranteActivo = app('restaurante_activo');
-            $orden = Orden::with(['usuario:id,name,username,email', 'detalles.producto.categoria'])
+            $orden = Orden::with(['usuario:id,name,username,email', 'detalles.producto.categoria', 'cliente'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();
@@ -190,14 +218,13 @@ class OrdenController extends Controller
         }
     }
 
-    // =========================================================================
-    // ACTIVIDAD: Agregar productos a orden abierta de la misma mesa
-    // Si existe una orden no CERRADA para esa mesa, se anexan los productos.
-    // Si no existe, se crea una nueva orden.
-    // =========================================================================
+    /**
+     * Crear nueva orden o agregar productos a orden existente de la misma mesa
+     * Soporta Local, Pickup y Delivery
+     */
     public function store(Request $request)
     {
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'cliente_id'              => 'nullable|exists:clientes,id',
             'productos'               => 'present|array',
             'paquetes'                => 'nullable|array',
@@ -207,10 +234,21 @@ class OrdenController extends Controller
             'productos.*.notas'       => 'nullable|string|max:300',
             'productos.*.nom_comensal'=> 'nullable|string|max:100',
             'notas'                   => 'nullable|string|max:500',
-            'mesa'                    => 'nullable|integer|min:1',
+            'mesa'                    => 'required_if:tipo_orden,local|nullable|integer|min:1',
             'metodo_pago'             => 'nullable|string|max:50',
             'propina'                 => 'nullable|numeric|min:0',
+            // NUEVOS CAMPOS PARA TIPO DE ORDEN
+            'tipo_orden'              => 'nullable|in:local,pickup,delivery',
+            'direccion_entrega'       => 'required_if:tipo_orden,delivery|nullable|string|max:500',
+            'telefono_contacto'       => 'required_if:tipo_orden,delivery|nullable|string|max:20',
+            'costo_envio'             => 'nullable|numeric|min:0',
+            'tiempo_estimado_entrega' => 'nullable|integer|min:1|max:180',
+            'nombre_cliente'          => 'required_if:tipo_orden,delivery|nullable|string|max:100',
         ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $validator->errors()], 422);
+        }
 
         try {
             $user = $request->user();
@@ -219,26 +257,25 @@ class OrdenController extends Controller
             }
 
             $restauranteActivo = app('restaurante_activo');
+            $tipoOrden = $request->tipo_orden ?? 'local';
 
-            // -----------------------------------------------------------------
-            // ACTIVIDAD 4: Buscar orden abierta para la misma mesa
-            // Si hay una orden activa (no CERRADA) para esta mesa, se usará esa.
-            // -----------------------------------------------------------------
+            // Buscar orden existente SOLO para tipo local (misma mesa)
             $ordenExistente = null;
-            if ($request->filled('mesa')) {
+            if ($tipoOrden === 'local' && $request->filled('mesa')) {
                 $ordenExistente = Orden::where('restaurante_id', $restauranteActivo->id)
                     ->where('mesa', $request->mesa)
+                    ->where('tipo_orden', 'local')
                     ->whereNotIn('estado', ['CERRADA', 'CANCELADA', 'PAGADA'])
                     ->latest()
                     ->first();
             }
 
-            // Verificar y preparar productos/ingredientes
-            $erroresStock         = [];
+            // Verificar stock
+            $erroresStock = [];
             $productosVerificados = [];
 
             foreach ($request->productos as $item) {
-                // --- PROCESAR PAQUETE ---
+                // Procesar paquete
                 if (!empty($item['paquete_id'])) {
                     $paquete = Paquete::with('productos.ingredientes')
                         ->where('restaurante_id', $restauranteActivo->id)
@@ -255,7 +292,7 @@ class OrdenController extends Controller
 
                         if ($pComp->ingredientes->isEmpty()) {
                             if ($pComp->stock < $cantidadTotal) {
-                                $erroresStock[] = "Stock insuficiente para '{$pComp->nombre}' (en paquete {$paquete->nombre}). Disponible: {$pComp->stock}";
+                                $erroresStock[] = "Stock insuficiente para '{$pComp->nombre}'. Disponible: {$pComp->stock}";
                             }
                         } else {
                             $maxDisponible = $pComp->ingredientes->map(function ($ing) use ($cantidadTotal) {
@@ -264,7 +301,7 @@ class OrdenController extends Controller
                             })->min();
 
                             if ($maxDisponible < 1) {
-                                $erroresStock[] = "Stock insuficiente para ingredientes de '{$pComp->nombre}' (en paquete {$paquete->nombre})";
+                                $erroresStock[] = "Stock insuficiente para ingredientes de '{$pComp->nombre}'";
                             }
                         }
 
@@ -285,7 +322,7 @@ class OrdenController extends Controller
                     continue;
                 }
 
-                // --- PROCESAR PRODUCTO INDIVIDUAL ---
+                // Procesar producto individual
                 $producto = Producto::with(['ingredientes'])
                     ->where('restaurante_id', $restauranteActivo->id)
                     ->where('id', $item['producto_id'])
@@ -339,18 +376,32 @@ class OrdenController extends Controller
 
             DB::beginTransaction();
 
-            // -----------------------------------------------------------------
-            // ACTIVIDAD 4: Si hay orden existente, usar esa; si no, crear nueva
-            // -----------------------------------------------------------------
+            // Crear o usar orden existente
             if ($ordenExistente) {
                 $orden   = $ordenExistente;
                 $esNueva = false;
             } else {
+                // Para delivery, crear cliente temporal si no existe
+                $clienteId = $request->cliente_id;
+                if ($tipoOrden === 'delivery' && !$clienteId && $request->filled('nombre_cliente')) {
+                    $cliente = \App\Models\Cliente::create([
+                        'restaurante_id' => $restauranteActivo->id,
+                        'nombre' => $request->nombre_cliente,
+                        'telefono' => $request->telefono_contacto,
+                    ]);
+                    $clienteId = $cliente->id;
+                }
+
                 $orden = Orden::create([
                     'restaurante_id' => $restauranteActivo->id,
-                    'cliente_id'     => $request->cliente_id,
+                    'cliente_id'     => $clienteId,
                     'usuario_id'     => $user->id,
-                    'mesa'           => $request->mesa,
+                    'mesa'           => $tipoOrden === 'local' ? $request->mesa : null,
+                    'tipo_orden'     => $tipoOrden,
+                    'direccion_entrega' => $request->direccion_entrega,
+                    'telefono_contacto' => $request->telefono_contacto,
+                    'costo_envio'    => $request->costo_envio ?? 0,
+                    'tiempo_estimado_entrega' => $request->tiempo_estimado_entrega,
                     'metodo_pago'    => $request->metodo_pago,
                     'total'          => 0,
                     'propina'        => $request->propina ?? 0,
@@ -360,7 +411,7 @@ class OrdenController extends Controller
                 $esNueva = true;
             }
 
-            $detalles    = [];
+            $detalles = [];
             $subtotalNuevo = 0;
 
             foreach ($productosVerificados as $item) {
@@ -378,7 +429,7 @@ class OrdenController extends Controller
                     'precio_unitario'    => $precio + ($item['cantidad'] > 0 ? ($paquetePrecio / $item['cantidad']) : 0),
                     'subtotal'           => $subtotal,
                     'notas'              => $item['notas'],
-                    'nom_comensal'       => $item['nom_comensal'],
+                    'nom_comensal'       => $item['nom_comensal'] ?? ($tipoOrden !== 'local' ? 'Para llevar' : null),
                     'estado_preparacion' => 'PENDIENTE',
                 ]);
 
@@ -400,18 +451,22 @@ class OrdenController extends Controller
                 $subtotalNuevo += $subtotal;
             }
 
-            // Recalcular total de la orden (suma de todos los detalles)
-            $totalActual   = $orden->detalles()->sum('subtotal');
-            $propina       = $esNueva ? ($request->propina ?? 0) : ($orden->propina ?? 0);
-            $totalConPropina = $totalActual + $propina;
-            $orden->update(['total' => $totalConPropina]);
+            // Recalcular total de la orden
+            $totalActual = $orden->detalles()->sum('subtotal');
+            $propina = $esNueva ? ($request->propina ?? 0) : ($orden->propina ?? 0);
+            $costoEnvio = $tipoOrden === 'delivery' ? ($request->costo_envio ?? $orden->costo_envio ?? 0) : 0;
+            $totalConPropinaYEnvio = $totalActual + $propina + $costoEnvio;
+            
+            $orden->update([
+                'total' => $totalConPropinaYEnvio,
+                'costo_envio' => $costoEnvio,
+            ]);
 
-            // Actualizar estado por si se agregaron items a una orden ya entregada
             $orden->verificarYActualizarEstadoGlobal();
 
             DB::commit();
 
-            $orden->load(['usuario:id,name,username', 'detalles.producto.categoria']);
+            $orden->load(['usuario:id,name,username', 'detalles.producto.categoria', 'cliente']);
 
             try {
                 broadcast(new \App\Events\OrdenActualizada(
@@ -424,8 +479,8 @@ class OrdenController extends Controller
             }
 
             $mensaje = $esNueva
-                ? 'Orden creada correctamente'
-                : "Productos agregados a la orden #{$orden->id} de la mesa {$orden->mesa}";
+                ? "Orden {$tipoOrden} creada correctamente"
+                : "Productos agregados a la orden #{$orden->id}";
 
             return response()->json([
                 'success'   => true,
@@ -433,34 +488,45 @@ class OrdenController extends Controller
                 'es_nueva'  => $esNueva,
                 'data'      => [
                     'id'               => $orden->id,
-                    'folio'            => 'ORD-' . str_pad($orden->id, 6, '0', STR_PAD_LEFT),
+                    'folio'            => $orden->folio,
+                    'tipo_orden'       => $orden->tipo_orden,
+                    'tipo_orden_texto' => $orden->tipo_orden_texto,
                     'mesa'             => $orden->mesa,
-                    'total'            => (float) $totalConPropina,
-                    'total_formateado' => '$' . number_format($totalConPropina, 2),
+                    'direccion_entrega'=> $orden->direccion_entrega,
+                    'telefono_contacto'=> $orden->telefono_contacto,
+                    'costo_envio'      => (float) $costoEnvio,
+                    'costo_envio_formateado' => '$' . number_format($costoEnvio, 2),
+                    'total'            => (float) $totalConPropinaYEnvio,
+                    'total_formateado' => '$' . number_format($totalConPropinaYEnvio, 2),
                     'subtotal'         => (float) $totalActual,
                     'propina'          => (float) $propina,
                     'estado'           => $orden->estado,
-                    'detalles_nuevos'  => $detalles,         // Solo los recién agregados
-                    'detalles_totales' => $this->transformarOrden($orden)['detalles'], // Todos
+                    'detalles_nuevos'  => $detalles,
+                    'detalles_totales' => $this->transformarOrden($orden)['detalles'],
                     'created_at'       => $orden->created_at,
                 ],
             ], $esNueva ? 201 : 200);
 
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error al crear orden', 'error' => $e->getMessage()], 500);
         }
     }
 
+    /**
+     * Actualizar estado de una orden
+     */
     public function update(Request $request, $id)
     {
-        $request->validate([
-            'estado'      => 'required|in:ABIERTA,POR_PREPARAR,EN_PREPARACION,LISTA,ENTREGADA,CERRADA',
+        $validator = Validator::make($request->all(), [
+            'estado'      => 'required|in:ABIERTA,POR_PREPARAR,EN_PREPARACION,LISTA,ENTREGADA,CERRADA,CANCELADA',
             'metodo_pago' => 'nullable|string|max:50',
             'propina'     => 'nullable|numeric|min:0',
         ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $validator->errors()], 422);
+        }
 
         try {
             $user = $request->user();
@@ -486,7 +552,13 @@ class OrdenController extends Controller
             if ($request->has('propina'))         $campos['propina']     = $request->propina ?? 0;
 
             $orden->update($campos);
-            $orden->load(['usuario:id,name,username', 'detalles.producto.categoria']);
+            
+            // Si se cancela, restaurar stock
+            if ($request->estado === 'CANCELADA') {
+                $this->restaurarStockOrden($orden);
+            }
+
+            $orden->load(['usuario:id,name,username', 'detalles.producto.categoria', 'cliente']);
 
             try {
                 broadcast(new \App\Events\OrdenActualizada(
@@ -501,6 +573,7 @@ class OrdenController extends Controller
                         'total'       => (float) $orden->total,
                         'metodo_pago' => $orden->metodo_pago,
                         'propina'     => (float) ($orden->propina ?? 0),
+                        'tipo_orden'  => $orden->tipo_orden,
                     ]));
                 }
             } catch (\Exception $be) {
@@ -518,7 +591,7 @@ class OrdenController extends Controller
                 'data'    => [
                     'id'           => $orden->id,
                     'estado'       => $orden->estado,
-                    'estado_texto' => $this->getEstadoTexto($orden->estado),
+                    'estado_texto' => $orden->estado_texto,
                     'metodo_pago'  => $orden->metodo_pago,
                     'propina'      => (float) ($orden->propina ?? 0),
                 ],
@@ -531,10 +604,9 @@ class OrdenController extends Controller
         }
     }
 
-    // =========================================================================
-    // ACTIVIDAD 1: cerrar() ya NO descuenta stock porque store() lo hizo
-    // Solo cambia el estado de la orden a CERRADA y registra en caja.
-    // =========================================================================
+    /**
+     * Cerrar orden (con soporte para división de pagos)
+     */
     public function cerrar(Request $request, $id)
     {
         try {
@@ -546,7 +618,13 @@ class OrdenController extends Controller
             $request->validate([
                 'metodo_pago' => 'nullable|string|max:50',
                 'propina'     => 'nullable|numeric|min:0',
-                'pagos'       => 'nullable|array'
+                'pagos'       => 'nullable|array',
+                'pagos.*.monto'     => 'required_with:pagos|numeric|min:0',
+                'pagos.*.metodo'    => 'required_with:pagos|string|max:50',
+                'pagos.*.propina'   => 'nullable|numeric|min:0',
+                'pagos.*.comensal'  => 'nullable|string|max:100',
+                'pagos.*.referencia'=> 'nullable|string|max:100',
+                'pagos.*.detalles'  => 'nullable|array',
             ]);
 
             $restauranteActivo = app('restaurante_activo');
@@ -561,40 +639,43 @@ class OrdenController extends Controller
 
             $caja = \App\Models\Caja::where('restaurante_id', $restauranteActivo->id)
                 ->whereDate('fecha_apertura', now()->format('Y-m-d'))
-                ->whereNull('fecha_cierre')->first();
+                ->whereNull('fecha_cierre')
+                ->first();
 
             $ordenesCreadas = [];
-            // El stock ya fue descontado en store(). Solo cerramos la orden.
+            
             DB::transaction(function () use ($orden, $request, $caja, $user, &$ordenesCreadas) {
                 if ($request->filled('pagos')) {
                     foreach ($request->pagos as $index => $p) {
                         $pTotal = (float)$p['monto'] + (float)($p['propina'] ?? 0);
                         
+                        $metodoPago = $p['metodo'] ?? $request->metodo_pago ?? 'efectivo';
+                        
                         if ($index === 0) {
-                            // Actualizar la orden original con la primera parte
                             $orden->update([
                                 'estado'      => 'CERRADA',
-                                'metodo_pago' => $p['metodo'],
+                                'metodo_pago' => $metodoPago,
                                 'propina'     => (float)($p['propina'] ?? 0),
                                 'total'       => $pTotal,
-                                'cliente_id'  => ($orden->cliente_id > 0) ? $orden->cliente_id : null
                             ]);
                             $orderIdForLog = $orden->id;
                             $ordenesCreadas[] = $orden->id;
                         } else {
-                            // Crear una nueva orden para las otras partes
                             $nuevaOrden = Orden::create([
                                 'restaurante_id' => $orden->restaurante_id,
-                                'cliente_id'     => ($orden->cliente_id > 0) ? $orden->cliente_id : null,
+                                'cliente_id'     => $orden->cliente_id,
                                 'usuario_id'     => $orden->usuario_id,
                                 'mesa'           => $orden->mesa,
+                                'tipo_orden'     => $orden->tipo_orden,
+                                'direccion_entrega' => $orden->direccion_entrega,
+                                'telefono_contacto' => $orden->telefono_contacto,
                                 'estado'         => 'CERRADA',
-                                'metodo_pago'    => $p['metodo'],
+                                'metodo_pago'    => $metodoPago,
                                 'propina'        => (float)($p['propina'] ?? 0),
-                                'total'          => $pTotal
+                                'total'          => $pTotal,
+                                'created_at'     => $orden->created_at,
                             ]);
                             
-                            // Mover los detalles a la nueva orden
                             if (!empty($p['detalles'])) {
                                 \App\Models\OrdenDetalle::whereIn('id', $p['detalles'])
                                     ->update(['orden_id' => $nuevaOrden->id]);
@@ -603,25 +684,24 @@ class OrdenController extends Controller
                             $ordenesCreadas[] = $nuevaOrden->id;
                         }
 
-                        // Registrar movimiento en CajaMovimientos si hay caja abierta
                         if ($caja) {
                             \App\Models\CajaMovimientos::create([
                                 'caja_id'     => $caja->id,
                                 'usuario_id'  => $user->id,
                                 'tipo'        => 'ingreso',
                                 'monto'       => $pTotal,
-                                'descripcion' => "Venta Dividida (" . ($p['comensal'] ?? 'Ticket') . ") - Orden #{$orderIdForLog}",
+                                'descripcion' => "Venta - Orden #{$orderIdForLog} ({$orden->tipo_orden}) - " . ($p['comensal'] ?? 'Ticket'),
                                 'referencia'  => $p['referencia'] ?? '',
                             ]);
                         }
 
-                        // Broadcast de actualización para cada ticket (como venta individual)
                         try {
                             broadcast(new \App\Events\CajaActualizada('venta', $orden->restaurante_id, [
                                 'orden_id'    => $orderIdForLog,
                                 'total'       => (float) $p['monto'],
-                                'metodo_pago' => $p['metodo'],
+                                'metodo_pago' => $metodoPago,
                                 'propina'     => (float) ($p['propina'] ?? 0),
+                                'tipo_orden'  => $orden->tipo_orden,
                                 'comensal'    => $p['comensal'] ?? ''
                             ]));
                         } catch (\Exception $e) {
@@ -629,15 +709,23 @@ class OrdenController extends Controller
                         }
                     }
                 } else {
-                    $campos = ['estado' => 'CERRADA'];
-                    if ($request->filled('metodo_pago')) {
-                        $campos['metodo_pago'] = $request->metodo_pago;
+                    $orden->update([
+                        'estado'      => 'CERRADA',
+                        'metodo_pago' => $request->metodo_pago,
+                        'propina'     => $request->propina ?? 0,
+                        'total'       => $orden->detalles()->sum('subtotal') + ($request->propina ?? 0),
+                    ]);
+
+                    if ($caja) {
+                        \App\Models\CajaMovimientos::create([
+                            'caja_id'     => $caja->id,
+                            'usuario_id'  => $user->id,
+                            'tipo'        => 'ingreso',
+                            'monto'       => $orden->total,
+                            'descripcion' => "Venta - Orden #{$orden->id} ({$orden->tipo_orden})",
+                            'referencia'  => '',
+                        ]);
                     }
-                    if ($request->has('propina')) {
-                        $campos['propina'] = $request->propina ?? 0;
-                        $campos['total'] = $orden->detalles()->sum('subtotal') + (float)$campos['propina'];
-                    }
-                    $orden->update($campos);
 
                     try {
                         broadcast(new \App\Events\CajaActualizada('venta', $orden->restaurante_id, [
@@ -645,6 +733,7 @@ class OrdenController extends Controller
                             'total'       => (float) $orden->total,
                             'metodo_pago' => $orden->metodo_pago,
                             'propina'     => (float) ($orden->propina ?? 0),
+                            'tipo_orden'  => $orden->tipo_orden,
                         ]));
                     } catch (\Exception $e) {
                         \Log::warning('Broadcast CajaActualizada fallback failed: ' . $e->getMessage());
@@ -653,6 +742,7 @@ class OrdenController extends Controller
             });
 
             $orden->load(['usuario:id,name,username', 'detalles.producto.categoria']);
+            
             try {
                 broadcast(new \App\Events\OrdenActualizada($orden, 'cerrada', $restauranteActivo->id));
             } catch (\Exception $be) {
@@ -661,7 +751,7 @@ class OrdenController extends Controller
 
             if (method_exists($user, 'logAction')) {
                 $user->logAction('CERRAR_ORDEN', 'ordenes', $orden->id,
-                    "Orden #{$orden->id} cerrada con total: \${$orden->total}");
+                    "Orden #{$orden->id} ({$orden->tipo_orden}) cerrada con total: \${$orden->total}");
             }
 
             return response()->json([
@@ -669,10 +759,12 @@ class OrdenController extends Controller
                 'message' => 'Orden cerrada correctamente',
                 'data'    => [
                     'id'               => $orden->id,
+                    'folio'            => $orden->folio,
+                    'tipo_orden'       => $orden->tipo_orden,
                     'estado'           => 'CERRADA',
                     'total'            => (float) $orden->total,
                     'total_formateado' => '$' . number_format($orden->total, 2),
-                    'ordenes_ids'      => $ordenesCreadas
+                    'ordenes_ids'      => $ordenesCreadas,
                 ],
             ]);
 
@@ -683,6 +775,9 @@ class OrdenController extends Controller
         }
     }
 
+    /**
+     * Dividir cuenta entre comensales
+     */
     public function dividirCuenta(Request $request, $id)
     {
         $request->validate([
@@ -711,16 +806,11 @@ class OrdenController extends Controller
             }
 
             $totalOrden = (float) $orden->total;
-            $cuentas    = [];
+            $cuentas = [];
 
             if ($request->metodo === 'equitativo') {
-                // -----------------------------------------------------------------
-                // División equitativa: el total se divide entre N comensales.
-                // Los detalles individuales no se mueven; el monto sí.
-                // -----------------------------------------------------------------
                 $numComensales = (int) $request->comensales;
                 $montoPorPersona = round($totalOrden / $numComensales, 2);
-                // Ajustar el último para cubrir residuo de centavos
                 $montoUltimo = $totalOrden - ($montoPorPersona * ($numComensales - 1));
 
                 for ($i = 1; $i <= $numComensales; $i++) {
@@ -728,19 +818,13 @@ class OrdenController extends Controller
                         'comensal'  => $i,
                         'monto'     => $i === $numComensales ? $montoUltimo : $montoPorPersona,
                         'monto_fmt' => '$' . number_format($i === $numComensales ? $montoUltimo : $montoPorPersona, 2),
-                        'detalles'  => [], // Sin asignación específica de platillos
+                        'detalles'  => [],
                     ];
                 }
-
             } else {
-                // -----------------------------------------------------------------
-                // División manual: cada comensal tiene detalles específicos.
-                // Se valida que todos los detalles pertenezcan a la orden
-                // y que no haya detalles sin asignar.
-                // -----------------------------------------------------------------
-                $idsAsignados    = [];
-                $idsEnOrden      = $orden->detalles->pluck('id')->toArray();
-                $detallesMap     = $orden->detalles->keyBy('id');
+                $idsAsignados = [];
+                $idsEnOrden = $orden->detalles->pluck('id')->toArray();
+                $detallesMap = $orden->detalles->keyBy('id');
 
                 foreach ($request->divisiones as $div) {
                     $subtotalComensal = 0;
@@ -780,7 +864,6 @@ class OrdenController extends Controller
                     ];
                 }
 
-                // Verificar que todos los detalles de la orden estén asignados
                 $sinAsignar = array_diff($idsEnOrden, $idsAsignados);
                 if (!empty($sinAsignar)) {
                     return response()->json([
@@ -795,7 +878,8 @@ class OrdenController extends Controller
                 'success'     => true,
                 'message'     => 'División de cuenta calculada',
                 'orden_id'    => $orden->id,
-                'folio'       => 'ORD-' . str_pad($orden->id, 6, '0', STR_PAD_LEFT),
+                'folio'       => $orden->folio,
+                'tipo_orden'  => $orden->tipo_orden,
                 'total'       => $totalOrden,
                 'total_fmt'   => '$' . number_format($totalOrden, 2),
                 'metodo'      => $request->metodo,
@@ -809,6 +893,9 @@ class OrdenController extends Controller
         }
     }
 
+    /**
+     * Resumen de órdenes
+     */
     public function resumen(Request $request)
     {
         try {
@@ -835,6 +922,11 @@ class OrdenController extends Controller
                         'entregadas'     => Orden::where('restaurante_id', $rid)->where('estado', 'ENTREGADA')->count(),
                         'cerradas'       => Orden::where('restaurante_id', $rid)->where('estado', 'CERRADA')->count(),
                     ],
+                    'por_tipo' => [
+                        'local'    => Orden::where('restaurante_id', $rid)->where('tipo_orden', 'local')->count(),
+                        'pickup'   => Orden::where('restaurante_id', $rid)->where('tipo_orden', 'pickup')->count(),
+                        'delivery' => Orden::where('restaurante_id', $rid)->where('tipo_orden', 'delivery')->count(),
+                    ],
                 ],
             ]);
 
@@ -843,86 +935,9 @@ class OrdenController extends Controller
         }
     }
 
-    private function transformarOrden(Orden $orden): array
-    {
-        $u = $orden->usuario ?? $orden->user ?? null;
-
-        return [
-            'id'                    => $orden->id,
-            'restaurante_id'        => $orden->restaurante_id,
-            'folio'                 => 'ORD-' . str_pad($orden->id, 6, '0', STR_PAD_LEFT),
-            'user'                  => $u ? [
-                'id'       => $u->id,
-                'name'     => $u->name,
-                'username' => $u->username,
-                'email'    => $u->email ?? null,
-            ] : null,
-            'estado'                => $orden->estado,
-            'estado_texto'          => $this->getEstadoTexto($orden->estado),
-            'estado_color'          => $this->getEstadoColor($orden->estado),
-            'total'                 => (float) $orden->total,
-            'total_formateado'      => '$' . number_format($orden->total, 2),
-            'mesa'                  => $orden->mesa,
-            'metodo_pago'           => $orden->metodo_pago,
-            'propina'               => (float) ($orden->propina ?? 0),
-            'notas'                 => $orden->notas,
-            'cantidad_productos'    => $orden->detalles->sum('cantidad'),
-            'productos_unicos'      => $orden->detalles->count(),
-            'detalles'              => $orden->detalles->map(fn($d) => [
-                'id'                  => $d->id,
-                'producto_id'         => $d->producto_id,
-                'producto_nombre'     => $d->producto->nombre ?? 'Producto eliminado',
-                'producto'            => [
-                    'id'           => $d->producto_id,
-                    'nombre'       => $d->producto->nombre ?? 'Producto eliminado',
-                    'categoria_id' => $d->producto->categoria_id ?? null,
-                    'categoria'    => $d->producto->categoria ? [
-                        'id'     => $d->producto->categoria->id,
-                        'nombre' => $d->producto->categoria->nombre,
-                    ] : null,
-                ],
-                'categoria_id'        => $d->producto->categoria_id ?? null,
-                'categoria'           => $d->producto->categoria?->nombre ?? null,
-                'cantidad'            => $d->cantidad,
-                'precio_unitario'     => (float) $d->precio_unitario,
-                'precio_formateado'   => '$' . number_format($d->precio_unitario, 2),
-                'subtotal'            => (float) $d->subtotal,
-                'subtotal_formateado' => '$' . number_format($d->subtotal, 2),
-                'notas'               => $d->notas ?? null,
-                'nom_comensal'        => $d->nom_comensal ?? null,
-                'estado_preparacion'  => $d->estado_preparacion ?? 'PENDIENTE',
-            ]),
-            'created_at'            => $orden->created_at,
-            'created_at_formateado' => $orden->created_at->format('d/m/Y H:i'),
-            'created_at_humano'     => $orden->created_at->diffForHumans(),
-            'updated_at'            => $orden->updated_at,
-            'updated_at_formateado' => $orden->updated_at->format('d/m/Y H:i'),
-        ];
-    }
-
-    private function getEstadoTexto(string $estado): string
-    {
-        return ['ABIERTA' => 'Abierta', 'POR_PREPARAR' => 'Por preparar', 'EN_PREPARACION' => 'En preparación', 'LISTA' => 'Lista', 'ENTREGADA' => 'Entregada', 'CERRADA' => 'Cerrada'][$estado] ?? $estado;
-    }
-
-    private function getEstadoColor(string $estado): string
-    {
-        return ['ABIERTA' => 'yellow', 'POR_PREPARAR' => 'orange', 'EN_PREPARACION' => 'blue', 'LISTA' => 'green', 'ENTREGADA' => 'purple', 'CERRADA' => 'gray'][$estado] ?? 'gray';
-    }
-
-    private function puedeCambiarEstado(string $actual, string $nuevo): bool
-    {
-        $transiciones = [
-            'ABIERTA'        => ['POR_PREPARAR', 'CERRADA'],
-            'POR_PREPARAR'   => ['EN_PREPARACION', 'CERRADA'],
-            'EN_PREPARACION' => ['LISTA', 'CERRADA'],
-            'LISTA'          => ['ENTREGADA', 'CERRADA'],
-            'ENTREGADA'      => ['CERRADA'],
-            'CERRADA'        => [],
-        ];
-        return in_array($nuevo, $transiciones[$actual] ?? []);
-    }
-
+    /**
+     * Actualizar estado de preparación por estación (cocina, barra, postres)
+     */
     public function updateStationStatus(Request $request, $id)
     {
         $request->validate([
@@ -959,5 +974,155 @@ class OrdenController extends Controller
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error al actualizar', 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Obtener órdenes filtradas por tipo (local, pickup, delivery)
+     * GET /api/ordenes/por-tipo?tipo=delivery
+     */
+    public function porTipo(Request $request)
+    {
+        try {
+            $user = $request->user();
+            if (!$user->hasPermission('VER_ORDENES')) {
+                return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
+            }
+
+            $request->validate([
+                'tipo' => 'required|in:local,pickup,delivery',
+                'estado' => 'nullable|string',
+                'fecha' => 'nullable|date',
+            ]);
+
+            $restauranteActivo = app('restaurante_activo');
+
+            $query = Orden::with(['usuario:id,name', 'detalles.producto', 'cliente'])
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->where('tipo_orden', $request->tipo);
+
+            if ($request->filled('estado')) {
+                $query->where('estado', $request->estado);
+            }
+
+            if ($request->filled('fecha')) {
+                $query->whereDate('created_at', $request->fecha);
+            }
+
+            $ordenes = $query->orderBy('created_at', 'desc')->get();
+
+            $stats = [
+                'total_ordenes' => $ordenes->count(),
+                'total_ventas' => $ordenes->where('estado', 'CERRADA')->sum('total'),
+                'ordenes_activas' => $ordenes->whereNotIn('estado', ['CERRADA', 'CANCELADA'])->count(),
+                'promedio_ticket' => $ordenes->where('estado', 'CERRADA')->avg('total') ?? 0,
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'tipo' => $request->tipo,
+                    'tipo_texto' => Orden::$tiposOrden[$request->tipo] ?? ucfirst($request->tipo),
+                    'estadisticas' => $stats,
+                    'ordenes' => $ordenes->map(fn($orden) => $this->transformarOrden($orden)),
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Restaurar stock al cancelar una orden
+     */
+    private function restaurarStockOrden(Orden $orden)
+    {
+        foreach ($orden->detalles as $detalle) {
+            $producto = $detalle->producto;
+            if ($producto && $producto->ingredientes->isNotEmpty()) {
+                foreach ($producto->ingredientes as $ingrediente) {
+                    $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (int) $detalle->cantidad;
+                    \App\Models\Ingrediente::where('id', $ingrediente->id)
+                        ->increment('stock_actual', $cantidadARestaurar);
+                }
+                $producto->recalcularStockDesdeIngredientes();
+            } elseif ($producto) {
+                \App\Models\Producto::where('id', $producto->id)
+                    ->increment('stock', $detalle->cantidad);
+            }
+        }
+    }
+
+    /**
+     * Transformar orden para respuesta JSON
+     */
+    private function transformarOrden(Orden $orden): array
+    {
+        $u = $orden->usuario ?? $orden->user ?? null;
+
+        return [
+            'id'                    => $orden->id,
+            'restaurante_id'        => $orden->restaurante_id,
+            'folio'                 => $orden->folio,
+            'tipo_orden'            => $orden->tipo_orden ?? 'local',
+            'tipo_orden_texto'      => $orden->tipo_orden_texto ?? 'Local',
+            'tipo_orden_badge'      => $orden->tipo_orden_badge ?? ['color' => 'blue', 'icono' => '🏠', 'texto' => 'Local'],
+            'user'                  => $u ? [
+                'id'       => $u->id,
+                'name'     => $u->name,
+                'username' => $u->username,
+                'email'    => $u->email ?? null,
+            ] : null,
+            'cliente'               => $orden->cliente ? [
+                'id' => $orden->cliente->id,
+                'nombre' => $orden->cliente->nombre,
+                'telefono' => $orden->cliente->telefono,
+            ] : null,
+            'estado'                => $orden->estado,
+            'estado_texto'          => $orden->estado_texto,
+            'estado_color'          => $orden->estado_color,
+            'total'                 => (float) $orden->total,
+            'total_formateado'      => '$' . number_format($orden->total, 2),
+            'mesa'                  => $orden->mesa,
+            'direccion_entrega'     => $orden->direccion_entrega,
+            'telefono_contacto'     => $orden->telefono_contacto,
+            'costo_envio'           => (float) ($orden->costo_envio ?? 0),
+            'costo_envio_formateado'=> '$' . number_format($orden->costo_envio ?? 0, 2),
+            'tiempo_estimado_entrega'=> $orden->tiempo_estimado_entrega,
+            'metodo_pago'           => $orden->metodo_pago,
+            'propina'               => (float) ($orden->propina ?? 0),
+            'notas'                 => $orden->notas,
+            'cantidad_productos'    => $orden->detalles->sum('cantidad'),
+            'productos_unicos'      => $orden->detalles->count(),
+            'detalles'              => $orden->detalles->map(fn($d) => [
+                'id'                  => $d->id,
+                'producto_id'         => $d->producto_id,
+                'producto_nombre'     => $d->producto->nombre ?? 'Producto eliminado',
+                'producto'            => [
+                    'id'           => $d->producto_id,
+                    'nombre'       => $d->producto->nombre ?? 'Producto eliminado',
+                    'categoria_id' => $d->producto->categoria_id ?? null,
+                    'categoria'    => $d->producto->categoria ? [
+                        'id'     => $d->producto->categoria->id,
+                        'nombre' => $d->producto->categoria->nombre,
+                    ] : null,
+                ],
+                'categoria_id'        => $d->producto->categoria_id ?? null,
+                'categoria'           => $d->producto->categoria?->nombre ?? null,
+                'cantidad'            => $d->cantidad,
+                'precio_unitario'     => (float) $d->precio_unitario,
+                'precio_formateado'   => '$' . number_format($d->precio_unitario, 2),
+                'subtotal'            => (float) $d->subtotal,
+                'subtotal_formateado' => '$' . number_format($d->subtotal, 2),
+                'notas'               => $d->notas ?? null,
+                'nom_comensal'        => $d->nom_comensal ?? null,
+                'estado_preparacion'  => $d->estado_preparacion ?? 'PENDIENTE',
+            ]),
+            'created_at'            => $orden->created_at,
+            'created_at_formateado' => $orden->created_at_formateado,
+            'created_at_humano'     => $orden->created_at_humano,
+            'updated_at'            => $orden->updated_at,
+            'updated_at_formateado' => $orden->updated_at?->format('d/m/Y H:i'),
+        ];
     }
 }
