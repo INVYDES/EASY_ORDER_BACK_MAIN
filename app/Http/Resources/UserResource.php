@@ -23,9 +23,12 @@ class UserResource extends JsonResource
             'telefono'           => $this->telefono,
             'restaurante_activo' => $this->restaurante_activo,
             'activo'             => (bool) $this->activo,
-            'roles'              => $this->whenLoaded('roles', function() {
-                return $this->roles->pluck('nombre');
-            }),
+            'roles' => $this->whenLoaded('roles', function() {
+    return $this->roles->map(fn($r) => [
+        'id'     => $r->id,
+        'nombre' => $r->nombre,
+    ]);
+}),
             'restaurante'        => $this->whenLoaded('restauranteActivo'),
             'created_at'         => $this->created_at?->format('Y-m-d H:i:s'),
         ];

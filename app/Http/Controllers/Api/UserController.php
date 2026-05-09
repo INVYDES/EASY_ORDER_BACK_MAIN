@@ -86,6 +86,7 @@ public function toggleActivo(Request $request, $id)
         return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
     }
 }
+
     /**
      * Actualizar un usuario por ID (Uso administrativo)
      */

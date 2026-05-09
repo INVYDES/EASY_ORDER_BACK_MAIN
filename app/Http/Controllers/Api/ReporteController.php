@@ -12,7 +12,7 @@ use App\Models\Nomina;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
-
+use Illuminate\Http\Request;
 class ReporteController extends Controller
 {
     // ─────────────────────────────────────────────────────────────────────────
