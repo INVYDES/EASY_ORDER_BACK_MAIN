@@ -35,6 +35,10 @@ class ReporteExport implements FromCollection, WithHeadings, WithMapping
                 return ['ID', 'Nombre', 'Precio', 'Total Vendido', 'Total Ingresos'];
             case 'clientes':
                 return ['ID', 'Nombre', 'Email', 'Teléfono', 'Total Compras'];
+            case 'utilidad':
+                return ['Descripción', 'Valor'];
+            case 'roi':
+                return ['KPI', 'Valor'];
             default:
                 return [];
         }
@@ -62,10 +66,17 @@ class ReporteExport implements FromCollection, WithHeadings, WithMapping
             case 'clientes':
                 return [
                     $row->id,
-                    $row->nombre . ' ' . ($row->apellido ?? ''),
+                    $row->nombre,
                     $row->email ?? 'N/A',
                     $row->telefono ?? 'N/A',
-                    $row->ventas->count() ?? 0,
+                    $row->total_compras ?? 0,
+                ];
+            case 'utilidad':
+            case 'roi':
+                // En estos casos $row suele ser una pareja key => value
+                return [
+                    ucfirst(str_replace('_', ' ', $row['label'] ?? 'Dato')),
+                    $row['value'] ?? '0'
                 ];
             default:
                 return [];

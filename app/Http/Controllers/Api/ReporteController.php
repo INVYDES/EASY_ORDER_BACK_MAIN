@@ -527,7 +527,18 @@ class ReporteController extends Controller
             }
 
             $totalVentas       = (float) ($queryOrdenes->sum('total') ?? 0);
-            $inversionProducto = 0.0;
+            
+            // ✅ Calcular inversión real basada en el costo de los productos vendidos
+            $inversionProducto = (float) DB::table('orden_detalles')
+                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->where('ordenes.estado', 'CERRADA')
+                ->when($request->filled('fecha_inicio'), fn($q) => 
+                    $q->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00'))
+                ->when($request->filled('fecha_fin'), fn($q) => 
+                    $q->where('ordenes.created_at', '<=', $request->fecha_fin . ' 23:59:59'))
+                ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
 
             $inversionManoObra = 0.0;
             if (Schema::hasTable('nomina_diaria')) {
@@ -543,7 +554,6 @@ class ReporteController extends Controller
 
             return response()->json([
                 'success' => true,
-                'warning' => 'La BD no tiene columna costo en productos; inversión_producto = 0.',
                 'data'    => [
                     'total_ventas'        => round($totalVentas, 2),
                     'inversion_producto'  => round($inversionProducto, 2),
@@ -623,7 +633,14 @@ class ReporteController extends Controller
                 ->whereDate('created_at', $fecha)
                 ->sum('total');
 
-            $costoProducto = 0.0;
+            // ✅ Calcular costo real del producto para el día
+            $costoProducto = (float) DB::table('orden_detalles')
+                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->where('ordenes.estado', 'CERRADA')
+                ->whereDate('ordenes.created_at', $fecha)
+                ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
 
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
@@ -942,6 +959,101 @@ class ReporteController extends Controller
         }
     }
 
+    /**
+     * Descarga física del reporte (Excel/PDF)
+     * GET /api/reportes/download/{tipo}/{formato}
+     */
+    public function download(string $tipo, string $formato, Request $request)
+    {
+        try {
+            $restauranteActivo = app('restaurante_activo');
+            $fechaInicio = $request->get('fecha_inicio', now()->subDays(30)->format('Y-m-d'));
+            $fechaFin    = $request->get('fecha_fin',    now()->format('Y-m-d'));
+
+            $data = $this->obtenerDatosReporte($tipo, $request, $restauranteActivo);
+
+            $fileName = "reporte_{$tipo}_" . now()->format('YmdHis');
+
+            if ($formato === 'excel' || $formato === 'csv') {
+                $ext = ($formato === 'excel') ? 'xlsx' : 'csv';
+                if (class_exists('\Maatwebsite\Excel\Facades\Excel')) {
+                    return \Maatwebsite\Excel\Facades\Excel::download(
+                        new \App\Exports\ReporteExport($data, $tipo, $fechaInicio, $fechaFin),
+                        "{$fileName}.{$ext}"
+                    );
+                }
+                return response()->json(['success' => false, 'message' => 'Librería Excel no instalada'], 500);
+            }
+
+            if ($formato === 'pdf') {
+                if (class_exists('\Barryvdh\DomPDF\Facade\Pdf')) {
+                    $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView("reportes.{$tipo}", [
+                        'data'         => $data,
+                        'restaurante'  => $restauranteActivo,
+                        'fecha_inicio' => $fechaInicio,
+                        'fecha_fin'    => $fechaFin
+                    ]);
+                    return $pdf->download("{$fileName}.pdf");
+                }
+                return response()->json(['success' => true, 'data' => $data, 'message' => 'Instale laravel-dompdf para soporte PDF']);
+            }
+
+            return response()->json(['success' => false, 'message' => 'Formato no soportado'], 400);
+
+        } catch (\Exception $e) {
+            return $this->error('Error al procesar descarga', $e);
+        }
+    }
+
+    /**
+     * Helper para obtener los datos de cualquier reporte de forma unificada
+     */
+    private function obtenerDatosReporte(string $tipo, Request $request, $restaurante): mixed
+    {
+        switch ($tipo) {
+            case 'ventas':
+                return Orden::where('restaurante_id', $restaurante->id)
+                    ->where('estado', 'CERRADA')
+                    ->whereBetween('created_at', [$request->fecha_inicio . ' 00:00:00', $request->fecha_fin . ' 23:59:59'])
+                    ->with('usuario')
+                    ->get();
+
+            case 'productos':
+                return $this->baseDetallesQuery($restaurante->id, $request)
+                    ->select(
+                        'productos.id',
+                        'productos.nombre',
+                        'productos.precio',
+                        DB::raw('SUM(orden_detalles.cantidad) as total_vendido'),
+                        DB::raw('SUM(orden_detalles.subtotal) as total_ingresos')
+                    )
+                    ->groupBy('productos.id', 'productos.nombre', 'productos.precio')
+                    ->orderByDesc('total_vendido')
+                    ->get();
+
+            case 'clientes':
+                return Cliente::where('restaurante_id', $restaurante->id)
+                    ->withCount(['ordenes as total_compras' => fn($q) => $q->where('estado', 'CERRADA')])
+                    ->orderByDesc('total_compras')
+                    ->get();
+
+            case 'roi':
+                $response = $this->roiCompleto($request);
+                $resData = json_decode($response->getContent(), true)['data'] ?? [];
+                // Aplanar KPIs para el export
+                return collect($resData['kpis'] ?? [])->map(fn($v, $k) => ['label' => $k, 'value' => $v])->values();
+
+            case 'utilidad':
+                $response = $this->inversionYUtilidad($request);
+                $resData = json_decode($response->getContent(), true)['data'] ?? [];
+                return collect($resData)->map(fn($v, $k) => ['label' => $k, 'value' => $v])->values();
+
+            default:
+                return collect([]);
+        }
+    }
+
+
     // =========================================================================
     // ROI — CONFIGURACIÓN
     // =========================================================================
@@ -1037,10 +1149,21 @@ class ReporteController extends Controller
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum('total');
 
-            $gastosVariables = (float) DB::table('gastos')
+            // ✅ Gastos Variables = Gastos Directos + Costo de Productos Vendidos
+            $gastosDirectos = (float) DB::table('gastos')
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum('monto');
+
+            $costoVentas = (float) DB::table('orden_detalles')
+                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->where('ordenes.estado', 'CERRADA')
+                ->whereBetween('ordenes.created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+                ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
+
+            $gastosVariables = round($gastosDirectos + $costoVentas, 2);
 
             $nominaMes = (float) Nomina::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'PAGADA')
@@ -1101,11 +1224,13 @@ class ReporteController extends Controller
                     'productos.nombre',
                     DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
                     'productos.precio',
+                    'productos.costo',
                     DB::raw('SUM(orden_detalles.cantidad) as unidades_vendidas'),
                     DB::raw('SUM(orden_detalles.subtotal) as ingreso_total'),
-                    DB::raw('NULL as roi_producto')
+                    DB::raw('SUM(orden_detalles.subtotal) - SUM(orden_detalles.cantidad * COALESCE(productos.costo, 0)) as utilidad_producto'),
+                    DB::raw('ROUND(((SUM(orden_detalles.subtotal) - SUM(orden_detalles.cantidad * COALESCE(productos.costo, 0))) / NULLIF(SUM(orden_detalles.cantidad * COALESCE(productos.costo, 0)), 0)) * 100, 2) as roi_producto')
                 )
-                ->groupBy('productos.id', 'productos.nombre', 'categorias.nombre', 'productos.precio')
+                ->groupBy('productos.id', 'productos.nombre', 'categorias.nombre', 'productos.precio', 'productos.costo')
                 ->orderByDesc('ingreso_total')
                 ->limit(10)
                 ->get();
@@ -1144,7 +1269,6 @@ class ReporteController extends Controller
                         'pct_utilidad'            => $pctUtilidad,
                     ],
                     'roi_por_producto' => $roiProductos,
-                    'nota' => 'roi_producto = null: agrega columna `costo` a productos para habilitarlo.',
                 ],
             ]);
 

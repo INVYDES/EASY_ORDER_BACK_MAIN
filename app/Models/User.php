@@ -27,6 +27,7 @@ class User extends Authenticatable
         'username',
         'password',
         'activo',
+        'telefono',            // FIX: Agregado — faltaba y se ignoraba silenciosamente en registerCliente
         'tipo_empleado',
         'salario_base',
         'salario_por_hora',
@@ -40,10 +41,10 @@ class User extends Authenticatable
     ];
 
     protected $casts = [
-        'password' => 'hashed',
-        'activo' => 'boolean',
-        'salario_base' => 'decimal:2',
-        'salario_por_hora' => 'decimal:2',
+        'password'           => 'hashed',
+        'activo'             => 'boolean',
+        'salario_base'       => 'decimal:2',
+        'salario_por_hora'   => 'decimal:2',
         'comision_por_venta' => 'decimal:2',
     ];
 
@@ -96,36 +97,59 @@ class User extends Authenticatable
     */
 
     /**
-     * Verificar si el usuario tiene un rol específico (case-insensitive)
+     * Verificar si el usuario tiene un rol específico (case-insensitive).
+     * FIX: Aprovecha la colección ya cargada si existe, evitando query extra.
      */
     public function hasRole(string $roleName): bool
     {
+        // Si la relación ya fue cargada (eager load), usar la colección en memoria
+        if ($this->relationLoaded('roles')) {
+            return $this->roles->contains(
+                fn($r) => strtolower($r->nombre) === strtolower($roleName)
+            );
+        }
+
+        // Si no está cargada, hacer la query
         return $this->roles()
             ->whereRaw('LOWER(nombre) = ?', [strtolower($roleName)])
             ->exists();
     }
 
     /**
-     * Verificar si el usuario tiene un permiso específico
+     * Verificar si el usuario tiene un permiso específico.
+     *
+     * FIX CRÍTICO: Antes hacía N+1 queries (una por hasRole + una por whereHas por cada permiso).
+     * Ahora carga roles+permisos una sola vez con loadMissing y opera en memoria.
      */
-    public function hasPermission($permission): bool
+    public function hasPermission(string $permission): bool
     {
-        // Excepción automática para el rol Kiosko (MENU) 
-        // Si no existen en la BD, se los otorgamos por código
-        if ($this->hasRole('MENU')) {
+        // Cargar roles con sus permisos una sola vez (no recarga si ya están en memoria)
+        $this->loadMissing('roles.permissions');
+
+        // FIX: Usar la colección ya cargada en lugar de llamar hasRole() que haría otra query
+        $esMenu = $this->roles->contains(
+            fn($r) => strtolower($r->nombre) === 'menu'
+        );
+
+        // Excepción automática para el rol Kiosko (MENU)
+        if ($esMenu) {
             $menuPermisos = ['VER_RESTAURANTE', 'VER_PRODUCTOS', 'CREAR_ORDENES', 'VER_CATEGORIAS'];
             if (in_array($permission, $menuPermisos)) {
                 return true;
             }
         }
 
-        return $this->roles()
-            ->whereHas('permissions', function ($query) use ($permission) {
-                $query->where('nombre', $permission);
-            })
-            ->exists();
+        // Buscar el permiso en todos los roles del usuario (operación en memoria, sin queries)
+        return $this->roles
+            ->flatMap(fn($role) => $role->permissions)
+            ->contains('nombre', $permission);
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | SCOPES
+    |--------------------------------------------------------------------------
+    */
 
     public function scopeActivos($query)
     {
@@ -143,7 +167,10 @@ class User extends Authenticatable
     |--------------------------------------------------------------------------
     */
 
-    public function logAction($accion, $tabla, $registroId = null, $descripcion = null)
+    /**
+     * Registra una acción de auditoría del usuario.
+     */
+    public function logAction(string $accion, string $tabla, $registroId = null, ?string $descripcion = null): Log
     {
         return Log::create([
             'user_id'        => $this->id,

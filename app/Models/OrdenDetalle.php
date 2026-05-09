@@ -4,9 +4,11 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 
-class OrdenDetalle extends Model
-{
+class OrdenDetalle extends Model {
+    use HasFactory;
+
     protected $table = 'orden_detalles';
 
     protected $fillable = [
@@ -18,12 +20,14 @@ class OrdenDetalle extends Model
         'subtotal',
         'notas',
         'nom_comensal',
-        'estado_preparacion'
+        'estado_preparacion',
+        'reprocesado'
     ];
 
     protected $casts = [
         'precio_unitario' => 'decimal:2',
-        'subtotal' => 'decimal:2'
+        'subtotal' => 'decimal:2',
+        'reprocesado' => 'boolean'
     ];
 
     /**

@@ -13,19 +13,20 @@ class IngredienteMovimiento extends Model
 
     protected $fillable = [
         'ingrediente_id',
+        'producto_id',
+        'orden_id',
         'user_id',
         'tipo',               // 'entrada', 'salida', 'ajuste'
         'cantidad_anterior',
         'cantidad_movimiento',
         'cantidad_nueva',
         'motivo',
-        'orden_id',           // ← Para vincular con órdenes de venta
     ];
 
     protected $casts = [
-        'cantidad_anterior'   => 'decimal:3',
-        'cantidad_movimiento' => 'decimal:3',
-        'cantidad_nueva'      => 'decimal:3',
+        'cantidad_anterior'   => 'integer',
+        'cantidad_movimiento' => 'integer',
+        'cantidad_nueva'      => 'integer',
         'created_at'          => 'datetime',
         'updated_at'          => 'datetime',
     ];
@@ -43,6 +44,14 @@ class IngredienteMovimiento extends Model
     public function ingrediente()
     {
         return $this->belongsTo(Ingrediente::class);
+    }
+
+    /**
+     * Relación con el producto (si aplica)
+     */
+    public function producto()
+    {
+        return $this->belongsTo(Producto::class);
     }
 
     /**
@@ -136,6 +145,30 @@ class IngredienteMovimiento extends Model
         return $query->whereBetween('created_at', [$inicio, $fin]);
     }
 
+    /**
+     * Scope para movimientos de un ingrediente específico
+     */
+    public function scopeDelIngrediente($query, $ingredienteId)
+    {
+        return $query->where('ingrediente_id', $ingredienteId);
+    }
+
+    /**
+     * Scope para movimientos de un producto específico
+     */
+    public function scopeDelProducto($query, $productoId)
+    {
+        return $query->where('producto_id', $productoId);
+    }
+
+    /**
+     * Scope para movimientos relacionados con órdenes
+     */
+    public function scopeDeOrdenes($query)
+    {
+        return $query->whereNotNull('orden_id');
+    }
+
     // ─── MÉTODOS DE UTILIDAD ─────────────────────────────────
 
     /**
@@ -165,7 +198,7 @@ class IngredienteMovimiento extends Model
     /**
      * Obtener el impacto neto en el inventario
      */
-    public function getImpactoNetoAttribute(): float
+    public function getImpactoNetoAttribute(): int
     {
         return match($this->tipo) {
             self::TIPO_ENTRADA => $this->cantidad_movimiento,
@@ -175,16 +208,63 @@ class IngredienteMovimiento extends Model
         };
     }
 
+    /**
+     * Registrar un movimiento de forma sencilla
+     */
+    public static function registrar(
+        $ingrediente,
+        string $tipo,
+        int $cantidadMovimiento,
+        int $cantidadNueva,
+        ?int $userId = null,
+        ?string $motivo = null,
+        ?int $ordenId = null,
+        ?int $productoId = null
+    ): self {
+        return static::create([
+            'ingrediente_id' => $ingrediente->id,
+            'producto_id' => $productoId,
+            'user_id' => $userId ?? auth()->id(),
+            'tipo' => $tipo,
+            'cantidad_anterior' => $ingrediente->stock_actual,
+            'cantidad_movimiento' => $cantidadMovimiento,
+            'cantidad_nueva' => $cantidadNueva,
+            'motivo' => $motivo,
+            'orden_id' => $ordenId,
+        ]);
+    }
+
     // ─── EVENTOS ──────────────────────────────────────────────
 
     protected static function booted()
     {
         static::creating(function ($movimiento) {
-            // Validar consistencia de cantidades
-            if ($movimiento->tipo === self::TIPO_SALIDA && $movimiento->cantidad_movimiento > $movimiento->cantidad_anterior) {
+            // Validar que el ingrediente existe
+            if (!$movimiento->ingrediente_id) {
+                throw new \Exception('El ingrediente es requerido');
+            }
+            
+            // Validar que cantidad_movimiento sea positiva
+            if ($movimiento->cantidad_movimiento <= 0) {
+                throw new \Exception('La cantidad del movimiento debe ser mayor a cero');
+            }
+            
+            // Validar salida (no exceder stock disponible)
+            if ($movimiento->tipo === self::TIPO_SALIDA && 
+                $movimiento->cantidad_movimiento > $movimiento->cantidad_anterior) {
                 throw new \Exception('No se puede retirar más stock del disponible');
+            }
+            
+            // Validar consistencia del cálculo del stock nuevo
+            $expectedNueva = match($movimiento->tipo) {
+                self::TIPO_ENTRADA => $movimiento->cantidad_anterior + $movimiento->cantidad_movimiento,
+                self::TIPO_SALIDA  => $movimiento->cantidad_anterior - $movimiento->cantidad_movimiento,
+                self::TIPO_AJUSTE  => $movimiento->cantidad_movimiento,
+            };
+            
+            if ($movimiento->cantidad_nueva !== $expectedNueva) {
+                throw new \Exception('Inconsistencia en el cálculo del stock nuevo');
             }
         });
     }
-    
 }

@@ -18,6 +18,7 @@ class Producto extends Model
         'nombre',
         'descripcion',
         'precio',
+        'costo',
         'stock',
         'stock_minimo',
         'minutos_produccion',
@@ -28,6 +29,7 @@ class Producto extends Model
 
     protected $casts = [
         'precio' => 'decimal:2',
+        'costo' => 'decimal:2',
         'activo' => 'boolean',
         'stock' => 'integer',
         'stock_minimo' => 'integer',
@@ -66,6 +68,10 @@ class Producto extends Model
                     ->withTimestamps();
     }
 
+public function ingredienteMovimientos()
+{
+    return $this->hasMany(IngredienteMovimiento::class);
+}
     /**
      * SCOPES (ÁMBITOS)
      */

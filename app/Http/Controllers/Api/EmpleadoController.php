@@ -1484,7 +1484,7 @@ public function getKpiCocinaReprocesos(Request $request)
 
         // Reprocesos: detalles que tienen más de una actualización o campo específico
         // Por ahora, placeholder con 0
-        $reprocesos = 0;
+        $reprocesos = (clone $query)->where('orden_detalles.reprocesado', true)->count();
         $porcentajeReprocesos = $totalItems > 0 ? round(($reprocesos / $totalItems) * 100, 2) : 0;
 
         return response()->json([
@@ -1493,7 +1493,6 @@ public function getKpiCocinaReprocesos(Request $request)
                 'total_platillos' => $totalItems,
                 'reprocesos' => $reprocesos,
                 'porcentaje_reprocesos' => $porcentajeReprocesos,
-                'nota' => 'Para calcular reprocesos reales, se necesita una tabla de devoluciones o campo "reprocesado" en orden_detalles',
             ],
         ]);
 

@@ -38,13 +38,10 @@ class Ingrediente extends Model
         return $this->belongsTo(Restaurante::class);
     }
 
-    /**
-     * Movimientos de este ingrediente
-     */
-    public function movimientos()
-    {
-        return $this->hasMany(IngredienteMovimiento::class);
-    }
+public function movimientos()
+{
+    return $this->hasMany(IngredienteMovimiento::class)->latest();
+}
 
     /**
      * Productos que usan este ingrediente
@@ -70,4 +67,5 @@ class Ingrediente extends Model
     {
         return $this->costo_unitario * $this->stock_actual;
     }
+    
 }

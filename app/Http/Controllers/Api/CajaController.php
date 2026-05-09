@@ -76,16 +76,16 @@ class CajaController extends Controller
                 return response()->json([
                     'success' => true,
                     'data' => [
-                        'is_open'          => false,
-                        'opening_amount'   => 0,
-                        'cash_in_register' => 0,
-                        'daily_sales'      => 0,
-                        'card_sales'       => 0,
-                        'transfer_sales'   => 0,
-                        'paypal_sales'     => 0,
+                        'is_open'             => false,
+                        'opening_amount'      => 0,
+                        'cash_in_register'    => 0,
+                        'daily_sales'         => 0,
+                        'card_sales'          => 0,
+                        'transfer_sales'      => 0,
+                        'paypal_sales'        => 0,
                         'mercadopago_sales'   => 0,
-                        'other_sales'      => 0,
-                        'movements_count'  => 0,
+                        'other_sales'         => 0,
+                        'movements_count'     => 0,
                     ],
                 ]);
             }
@@ -105,27 +105,27 @@ class CajaController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'is_open'          => true,
-                    'caja_id'          => $caja->id,
-                    'opening_amount'   => (float) $caja->monto_inicial,
-                    'cash_in_register' => (float) ($caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $TotalIngresos - $TotalEgresos),
-                    'daily_sales'      => $v['efectivo'],
-                    'card_sales'       => $v['tarjeta'],
-                    'transfer_sales'   => $v['transferencia'],
-                    'paypal_sales'     => $v['paypal'],
-                    'mercadopago_sales'=> $v['mercadopago'],
-                    'other_sales'      => $v['otros'],
-                    'total_orders'     => $v['total_ordenes'],
-                    'movements_count'  => $movimientos->count(),
-                    'opened_at'        => $caja->fecha_apertura,
-                    'opened_by'        => $caja->usuarioApertura
+                    'is_open'             => true,
+                    'caja_id'             => $caja->id,
+                    'opening_amount'      => (float) $caja->monto_inicial,
+                    'cash_in_register'    => (float) ($caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $TotalIngresos - $TotalEgresos),
+                    'daily_sales'         => $v['efectivo'],
+                    'card_sales'          => $v['tarjeta'],
+                    'transfer_sales'      => $v['transferencia'],
+                    'paypal_sales'        => $v['paypal'],
+                    'mercadopago_sales'   => $v['mercadopago'],
+                    'other_sales'         => $v['otros'],
+                    'total_orders'        => $v['total_ordenes'],
+                    'movements_count'     => $movimientos->count(),
+                    'opened_at'           => $caja->fecha_apertura,
+                    'opened_by'           => $caja->usuarioApertura
                         ? ['id' => $caja->usuarioApertura->id, 'name' => $caja->usuarioApertura->name]
                         : null,
                 ],
             ]);
 
         } catch (\Exception $e) {
-            return response()->json(['success'=>false,'message'=>'Error al obtener estado','error'=>$e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error al obtener estado', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -137,7 +137,7 @@ class CajaController extends Controller
         try {
             $user = $request->user();
             if (!$user->hasPermission('ABRIR_CAJA')) {
-                return response()->json(['success'=>false,'message'=>'No tienes permiso para abrir caja'], 403);
+                return response()->json(['success' => false, 'message' => 'No tienes permiso para abrir caja'], 403);
             }
 
             $request->validate(['monto_inicial' => 'required|numeric|min:0']);
@@ -149,7 +149,7 @@ class CajaController extends Controller
                 ->whereDate('fecha_apertura', $hoy)
                 ->whereNull('fecha_cierre')
                 ->exists()) {
-                return response()->json(['success'=>false,'message'=>'Ya hay una caja abierta para hoy'], 409);
+                return response()->json(['success' => false, 'message' => 'Ya hay una caja abierta para hoy'], 409);
             }
 
             DB::beginTransaction();
@@ -179,8 +179,8 @@ class CajaController extends Controller
 
             try {
                 Broadcast::event(new \App\Events\CajaActualizada('abierta', $restauranteActivo->id, ['caja_id' => $caja->id]));
-            } catch (\Exception $be) { 
-                \Log::warning('Broadcast abrir caja: '.$be->getMessage()); 
+            } catch (\Exception $be) {
+                \Log::warning('Broadcast abrir caja: ' . $be->getMessage());
             }
 
             return response()->json([
@@ -188,16 +188,16 @@ class CajaController extends Controller
                 'message' => 'Caja abierta correctamente',
                 'data'    => [
                     'caja_id'        => $caja->id,
-                    'monto_inicial'  => (float)$caja->monto_inicial,
+                    'monto_inicial'  => (float) $caja->monto_inicial,
                     'fecha_apertura' => $caja->fecha_apertura,
                 ],
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json(['success'=>false,'message'=>'Error de validación','errors'=>$e->errors()], 422);
+            return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['success'=>false,'message'=>'Error al abrir caja','error'=>$e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error al abrir caja', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -209,7 +209,7 @@ class CajaController extends Controller
         try {
             $user = $request->user();
             if (!$user->hasPermission('CERRAR_CAJA')) {
-                return response()->json(['success'=>false,'message'=>'No tienes permiso para cerrar caja'], 403);
+                return response()->json(['success' => false, 'message' => 'No tienes permiso para cerrar caja'], 403);
             }
 
             $request->validate([
@@ -227,7 +227,7 @@ class CajaController extends Controller
                 ->first();
 
             if (!$caja) {
-                return response()->json(['success'=>false,'message'=>'No hay una caja abierta para hoy'], 404);
+                return response()->json(['success' => false, 'message' => 'No hay una caja abierta para hoy'], 404);
             }
 
             DB::beginTransaction();
@@ -245,22 +245,21 @@ class CajaController extends Controller
 
             $efectivoEsperado = $caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $ingresos - $egresos;
             $diferencia       = $request->efectivo_final - $efectivoEsperado;
-
-            $totalVentas = $this->totalVentas($ventas);
+            $totalVentas      = $this->totalVentas($ventas);
 
             $caja->update([
-                'fecha_cierre'          => now(),
-                'usuario_cierre_id'     => $user->id,
-                'monto_final'           => $request->efectivo_final,
-                'ventas_efectivo'       => $v['efectivo'],
-                'ventas_tarjeta'        => $v['tarjeta'],
-                'ventas_transferencia'  => $v['transferencia'],
-                'ventas_paypal'         => $v['paypal'],
-                'ventas_mercadopago'    => $v['mercadopago'],
-                'total_ordenes'         => $v['total_ordenes'],
-                'diferencia'            => $diferencia,
-                'observaciones_cierre'  => $request->observaciones,
-                'estado'                => 'cerrada',
+                'fecha_cierre'         => now(),
+                'usuario_cierre_id'    => $user->id,
+                'monto_final'          => $request->efectivo_final,
+                'ventas_efectivo'      => $v['efectivo'],
+                'ventas_tarjeta'       => $v['tarjeta'],
+                'ventas_transferencia' => $v['transferencia'],
+                'ventas_paypal'        => $v['paypal'],
+                'ventas_mercadopago'   => $v['mercadopago'],
+                'total_ordenes'        => $v['total_ordenes'],
+                'diferencia'           => $diferencia,
+                'observaciones_cierre' => $request->observaciones,
+                'estado'               => 'cerrada',
             ]);
 
             DB::commit();
@@ -271,28 +270,28 @@ class CajaController extends Controller
 
             try {
                 Broadcast::event(new \App\Events\CajaActualizada('cerrada', $restauranteActivo->id, ['caja_id' => $caja->id]));
-            } catch (\Exception $be) { 
-                \Log::warning('Broadcast cerrar caja: '.$be->getMessage()); 
+            } catch (\Exception $be) {
+                \Log::warning('Broadcast cerrar caja: ' . $be->getMessage());
             }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Caja cerrada correctamente',
                 'data'    => [
-                    'caja_id'          => $caja->id,
-                    'efectivo_esperado'=> (float) $efectivoEsperado,
-                    'efectivo_final'   => (float) $request->efectivo_final,
-                    'diferencia'       => (float) $diferencia,
-                    'ventas'           => $v,
-                    'total_ventas'     => $totalVentas,
+                    'caja_id'           => $caja->id,
+                    'efectivo_esperado' => (float) $efectivoEsperado,
+                    'efectivo_final'    => (float) $request->efectivo_final,
+                    'diferencia'        => (float) $diferencia,
+                    'ventas'            => $v,
+                    'total_ventas'      => $totalVentas,
                 ],
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json(['success'=>false,'message'=>'Error de validación','errors'=>$e->errors()], 422);
+            return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['success'=>false,'message'=>'Error al cerrar caja','error'=>$e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error al cerrar caja', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -304,7 +303,7 @@ class CajaController extends Controller
         try {
             $user = $request->user();
             if (!$user->hasPermission('EDITAR_CAJA')) {
-                return response()->json(['success'=>false,'message'=>'No tienes permiso para registrar movimientos'], 403);
+                return response()->json(['success' => false, 'message' => 'No tienes permiso para registrar movimientos'], 403);
             }
 
             $request->validate([
@@ -314,10 +313,9 @@ class CajaController extends Controller
                 'referencia'  => 'nullable|string|max:100',
             ]);
 
-            // ✅ Validación adicional: límite para egresos sin autorización
             if ($request->tipo === 'egreso' && $request->monto > 10000) {
                 return response()->json([
-                    'success' => false, 
+                    'success' => false,
                     'message' => 'Los egresos no pueden superar los $10,000 sin autorización del administrador'
                 ], 422);
             }
@@ -329,7 +327,7 @@ class CajaController extends Controller
                 ->first();
 
             if (!$caja) {
-                return response()->json(['success'=>false,'message'=>'No hay una caja abierta para hoy'], 404);
+                return response()->json(['success' => false, 'message' => 'No hay una caja abierta para hoy'], 404);
             }
 
             DB::beginTransaction();
@@ -348,21 +346,21 @@ class CajaController extends Controller
                     'tipo'  => $request->tipo,
                     'monto' => (float) $request->monto,
                 ]));
-            } catch (\Exception $be) { 
-                \Log::warning('Broadcast movimiento: '.$be->getMessage()); 
+            } catch (\Exception $be) {
+                \Log::warning('Broadcast movimiento: ' . $be->getMessage());
             }
 
             return response()->json([
-                'success' => true, 
-                'message' => 'Movimiento registrado correctamente', 
+                'success' => true,
+                'message' => 'Movimiento registrado correctamente',
                 'data'    => $movimiento
             ], 201);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json(['success'=>false,'message'=>'Error de validación','errors'=>$e->errors()], 422);
+            return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['success'=>false,'message'=>'Error al registrar movimiento','error'=>$e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error al registrar movimiento', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -374,7 +372,7 @@ class CajaController extends Controller
         try {
             $user = $request->user();
             if (!$user->hasPermission('VER_CAJA')) {
-                return response()->json(['success'=>false,'message'=>'No tienes permiso'], 403);
+                return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
             }
 
             $restauranteActivo = app('restaurante_activo');
@@ -383,7 +381,7 @@ class CajaController extends Controller
                 ->first();
 
             if (!$caja) {
-                return response()->json(['success'=>true,'data'=>[]]);
+                return response()->json(['success' => true, 'data' => []]);
             }
 
             $movimientos = CajaMovimientos::with('usuario')
@@ -394,32 +392,32 @@ class CajaController extends Controller
             return response()->json([
                 'success' => true,
                 'data'    => $movimientos->map(fn($m) => [
-                    'id'                   => $m->id,
-                    'tipo'                 => $m->tipo,
-                    'monto'                => (float) $m->monto,
-                    'monto_formateado'     => '$'.number_format($m->monto,2),
-                    'descripcion'          => $m->descripcion,
-                    'referencia'           => $m->referencia,
-                    'usuario'              => $m->usuario?->name,
-                    'created_at'           => $m->created_at,
-                    'created_at_formateado'=> $m->created_at->format('d/m/Y H:i'),
+                    'id'                    => $m->id,
+                    'tipo'                  => $m->tipo,
+                    'monto'                 => (float) $m->monto,
+                    'monto_formateado'      => '$' . number_format($m->monto, 2),
+                    'descripcion'           => $m->descripcion,
+                    'referencia'            => $m->referencia,
+                    'usuario'               => $m->usuario?->name,
+                    'created_at'            => $m->created_at,
+                    'created_at_formateado' => $m->created_at->format('d/m/Y H:i'),
                 ]),
             ]);
 
         } catch (\Exception $e) {
-            return response()->json(['success'=>false,'message'=>'Error al obtener movimientos','error'=>$e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error al obtener movimientos', 'error' => $e->getMessage()], 500);
         }
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // MOVIMIENTOS POR FECHA (nuevo método)
+    // MOVIMIENTOS POR FECHA
     // ═════════════════════════════════════════════════════════════════════════
     public function movimientosPorFecha(Request $request)
     {
         try {
             $user = $request->user();
             if (!$user->hasPermission('VER_CAJA')) {
-                return response()->json(['success'=>false,'message'=>'No tienes permiso'], 403);
+                return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
             }
 
             $request->validate([
@@ -443,7 +441,7 @@ class CajaController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $movimientos->map(fn($m) => [
+                'data'    => $movimientos->map(fn($m) => [
                     'id'          => $m->id,
                     'tipo'        => $m->tipo,
                     'monto'       => (float) $m->monto,
@@ -460,9 +458,9 @@ class CajaController extends Controller
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json(['success'=>false,'message'=>'Error de validación','errors'=>$e->errors()], 422);
+            return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
-            return response()->json(['success'=>false,'message'=>'Error al obtener movimientos','error'=>$e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error al obtener movimientos', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -474,27 +472,25 @@ class CajaController extends Controller
         try {
             $user = $request->user();
             if (!$user->hasPermission('VER_CAJA')) {
-                return response()->json(['success'=>false,'message'=>'No tienes permiso'], 403);
+                return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
             }
 
             $restauranteActivo = app('restaurante_activo');
             $hoy = now()->format('Y-m-d');
 
-            $caja = Caja::with(['usuarioApertura','usuarioCierre'])
+            $caja = Caja::with(['usuarioApertura', 'usuarioCierre'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->whereDate('fecha_apertura', $hoy)
                 ->first();
 
             if (!$caja) {
-                return response()->json(['success'=>false,'message'=>'No hay corte para hoy'], 404);
+                return response()->json(['success' => false, 'message' => 'No hay corte para hoy'], 404);
             }
 
             $movimientos   = CajaMovimientos::where('caja_id', $caja->id)->get();
-            $TotalIngresos = $movimientos->where('tipo','ingreso')->sum('monto');
-            $TotalEgresos  = $movimientos->where('tipo','egreso')->sum('monto');
-
-            // ✅ Usar el accessor getTotalVentasAttribute
-            $totalVentas = $caja->total_ventas;
+            $TotalIngresos = $movimientos->where('tipo', 'ingreso')->sum('monto');
+            $TotalEgresos  = $movimientos->where('tipo', 'egreso')->sum('monto');
+            $totalVentas   = $caja->total_ventas;
 
             return response()->json([
                 'success' => true,
@@ -518,7 +514,7 @@ class CajaController extends Controller
                         'paypal'        => (float) $caja->ventas_paypal,
                         'mercadopago'   => (float) $caja->ventas_mercadopago,
                         'total'         => $totalVentas,
-                        'total_ordenes' => (int)   $caja->total_ordenes,
+                        'total_ordenes' => (int) $caja->total_ordenes,
                     ],
                     'movimientos' => [
                         'ingresos'          => (float) $TotalIngresos,
@@ -530,7 +526,7 @@ class CajaController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            return response()->json(['success'=>false,'message'=>'Error al obtener corte','error'=>$e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error al obtener corte', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -542,13 +538,13 @@ class CajaController extends Controller
         try {
             $user = $request->user();
             if (!$user->hasPermission('VER_CAJA')) {
-                return response()->json(['success'=>false,'message'=>'No tienes permiso'], 403);
+                return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
             }
 
             $restauranteActivo = app('restaurante_activo');
             $perPage = $request->get('per_page', 15);
 
-            $cortes = Caja::with(['usuarioApertura','usuarioCierre'])
+            $cortes = Caja::with(['usuarioApertura', 'usuarioCierre'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->whereNotNull('fecha_cierre')
                 ->orderByDesc('fecha_cierre')
@@ -577,7 +573,7 @@ class CajaController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            return response()->json(['success'=>false,'message'=>'Error al obtener Historial','error'=>$e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error al obtener Historial', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -589,30 +585,30 @@ class CajaController extends Controller
         try {
             $user = $request->user();
             if (!$user->hasPermission('VER_CAJA')) {
-                return response()->json(['success'=>false,'message'=>'No tienes permiso'], 403);
+                return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
             }
 
             $restauranteActivo = app('restaurante_activo');
 
-            $caja = Caja::with(['usuarioApertura','usuarioCierre','movimientos.usuario'])
+            $caja = Caja::with(['usuarioApertura', 'usuarioCierre', 'movimientos.usuario'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();
 
             $movimientos   = $caja->movimientos->map(fn($m) => [
-                'id'                   => $m->id,
-                'tipo'                 => $m->tipo,
-                'monto'                => (float) $m->monto,
-                'monto_formateado'     => '$'.number_format($m->monto,2),
-                'descripcion'          => $m->descripcion,
-                'referencia'           => $m->referencia,
-                'usuario'              => $m->usuario?->name,
-                'created_at'           => $m->created_at,
-                'created_at_formateado'=> $m->created_at->format('d/m/Y H:i'),
+                'id'                    => $m->id,
+                'tipo'                  => $m->tipo,
+                'monto'                 => (float) $m->monto,
+                'monto_formateado'      => '$' . number_format($m->monto, 2),
+                'descripcion'           => $m->descripcion,
+                'referencia'            => $m->referencia,
+                'usuario'               => $m->usuario?->name,
+                'created_at'            => $m->created_at,
+                'created_at_formateado' => $m->created_at->format('d/m/Y H:i'),
             ]);
-            
-            $TotalIngresos = $caja->movimientos->where('tipo','ingreso')->sum('monto');
-            $TotalEgresos  = $caja->movimientos->where('tipo','egreso')->sum('monto');
+
+            $TotalIngresos = $caja->movimientos->where('tipo', 'ingreso')->sum('monto');
+            $TotalEgresos  = $caja->movimientos->where('tipo', 'egreso')->sum('monto');
 
             return response()->json([
                 'success' => true,
@@ -652,9 +648,9 @@ class CajaController extends Controller
             ]);
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json(['success'=>false,'message'=>'Corte de caja no encontrado'], 404);
+            return response()->json(['success' => false, 'message' => 'Corte de caja no encontrado'], 404);
         } catch (\Exception $e) {
-            return response()->json(['success'=>false,'message'=>'Error al obtener corte','error'=>$e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error al obtener corte', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -665,12 +661,9 @@ class CajaController extends Controller
     {
         try {
             $user = $request->user();
-            
+
             if (!$user->hasPermission('CREAR_ORDENES')) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No tienes permiso para crear órdenes'
-                ], 403);
+                return response()->json(['success' => false, 'message' => 'No tienes permiso para crear órdenes'], 403);
             }
 
             $request->validate([
@@ -686,10 +679,7 @@ class CajaController extends Controller
                 ->firstOrFail();
 
             if ($orden->estado === 'CERRADA') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Esta Orden ya está cerrada'
-                ], 400);
+                return response()->json(['success' => false, 'message' => 'Esta Orden ya está cerrada'], 400);
             }
 
             $caja = Caja::where('restaurante_id', $restauranteActivo->id)
@@ -698,14 +688,11 @@ class CajaController extends Controller
                 ->first();
 
             if (!$caja) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No hay una caja abierta. Debes abrir la caja antes de procesar pagos.'
-                ], 400);
+                return response()->json(['success' => false, 'message' => 'No hay una caja abierta. Debes abrir la caja antes de procesar pagos.'], 400);
             }
 
             $paypalController = new PayPalController();
-            
+
             $paypalRequest = new \Illuminate\Http\Request();
             $paypalRequest->merge([
                 'total'    => $request->total,
@@ -714,17 +701,17 @@ class CajaController extends Controller
             ]);
 
             $paypalResponse = $paypalController->createOrder($paypalRequest);
-            $responseData = json_decode($paypalResponse->getContent(), true);
+            $responseData   = json_decode($paypalResponse->getContent(), true);
 
             if ($responseData['success']) {
                 $orden->paypal_order_id = $responseData['order_id'];
                 $orden->save();
 
                 return response()->json([
-                    'success'      => true,
-                    'approval_url' => $responseData['approval_url'],
-                    'order_id'     => $responseData['order_id'],
-                    'paypal_order_id' => $responseData['order_id']
+                    'success'         => true,
+                    'approval_url'    => $responseData['approval_url'],
+                    'order_id'        => $responseData['order_id'],
+                    'paypal_order_id' => $responseData['order_id'],
                 ]);
             }
 
@@ -734,33 +721,23 @@ class CajaController extends Controller
             ], 500);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error de validación',
-                'errors'  => $e->errors()
-            ], 422);
+            return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Orden no encontrada'
-            ], 404);
+            return response()->json(['success' => false, 'message' => 'Orden no encontrada'], 404);
         } catch (\Exception $e) {
             \Log::error('Error crear pago PayPal: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Error al procesar el pago: ' . $e->getMessage()
-            ], 500);
+            return response()->json(['success' => false, 'message' => 'Error al procesar el pago: Pago inválido'], 500);
         }
     }
 
-    /**
-     * Capturar pago de PayPal (callback después del pago exitoso)
-     */
+    // ═════════════════════════════════════════════════════════════════════════
+    // CAPTURAR PAGO PAYPAL (callback)
+    // ═════════════════════════════════════════════════════════════════════════
     public function capturarPayPal(Request $request)
     {
+        $orderId = $request->query('token');
+
         try {
-            $orderId = $request->query('token');
-            
             if (!$orderId) {
                 return redirect()->to(env('FRONTEND_URL') . '/pago-error');
             }
@@ -774,13 +751,13 @@ class CajaController extends Controller
                 ->first();
 
             if (!$caja) {
-                return redirect()->to(env('FRONTEND_URL') . '/pago-error?motivo=caja_cerrada');
+                return redirect()->to(env('FRONTEND_URL') . '/pago-error?motivo=generic_error');
             }
 
-            $paypalController = new PayPalController();
-            $captureResponse = $paypalController->captureOrder($request);
-            
-            $orden->estado = 'CERRADA';
+            // FIX: Transacción completa — orden + movimiento de caja juntos
+            DB::beginTransaction();
+
+            $orden->estado      = 'CERRADA';
             $orden->metodo_pago = 'paypal';
             $orden->save();
 
@@ -793,11 +770,13 @@ class CajaController extends Controller
                 'referencia'  => $orderId,
             ]);
 
+            DB::commit(); // FIX: Confirmar ambas operaciones juntas
+
             try {
                 Broadcast::event(new \App\Events\CajaActualizada('venta', $restauranteActivo->id, [
                     'orden_id' => $orden->id,
                     'monto'    => (float) $orden->total,
-                    'metodo'   => 'paypal'
+                    'metodo'   => 'paypal',
                 ]));
             } catch (\Exception $be) {
                 \Log::warning('Broadcast pago PayPal: ' . $be->getMessage());
@@ -809,8 +788,9 @@ class CajaController extends Controller
             \Log::error('Orden no encontrada para PayPal: ' . ($orderId ?? 'null'));
             return redirect()->to(env('FRONTEND_URL') . '/pago-error?motivo=orden_no_encontrada');
         } catch (\Exception $e) {
+            DB::rollBack(); // FIX: Revertir si algo falla
             \Log::error('Error capturar pago PayPal: ' . $e->getMessage());
-            return redirect()->to(env('FRONTEND_URL') . '/pago-error?motivo=' . urlencode($e->getMessage()));
+            return redirect()->to(env('FRONTEND_URL') . '/pago-error?motivo=generic_error');
         }
     }
 }

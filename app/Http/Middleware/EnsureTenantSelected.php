@@ -4,78 +4,97 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use App\Models\Restaurante;
 
 class EnsureTenantSelected
 {
+    /**
+     * Middleware de Multi-tenancy optimizado.
+     * Garantiza que exista un 'restaurante_activo' en el contenedor de la app.
+     */
     public function handle(Request $request, Closure $next)
     {
         $user = $request->user();
 
         if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No autenticado'
-            ], 401);
+            return response()->json(['success' => false, 'message' => 'No autenticado'], 401);
         }
 
-        // OPCIÓN PARA CLIENTES: Si envían restaurante_id por parámetro, usar ese.
-        $restauranteIdParam = $request->get('restaurante_id') ?? $request->header('X-Restaurante-Id');
-        
-        if ($restauranteIdParam && $user->hasRole('CLIENTE')) {
-            $restauranteActivo = \App\Models\Restaurante::find($restauranteIdParam);
-            if ($restauranteActivo) {
-                app()->instance('restaurante_activo', $restauranteActivo);
-                $request->merge(['restaurante_activo' => $restauranteActivo]);
+        // 1. PRIORIDAD: Header o Parámetro (Switch dinámico)
+        $restauranteId = $request->header('X-Restaurante-Id') ?? $request->get('restaurante_id');
+
+        if ($restauranteId) {
+            $restaurante = $this->getRestauranteCached($restauranteId);
+            
+            if ($restaurante) {
+                app()->instance('restaurante_activo', $restaurante);
+                $request->attributes->set('restaurante_activo', $restaurante);
                 return $next($request);
             }
         }
 
-        // Si no tiene restaurante activo, intentar asignar el primero
+        // 2. RESPALDO: Usar el restaurante_activo del usuario en la DB
         if (!$user->restaurante_activo) {
-            // Intentar primero como dueño, luego como asignado
-            $primerRestaurante = ($user->propietario_id) 
-                ? $user->restaurantesDelPropietario()->first() 
-                : $user->restaurantes()->first();
+            $primerId = $this->getPrimerRestauranteId($user);
             
-            if ($primerRestaurante) {
-                $user->restaurante_activo = $primerRestaurante->id;
-                $user->save();
-            } else if ($user->hasRole('CLIENTE')) {
-                return $next($request);
-            } else {
+            if ($primerId) {
+                $user->update(['restaurante_activo' => $primerId]);
+                // Invalidar caché de búsqueda inicial para forzar recarga en siguiente petición
+                Cache::forget("user_first_res_{$user->id}");
+            } elseif (!$user->hasRole('CLIENTE')) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'No tienes restaurantes asignados. Contacta al administrador.'
+                    'message' => 'No tienes sucursales asignadas.'
                 ], 403);
             }
         }
 
-        // Compartir el restaurante activo con toda la aplicación
-        $restauranteActivo = $user->restauranteActivo;
-
-        // Si el ID guardado no corresponde a un registro real, buscar el primero disponible
-        if (!$restauranteActivo) {
-            $primerRestaurante = ($user->propietario_id) 
-                ? $user->restaurantesDelPropietario()->first() 
-                : $user->restaurantes()->first();
-                
-            if ($primerRestaurante) {
-                $user->restaurante_activo = $primerRestaurante->id;
-                $user->save();
-                $restauranteActivo = $primerRestaurante;
+        // 3. CARGAR INSTANCIA GLOBAL
+        if ($user->restaurante_activo) {
+            $restaurante = $this->getRestauranteCached($user->restaurante_activo);
+            
+            if ($restaurante) {
+                app()->instance('restaurante_activo', $restaurante);
+                $request->attributes->set('restaurante_activo', $restaurante);
             } else {
-                 return response()->json([
-                    'success' => false,
-                    'message' => 'No tienes restaurantes activos o asignados.'
-                ], 403);
+                // Auto-sanación: Si el ID guardado ya no existe, buscar el siguiente disponible
+                $nuevoId = $this->getPrimerRestauranteId($user);
+                if ($nuevoId) {
+                    $user->update(['restaurante_activo' => $nuevoId]);
+                    Cache::forget("user_first_res_{$user->id}");
+                    
+                    $nuevoRes = $this->getRestauranteCached($nuevoId);
+                    if ($nuevoRes) {
+                        app()->instance('restaurante_activo', $nuevoRes);
+                        $request->attributes->set('restaurante_activo', $nuevoRes);
+                    }
+                }
             }
         }
-
-        app()->instance('restaurante_activo', $restauranteActivo);
-        
-        // También lo agregamos al request para fácil acceso
-        $request->merge(['restaurante_activo' => $restauranteActivo]);
 
         return $next($request);
+    }
+
+    /**
+     * Obtiene el restaurante con caché corto (120s) por si hay cambios en BD.
+     */
+    private function getRestauranteCached($id)
+    {
+        if (!$id) return null;
+        return Cache::remember("tenant_res_{$id}", 120, fn() => Restaurante::find($id));
+    }
+
+    /**
+     * Busca la primera sucursal disponible para el usuario.
+     */
+    private function getPrimerRestauranteId($user)
+    {
+        return Cache::remember("user_first_res_{$user->id}", 300, function() use ($user) {
+            $res = ($user->propietario_id) 
+                ? $user->restaurantesDelPropietario()->first() 
+                : $user->restaurantes()->first();
+            return $res ? $res->id : null;
+        });
     }
 }
