@@ -19,11 +19,14 @@ class OrdenResource extends JsonResource
             'mesero'           => $this->usuario ? $this->usuario->name : 'N/A',
             'detalles'         => $this->whenLoaded('detalles', function() {
                 return $this->detalles->map(fn($d) => [
-                    'id'       => $d->id,
-                    'producto' => $d->producto->nombre ?? 'N/A',
-                    'cantidad' => $d->cantidad,
-                    'subtotal' => (float)$d->subtotal,
-                    'estado'   => $d->estado_preparacion,
+                    'id'            => $d->id,
+                    'producto_id'   => $d->producto_id,
+                    'producto'      => $d->producto->nombre ?? 'N/A',
+                    'categoria_id'  => $d->producto->categoria_id ?? null,
+                    'categoria'     => $d->producto->categoria?->nombre ?? null,
+                    'cantidad'      => $d->cantidad,
+                    'subtotal'      => (float)$d->subtotal,
+                    'estado'        => $d->estado_preparacion,
                 ]);
             }),
             'created_at'       => $this->created_at?->format('Y-m-d H:i:s'),

@@ -35,22 +35,26 @@ class OrdenDetalleController extends Controller
                 ->firstOrFail();
 
             $perPage  = min($request->get('per_page', 20), 50);
-            $detalles = OrdenDetalle::with('producto')
+            $detalles = OrdenDetalle::with('producto.categoria')
                 ->where('orden_id', $orden->id)
                 ->paginate($perPage);
 
             $detallesData = $detalles->map(fn($detalle) => [
                 'id'      => $detalle->id,
                 'producto' => $detalle->producto ? [
-                    'id'          => $detalle->producto->id,
-                    'nombre'      => $detalle->producto->nombre,
-                    'descripcion' => $detalle->producto->descripcion,
-                    'activo'      => $detalle->producto->activo,
+                    'id'           => $detalle->producto->id,
+                    'nombre'       => $detalle->producto->nombre,
+                    'descripcion'  => $detalle->producto->descripcion,
+                    'activo'       => $detalle->producto->activo,
+                    'categoria_id' => $detalle->producto->categoria_id,
+                    'categoria'    => $detalle->producto->categoria?->nombre,
                 ] : [
-                    'id'          => null,
-                    'nombre'      => 'Producto eliminado',
-                    'descripcion' => null,
-                    'activo'      => false,
+                    'id'           => null,
+                    'nombre'       => 'Producto eliminado',
+                    'descripcion'  => null,
+                    'activo'       => false,
+                    'categoria_id' => null,
+                    'categoria'    => null,
                 ],
                 'cantidad'            => $detalle->cantidad,
                 'precio_unitario'     => (float) $detalle->precio_unitario,
@@ -381,7 +385,7 @@ class OrdenDetalleController extends Controller
                 ->where('id', $ordenId)
                 ->firstOrFail();
 
-            $detalle = OrdenDetalle::with('producto')
+            $detalle = OrdenDetalle::with('producto.categoria')
                 ->where('orden_id', $orden->id)
                 ->where('id', $detalleId)
                 ->firstOrFail();
@@ -391,10 +395,12 @@ class OrdenDetalleController extends Controller
                 'data'    => [
                     'id'      => $detalle->id,
                     'producto'=> $detalle->producto ? [
-                        'id'          => $detalle->producto->id,
-                        'nombre'      => $detalle->producto->nombre,
-                        'descripcion' => $detalle->producto->descripcion,
-                        'precio'      => (float) $detalle->producto->precio,
+                        'id'           => $detalle->producto->id,
+                        'nombre'       => $detalle->producto->nombre,
+                        'descripcion'  => $detalle->producto->descripcion,
+                        'precio'       => (float) $detalle->producto->precio,
+                        'categoria_id' => $detalle->producto->categoria_id,
+                        'categoria'    => $detalle->producto->categoria?->nombre,
                     ] : null,
                     'cantidad'            => $detalle->cantidad,
                     'precio_unitario'     => (float) $detalle->precio_unitario,

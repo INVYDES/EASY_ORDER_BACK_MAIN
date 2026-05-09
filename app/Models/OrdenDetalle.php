@@ -33,16 +33,16 @@ class OrdenDetalle extends Model {
     /**
      * RELACIONES
      */
+    
     public function orden()
     {
         return $this->belongsTo(Orden::class);
     }
 
-    public function producto()
-    {
-        return $this->belongsTo(Producto::class);
-    }
-
+   public function producto()
+{
+    return $this->belongsTo(Producto::class)->with('categoria'); // 👈 Agrega with
+}
     public function paquete()
     {
         return $this->belongsTo(Paquete::class);
