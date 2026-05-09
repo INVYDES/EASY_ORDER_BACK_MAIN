@@ -10,6 +10,7 @@ use App\Models\Categoria;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class ProductoController extends Controller

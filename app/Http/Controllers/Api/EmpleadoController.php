@@ -70,62 +70,69 @@ class EmpleadoController extends Controller
      * Listar personal del restaurante
      * GET /api/empleados
      */
-    public function index(Request $request)
-    {
-        try {
-            $user = $request->user();
-            $restauranteId = (int) $this->getRestauranteId($user);
+   public function index(Request $request)
+{
+    try {
+        $user = $request->user();
+        $restauranteId = (int) $this->getRestauranteId($user);
 
-            if (empty($restauranteId)) {
-                return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
-            }
-
-            $query = $this->empleadosBaseQuery($restauranteId)->with(['roles']);
-
-            if ($request->filled('puesto')) {
-                $rn = $this->mapPuestoToRole($request->puesto);
-                if ($rn) {
-                    $query->whereHas('roles', fn ($q) => $q->where('nombre', $rn));
-                }
-            }
-
-            if ($request->filled('nombre')) {
-                $query->where('name', 'LIKE', '%' . $request->nombre . '%');
-            }
-
-            if ($request->has('activo')) {
-                $query->where('activo', filter_var($request->activo, FILTER_VALIDATE_BOOLEAN));
-            }
-
-            $empleados = $query->orderBy('created_at', 'desc')->get()->map(function (User $u) {
-                $staffRole = $u->roles->first(fn ($r) => in_array($r->nombre, $this->staffRoleNombres(), true));
-
-                return [
-                    'id' => $u->id,
-                    'name' => $u->name,
-                    'email' => $u->email,
-                    'username' => $u->username,
-                    'activo' => (bool) $u->activo,
-                    'puesto' => $staffRole ? strtolower($staffRole->nombre) : null,
-                    'tipo_empleado' => $u->tipo_empleado,
-                    'salario_base' => $u->salario_base,
-                    'salario_por_hora' => $u->salario_por_hora,
-                    'comision_por_venta' => $u->comision_por_venta,
-                    'fecha_contratacion' => $u->fecha_contratacion,
-                    'roles' => $u->roles,
-                    'created_at' => $u->created_at,
-                    'updated_at' => $u->updated_at,
-                ];
-            });
-
-            return response()->json([
-                'success' => true,
-                'data' => $empleados,
-            ]);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        if (empty($restauranteId)) {
+            return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
         }
+
+        $query = $this->empleadosBaseQuery($restauranteId)->with(['roles', 'restauranteActivo']);
+
+        if ($request->filled('puesto')) {
+            $rn = $this->mapPuestoToRole($request->puesto);
+            if ($rn) {
+                $query->whereHas('roles', fn ($q) => $q->where('nombre', $rn));
+            }
+        }
+
+        if ($request->filled('nombre')) {
+            $query->where('name', 'LIKE', '%' . $request->nombre . '%');
+        }
+
+        if ($request->has('activo')) {
+            $query->where('activo', filter_var($request->activo, FILTER_VALIDATE_BOOLEAN));
+        }
+
+        $empleados = $query->orderBy('created_at', 'desc')->get()->map(function (User $u) {
+            $staffRole = $u->roles->first(fn ($r) => in_array($r->nombre, $this->staffRoleNombres(), true));
+
+            return [
+                'id'                 => $u->id,
+                'name'               => $u->name,
+                'email'              => $u->email,
+                'username'           => $u->username,
+                'activo'             => (bool) $u->activo,
+                'puesto'             => $staffRole ? strtolower($staffRole->nombre) : null,
+                'tipo_empleado'      => $u->tipo_empleado,
+                'salario_base'       => $u->salario_base,
+                'salario_por_hora'   => $u->salario_por_hora,
+                'comision_por_venta' => $u->comision_por_venta,
+                'fecha_contratacion' => $u->fecha_contratacion,
+                'roles'              => $u->roles->map(fn($r) => [
+                    'id'     => $r->id,
+                    'nombre' => $r->nombre,
+                ]),
+                'restaurante_activo' => $u->restauranteActivo ? [
+                    'id'     => $u->restauranteActivo->id,
+                    'nombre' => $u->restauranteActivo->nombre,
+                ] : null,
+                'created_at'         => $u->created_at,
+                'updated_at'         => $u->updated_at,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data'    => $empleados,
+        ]);
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
     }
+}
 
     /**
      * Alta de personal
