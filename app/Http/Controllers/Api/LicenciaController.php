@@ -487,7 +487,19 @@ public function disponibles(Request $request)
             if ($eventType === 'BILLING.SUBSCRIPTION.ACTIVATED') {
                 $subscriptionId = $payload['resource']['id'] ?? null;
                 if ($subscriptionId) {
-                    PropietarioLicencia::where('paypal_subscription_id', $subscriptionId)->update(['estado' => 'ACTIVA']);
+                    // 🔒 SEGURIDAD: Verificar con la API de PayPal antes de activar
+                    $accessToken = $this->getPayPalAccessToken();
+                    $response = Http::withToken($accessToken)
+                        ->get(env('PAYPAL_MODE') === 'sandbox'
+                            ? "https://api-m.sandbox.paypal.com/v1/billing/subscriptions/{$subscriptionId}"
+                            : "https://api-m.paypal.com/v1/billing/subscriptions/{$subscriptionId}");
+
+                    if ($response->successful() && $response->json()['status'] === 'ACTIVE') {
+                        PropietarioLicencia::where('paypal_subscription_id', $subscriptionId)->update(['estado' => 'ACTIVA']);
+                        Log::info('Suscripción PayPal verificada y activada', ['sub_id' => $subscriptionId]);
+                    } else {
+                        Log::warning('Intento de activar suscripción PayPal no verificada', ['payload' => $payload]);
+                    }
                 }
             }
 

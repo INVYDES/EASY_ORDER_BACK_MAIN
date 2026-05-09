@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Requests\VentasReporteRequest;
 use Illuminate\Http\JsonResponse;
 use App\Models\Orden;
 use App\Models\Producto;
@@ -19,7 +19,7 @@ class ReporteController extends Controller
     // VENTAS POR PERÍODO
     // ─────────────────────────────────────────────────────────────────────────
 
-    public function ventasPorPeriodo(Request $request): JsonResponse
+    public function ventasPorPeriodo(VentasReporteRequest $request): JsonResponse
     {
         try {
             $restauranteActivo = app('restaurante_activo');
@@ -163,62 +163,7 @@ class ReporteController extends Controller
         return $this->productosMasVendidos($request);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // PRODUCTOS CON MAYOR MARGEN PERO MENOS VENDIDOS
-    // ─────────────────────────────────────────────────────────────────────────
-
-    public function productosMayorMargenMenosVendidos(Request $request): JsonResponse
-    {
-        try {
-            $restauranteActivo = app('restaurante_activo');
-
-            $request->validate([
-                'fecha_inicio' => 'sometimes|date',
-                'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
-                'limite'       => 'sometimes|integer|min:1|max:500',
-            ]);
-
-            $limite = min(max((int) $request->get('limite', 20), 1), 500);
-            $query  = $this->baseDetallesQuery($restauranteActivo->id, $request);
-
-            $top5Ids = (clone $query)
-                ->select('productos.id', DB::raw('SUM(orden_detalles.cantidad) as total_vendido'))
-                ->groupBy('productos.id')
-                ->orderByDesc('total_vendido')
-                ->limit(5)
-                ->pluck('productos.id')
-                ->toArray();
-
-            $productos = (clone $query)
-                ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
-                ->select(
-                    'productos.id',
-                    'productos.nombre',
-                    DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
-                    'productos.precio',
-                    'productos.minutos_produccion',
-                    DB::raw('SUM(orden_detalles.cantidad) as total_vendido'),
-                    DB::raw('SUM(orden_detalles.subtotal) as total_ventas')
-                )
-                ->whereNotIn('productos.id', $top5Ids)
-                ->groupBy(
-                    'productos.id', 'productos.nombre', 'categorias.nombre',
-                    'productos.precio', 'productos.minutos_produccion'
-                )
-                ->orderByDesc('productos.precio')
-                ->limit($limite)
-                ->get();
-
-            return response()->json([
-                'success' => true,
-                'warning' => 'La BD no tiene columna costo. Se muestra precio como referencia de valor.',
-                'data'    => $productos,
-            ]);
-
-        } catch (\Exception $e) {
-            return $this->error('Error al generar reporte de productos menos vendidos', $e);
-        }
-    }
+ 
 
     // ─────────────────────────────────────────────────────────────────────────
     // TIEMPO PROMEDIO DE PREPARACIÓN
@@ -337,100 +282,143 @@ class ReporteController extends Controller
         return $this->productosConRetrasoPreparacion($request);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // RECOMENDACIÓN DE PAQUETE ESTRATÉGICO
-    // ─────────────────────────────────────────────────────────────────────────
+   // ─────────────────────────────────────────────────────────────────────────
+// RECOMENDACIÓN DE PAQUETE ESTRATÉGICO
+// Ruta: GET /api/reportes/paquete-recomendado
+// ─────────────────────────────────────────────────────────────────────────
 
-    public function recomendacionPaquete(Request $request): JsonResponse
-    {
-        try {
-            $restauranteActivo = app('restaurante_activo');
+public function recomendacionPaquete(Request $request): JsonResponse
+{
+    try {
+        $restauranteActivo = app('restaurante_activo');
 
-            $request->validate([
-                'fecha_inicio' => 'sometimes|date',
-                'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
-            ]);
+        $request->validate([
+            'fecha_inicio' => 'sometimes|date',
+            'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
+        ]);
 
-            $categoriasCocina = ['cocina'];
-            $categoriasBebida = ['barra'];
-            $categoriasPostre = ['postres'];
+        $categoriasCocina = ['cocina'];
+        $categoriasBebida = ['barra'];
+        $categoriasPostre = ['postres'];
 
-            $query = $this->baseDetallesQuery($restauranteActivo->id, $request)
-                ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id');
+        $query = $this->baseDetallesQuery($restauranteActivo->id, $request)
+            ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id');
 
-            $top10Ids = (clone $query)
-                ->select('productos.id', DB::raw('SUM(orden_detalles.cantidad) as total_vendido'))
-                ->groupBy('productos.id')
-                ->orderByDesc('total_vendido')
-                ->limit(10)
-                ->pluck('productos.id')
-                ->toArray();
+        // Top 10 más vendidos para excluirlos del platillo principal
+        $top10Ids = (clone $query)
+            ->select('productos.id', DB::raw('SUM(orden_detalles.cantidad) as total_vendido'))
+            ->groupBy('productos.id')
+            ->orderByDesc('total_vendido')
+            ->limit(10)
+            ->pluck('productos.id')
+            ->toArray();
 
-            $camposProducto = [
-                'productos.id',
-                'productos.nombre',
-                DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
-                'productos.precio',
-                DB::raw('SUM(orden_detalles.cantidad) as total_vendido'),
-            ];
+        $camposProducto = [
+            'productos.id',
+            'productos.nombre',
+            DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
+            'productos.precio',
+            'productos.costo',
+            DB::raw('ROUND(productos.precio - COALESCE(productos.costo, 0), 2) as utilidad_unitaria'),
+            DB::raw('ROUND(
+                ((productos.precio - COALESCE(productos.costo, 0)) / NULLIF(productos.precio, 0)) * 100
+            , 2) as margen_pct'),
+            DB::raw('SUM(orden_detalles.cantidad) as total_vendido'),
+            DB::raw('SUM(orden_detalles.subtotal) as total_ventas'),
+        ];
 
-            $groupByBase = ['productos.id', 'productos.nombre', 'categorias.nombre', 'productos.precio'];
+        $groupByBase = [
+            'productos.id',
+            'productos.nombre',
+            'categorias.nombre',
+            'productos.precio',
+            'productos.costo',
+        ];
 
-            $platillo = (clone $query)
-                ->select($camposProducto)
-                ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasCocina)
-                ->whereNotIn('productos.id', $top10Ids)
-                ->groupBy($groupByBase)
-                ->orderByDesc('productos.precio')
-                ->first();
+        // Platillo: mayor margen real fuera del top 10 (antes era mayor precio)
+        $platillo = (clone $query)
+            ->select($camposProducto)
+            ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasCocina)
+            ->whereNotIn('productos.id', $top10Ids)
+            ->groupBy($groupByBase)
+            ->orderByDesc(DB::raw('productos.precio - COALESCE(productos.costo, 0)'))
+            ->first();
 
-            $bebida = (clone $query)
-                ->select($camposProducto)
-                ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasBebida)
-                ->groupBy($groupByBase)
-                ->orderByDesc('total_vendido')
-                ->first();
+        // Bebida: más vendida (sin cambio, ya era correcto)
+        $bebida = (clone $query)
+            ->select($camposProducto)
+            ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasBebida)
+            ->groupBy($groupByBase)
+            ->orderByDesc('total_vendido')
+            ->first();
 
-            $postre = (clone $query)
-                ->select($camposProducto)
-                ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasPostre)
-                ->groupBy($groupByBase)
-                ->having('total_vendido', '>', 0)
-                ->orderBy('total_vendido')
-                ->first();
+        // Postre: mayor margen con baja rotación (antes era menor rotación sin considerar margen)
+        $postre = (clone $query)
+            ->select($camposProducto)
+            ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasPostre)
+            ->groupBy($groupByBase)
+            ->having('total_vendido', '>', 0)
+            ->orderByDesc(DB::raw('productos.precio - COALESCE(productos.costo, 0)'))
+            ->orderBy('total_vendido')
+            ->first();
 
-            $precioSuma     = ($platillo->precio ?? 0) + ($bebida->precio ?? 0) + ($postre->precio ?? 0);
-            $precioSugerido = round($precioSuma * 0.90, 2);
+        // Precios e indicadores del paquete
+        $precioSuma        = round(($platillo->precio ?? 0) + ($bebida->precio ?? 0) + ($postre->precio ?? 0), 2);
+        $costoSuma         = round(($platillo->costo ?? 0)  + ($bebida->costo ?? 0)  + ($postre->costo ?? 0), 2);
+        $precioSugerido    = round($precioSuma * 0.90, 2);
+        $utilidadPaquete   = round($precioSugerido - $costoSuma, 2);
+        $margenPaquete     = $precioSugerido > 0
+            ? round(($utilidadPaquete / $precioSugerido) * 100, 2)
+            : 0;
 
-            $justificacion = sprintf(
-                'Combinar "%s" (mayor precio fuera del top 10) con "%s" (bebida #1 en ventas) y "%s" '
-                . '(postre de menor rotación). Precio sugerido $%s con 10%% de descuento sobre suma individual ($%s).',
-                $platillo->nombre ?? 'N/D',
-                $bebida->nombre   ?? 'N/D',
-                $postre->nombre   ?? 'N/D',
-                number_format($precioSugerido, 2),
-                number_format($precioSuma, 2)
-            );
+        // Semáforo de rentabilidad del paquete
+        $semaforo = match (true) {
+            $margenPaquete >= 50 => 'verde',
+            $margenPaquete >= 30 => 'amarillo',
+            default              => 'rojo',
+        };
 
-            return response()->json([
-                'success' => true,
-                'data'    => [
-                    'paquete' => [
-                        'platillo_cocina'      => $platillo,
-                        'bebida_top'           => $bebida,
-                        'postre_menos_vendido' => $postre,
-                    ],
-                    'precio_individual_suma'  => round($precioSuma, 2),
-                    'precio_sugerido_paquete' => $precioSugerido,
-                    'descuento_aplicado_pct'  => 10,
-                    'justificacion'           => $justificacion,
+        $justificacion = sprintf(
+            'Combinar "%s" (mayor margen fuera del top 10, %.1f%%) con "%s" '
+            . '(bebida #1 en ventas) y "%s" (postre mayor margen / menor rotación, %.1f%%). '
+            . 'Precio sugerido $%s con 10%% de descuento sobre suma individual ($%s). '
+            . 'Utilidad estimada por paquete: $%s (margen %s%%).',
+            $platillo->nombre  ?? 'N/D',
+            $platillo->margen_pct ?? 0,
+            $bebida->nombre    ?? 'N/D',
+            $postre->nombre    ?? 'N/D',
+            $postre->margen_pct ?? 0,
+            number_format($precioSugerido, 2),
+            number_format($precioSuma, 2),
+            number_format($utilidadPaquete, 2),
+            $margenPaquete
+        );
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'paquete' => [
+                    'platillo_cocina'      => $platillo,
+                    'bebida_top'           => $bebida,
+                    'postre_menos_vendido' => $postre,
                 ],
-            ]);
+                'financiero' => [
+                    'precio_individual_suma'  => $precioSuma,
+                    'costo_total_paquete'     => $costoSuma,
+                    'precio_sugerido_paquete' => $precioSugerido,
+                    'utilidad_por_paquete'    => $utilidadPaquete,
+                    'margen_paquete_pct'      => $margenPaquete,
+                    'descuento_aplicado_pct'  => 10,
+                    'semaforo_rentabilidad'   => $semaforo,
+                ],
+                'justificacion' => $justificacion,
+            ],
+        ]);
 
-        } catch (\Exception $e) {
-            return $this->error('Error al generar recomendación de paquete', $e);
-        }
+    } catch (\Exception $e) {
+        return $this->error('Error al generar recomendación de paquete', $e);
     }
+}
 
     // ─────────────────────────────────────────────────────────────────────────
     // VENTAS POR CANAL
@@ -893,8 +881,143 @@ class ReporteController extends Controller
         } catch (\Exception $e) {
             return $this->error('Error al generar reporte financiero', $e);
         }
-    }
+    }// ─────────────────────────────────────────────────────────────────────────
+// BAJO STOCK
+// Ruta: GET /api/reportes/bajo-stock
+// ─────────────────────────────────────────────────────────────────────────
 
+public function bajoStock(Request $request): JsonResponse
+{
+    try {
+        $restauranteActivo = app('restaurante_activo');
+
+        $request->validate([
+            'limite' => 'sometimes|integer|min:1|max:200',
+        ]);
+
+        $limite = min(max((int) $request->get('limite', 20), 1), 200);
+
+        $productos = Producto::where('restaurante_id', $restauranteActivo->id)
+            ->where('activo', true)
+            ->whereNotNull('stock')
+            ->whereNotNull('stock_minimo')
+            ->whereColumn('stock', '<=', 'stock_minimo')
+            ->select(
+                'id',
+                'nombre',
+                'stock',
+                'stock_minimo',
+                DB::raw('(stock_minimo - stock) as unidades_faltantes'),
+                DB::raw('CASE
+                    WHEN stock = 0              THEN "critico"
+                    WHEN stock <= stock_minimo  THEN "bajo"
+                    ELSE "normal"
+                END as nivel_alerta')
+            )
+            ->orderByRaw('(stock_minimo - stock) DESC')
+            ->limit($limite)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'productos'      => $productos,
+                'total_alertas'  => $productos->count(),
+                'criticos'       => $productos->where('nivel_alerta', 'critico')->count(),
+                'bajos'          => $productos->where('nivel_alerta', 'bajo')->count(),
+                'hora_consulta'  => now()->format('H:i:s'),
+            ],
+        ]);
+
+    } catch (\Exception $e) {
+        return $this->error('Error al consultar productos bajo stock', $e);
+    }
+}
+// ─────────────────────────────────────────────────────────────────────────
+// PRODUCTOS CON MAYOR MARGEN PERO MENOS VENDIDOS
+// ─────────────────────────────────────────────────────────────────────────
+
+public function productosMayorMargenMenosVendidos(Request $request): JsonResponse
+{
+    try {
+        $restauranteActivo = app('restaurante_activo');
+
+        $request->validate([
+            'fecha_inicio' => 'sometimes|date',
+            'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
+            'limite'       => 'sometimes|integer|min:1|max:500',
+        ]);
+
+        $limite = min(max((int) $request->get('limite', 20), 1), 500);
+        $query  = $this->baseDetallesQuery($restauranteActivo->id, $request);
+
+        // Excluir el top 5 más vendidos
+        $top5Ids = (clone $query)
+            ->select('productos.id', DB::raw('SUM(orden_detalles.cantidad) as total_vendido'))
+            ->groupBy('productos.id')
+            ->orderByDesc('total_vendido')
+            ->limit(5)
+            ->pluck('productos.id')
+            ->toArray();
+
+        $productos = (clone $query)
+            ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
+            ->select(
+                'productos.id',
+                'productos.nombre',
+                DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
+                'productos.precio',
+                'productos.costo',
+                'productos.minutos_produccion',
+                // Margen real ahora que existe la columna costo
+                DB::raw('ROUND(productos.precio - COALESCE(productos.costo, 0), 2) as utilidad_unitaria'),
+                DB::raw('ROUND(
+                    ((productos.precio - COALESCE(productos.costo, 0)) / NULLIF(productos.precio, 0)) * 100
+                , 2) as margen_pct'),
+                DB::raw('CAST(SUM(orden_detalles.cantidad) AS UNSIGNED) as total_vendido'),
+                DB::raw('SUM(orden_detalles.subtotal) as total_ventas'),
+                // Utilidad total generada = (precio - costo) * unidades vendidas
+                DB::raw('ROUND(
+                    SUM(orden_detalles.cantidad) * (productos.precio - COALESCE(productos.costo, 0))
+                , 2) as utilidad_total_generada')
+            )
+            ->whereNotIn('productos.id', $top5Ids)
+            ->groupBy(
+                'productos.id',
+                'productos.nombre',
+                'categorias.nombre',
+                'productos.precio',
+                'productos.costo',
+                'productos.minutos_produccion'
+            )
+            ->orderByDesc('margen_pct')   // ordenar por mayor margen real
+            ->limit($limite)
+            ->get();
+
+        // Clasificar cada producto como "gema oculta" si margen > 40% y poco vendido
+        $productos = $productos->map(function ($p) {
+            $p->es_gema_oculta = ($p->margen_pct >= 40 && $p->total_vendido <= 10);
+            return $p;
+        });
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'productos'    => $productos,
+                'gemas_ocultas' => $productos->where('es_gema_oculta', true)->values(),
+                'resumen'      => [
+                    'total_productos'   => $productos->count(),
+                    'promedio_margen'   => round($productos->avg('margen_pct'), 2),
+                    'mayor_margen'      => $productos->max('margen_pct'),
+                    'total_gemas'       => $productos->where('es_gema_oculta', true)->count(),
+                ],
+            ],
+        ]);
+
+    } catch (\Exception $e) {
+        return $this->error('Error al generar reporte de productos menos vendidos', $e);
+    }
+}
     // ─────────────────────────────────────────────────────────────────────────
     // REPORTE PRODUCTOS
     // ─────────────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ use App\Models\Orden;
 use App\Models\OrdenDetalle;
 use App\Models\Producto;
 use App\Models\Paquete;
+use App\Http\Resources\OrdenResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -82,8 +83,7 @@ class OrdenController extends Controller
                 $query->orderBy('created_at', 'desc');
             }
 
-            $ordenes     = $query->paginate($perPage, ['*'], 'page', $page);
-            $ordenesData = $ordenes->map(fn($orden) => $this->transformarOrden($orden));
+            $ordenes = $query->paginate($perPage, ['*'], 'page', $page);
 
             $rid = $restauranteActivo->id;
             $hoy = now()->format('Y-m-d');
@@ -107,20 +107,10 @@ class OrdenController extends Controller
                 'ordenes_hoy'      => Orden::where('restaurante_id', $rid)->whereDate('created_at', $hoy)->count(),
             ];
 
-            return response()->json([
+            return OrdenResource::collection($ordenes)->additional([
                 'success'    => true,
                 'message'    => 'Órdenes obtenidas correctamente',
-                'data'       => $ordenesData,
-                'pagination' => [
-                    'current_page'  => $ordenes->currentPage(),
-                    'per_page'      => $ordenes->perPage(),
-                    'total'         => $ordenes->total(),
-                    'last_page'     => $ordenes->lastPage(),
-                    'from'          => $ordenes->firstItem(),
-                    'to'            => $ordenes->lastItem(),
-                    'next_page_url' => $ordenes->nextPageUrl(),
-                    'prev_page_url' => $ordenes->previousPageUrl(),
-                ],
+                'statistics' => $estadisticas,
                 'filters'    => [
                     'estado'      => $request->estado      ?? null,
                     'tipo_orden'  => $request->tipo_orden  ?? null,
@@ -131,7 +121,6 @@ class OrdenController extends Controller
                     'total_max'   => $request->total_max   ?? null,
                     'buscar'      => $request->buscar      ?? null,
                 ],
-                'estadisticas' => $estadisticas,
             ]);
 
         } catch (\Exception $e) {
@@ -1038,17 +1027,20 @@ class OrdenController extends Controller
     private function restaurarStockOrden(Orden $orden)
     {
         foreach ($orden->detalles as $detalle) {
-            $producto = $detalle->producto;
-            if ($producto && $producto->ingredientes->isNotEmpty()) {
-                foreach ($producto->ingredientes as $ingrediente) {
-                    $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (int) $detalle->cantidad;
-                    \App\Models\Ingrediente::where('id', $ingrediente->id)
-                        ->increment('stock_actual', $cantidadARestaurar);
+            // Solo restaurar si el producto ya había sido descontado (estaba en preparación o listo)
+            if (in_array($detalle->estado_preparacion, ['EN_PREPARACION', 'LISTO'])) {
+                $producto = $detalle->producto;
+                if ($producto && $producto->ingredientes->isNotEmpty()) {
+                    foreach ($producto->ingredientes as $ingrediente) {
+                        $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (int) $detalle->cantidad;
+                        \App\Models\Ingrediente::where('id', $ingrediente->id)
+                            ->increment('stock_actual', $cantidadARestaurar);
+                    }
+                    $producto->recalcularStockDesdeIngredientes();
+                } elseif ($producto) {
+                    \App\Models\Producto::where('id', $producto->id)
+                        ->increment('stock', $detalle->cantidad);
                 }
-                $producto->recalcularStockDesdeIngredientes();
-            } elseif ($producto) {
-                \App\Models\Producto::where('id', $producto->id)
-                    ->increment('stock', $detalle->cantidad);
             }
         }
     }

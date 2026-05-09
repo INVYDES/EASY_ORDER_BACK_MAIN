@@ -56,11 +56,11 @@ Route::prefix('')->group(function () {
     Route::post('/mercadopago/licencia-webhook', [LicenciaController::class, 'webhookMercadoPago']);
 
     // ========== CALLBACKS PAYPAL ==========
-   // ========== CALLBACKS PAYPAL ==========
-Route::get('/paypal/capturar',              [LicenciaPagoController::class, 'capturar']);
-Route::get('/paypal/cancelar',              [LicenciaPagoController::class, 'cancelar']);
-Route::get('/paypal/capture',               [PayPalController::class, 'captureOrder'])->name('paypal.capture');
-Route::get('/paypal/cancel',                [PayPalController::class, 'cancelOrder'])->name('paypal.cancel');
+    Route::get('/paypal/capturar', [LicenciaPagoController::class, 'capturar']);
+    Route::get('/paypal/cancelar', [LicenciaPagoController::class, 'cancelar']);
+    Route::get('/paypal/capture',  [PayPalController::class, 'captureOrder'])->name('paypal.capture');
+    Route::get('/paypal/cancel',   [PayPalController::class, 'cancelOrder'])->name('paypal.cancel');
+
     // ========== ANUNCIOS ==========
     Route::get('/anuncios',          [AnuncioController::class, 'indexPublic']);
     Route::get('/anuncios/vigentes', [AnuncioController::class, 'vigentesPublic']);
@@ -126,21 +126,20 @@ Route::middleware('auth:sanctum')->group(function () {
 */
 Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
- 
-       // ========== CAJA ==========
+    // ========== CAJA ==========
     Route::prefix('caja')->group(function () {
-        Route::get('/estado',                   [CajaController::class, 'estado'])->middleware('permission:VER_CAJA');
-        Route::post('/abrir',                   [CajaController::class, 'abrir'])->middleware('permission:ABRIR_CAJA');
-        Route::post('/cerrar',                  [CajaController::class, 'cerrar'])->middleware('permission:CERRAR_CAJA');
-        Route::get('/movimientos',              [CajaController::class, 'movimientos'])->middleware('permission:VER_CAJA');
-        Route::get('/movimientos-por-fecha',    [CajaController::class, 'movimientosPorFecha'])->middleware('permission:VER_CAJA');
-        Route::post('/movimientos',             [CajaController::class, 'registrarMovimiento'])->middleware('permission:EDITAR_CAJA');
-        Route::get('/corte',                    [CajaController::class, 'corte'])->middleware('permission:VER_CAJA');
-        Route::get('/historial',                [CajaController::class, 'historial'])->middleware('permission:VER_CAJA');
-        Route::get('/historial/{id}',           [CajaController::class, 'show'])->middleware('permission:VER_CAJA');
-        Route::post('/paypal/crear',            [CajaController::class, 'crearPagoPayPal'])->middleware('permission:CREAR_ORDENES');
-        Route::get('/paypal/capturar',          [CajaController::class, 'capturarPayPal']); // callback
-        Route::post('/mercadopago/crear',       [MercadoPagoController::class, 'crearPreferencia'])->middleware('permission:CREAR_ORDENES');
+        Route::get('/estado',                [CajaController::class, 'estado'])->middleware('permission:VER_CAJA');
+        Route::post('/abrir',                [CajaController::class, 'abrir'])->middleware('permission:ABRIR_CAJA');
+        Route::post('/cerrar',               [CajaController::class, 'cerrar'])->middleware('permission:CERRAR_CAJA');
+        Route::get('/movimientos',           [CajaController::class, 'movimientos'])->middleware('permission:VER_CAJA');
+        Route::get('/movimientos-por-fecha', [CajaController::class, 'movimientosPorFecha'])->middleware('permission:VER_CAJA');
+        Route::post('/movimientos',          [CajaController::class, 'registrarMovimiento'])->middleware('permission:EDITAR_CAJA');
+        Route::get('/corte',                 [CajaController::class, 'corte'])->middleware('permission:VER_CAJA');
+        Route::get('/historial',             [CajaController::class, 'historial'])->middleware('permission:VER_CAJA');
+        Route::get('/historial/{id}',        [CajaController::class, 'show'])->middleware('permission:VER_CAJA');
+        Route::post('/paypal/crear',         [CajaController::class, 'crearPagoPayPal'])->middleware('permission:CREAR_ORDENES');
+        Route::get('/paypal/capturar',       [CajaController::class, 'capturarPayPal']);
+        Route::post('/mercadopago/crear',    [MercadoPagoController::class, 'crearPreferencia'])->middleware('permission:CREAR_ORDENES');
     });
 
     // ========== RESTAURANTES ==========
@@ -167,13 +166,13 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     // ========== PROPIETARIO-LICENCIA ==========
     Route::prefix('propietario-licencias')->group(function () {
-        Route::get('/',                               [PropietarioLicenciaController::class, 'index'])->middleware('permission:VER_PROPIETARIO_LICENCIA');
-        Route::post('/',                              [PropietarioLicenciaController::class, 'store'])->middleware('permission:ASIGNAR_LICENCIA');
-        Route::get('/{propietarioLicencia}',          [PropietarioLicenciaController::class, 'show'])->middleware('permission:VER_PROPIETARIO_LICENCIA');
-        Route::put('/{propietarioLicencia}',          [PropietarioLicenciaController::class, 'update'])->middleware('permission:EDITAR_PROPIETARIO_LICENCIA');
-        Route::delete('/{propietarioLicencia}',       [PropietarioLicenciaController::class, 'destroy'])->middleware('permission:ELIMINAR_PROPIETARIO_LICENCIA');
-        Route::post('/{propietarioLicencia}/renovar', [PropietarioLicenciaController::class, 'renovar'])->middleware('permission:ASIGNAR_LICENCIA');
-        Route::post('/{propietarioLicencia}/cancelar',[PropietarioLicenciaController::class, 'cancelar'])->middleware('permission:EDITAR_PROPIETARIO_LICENCIA');
+        Route::get('/',                                [PropietarioLicenciaController::class, 'index'])->middleware('permission:VER_PROPIETARIO_LICENCIA');
+        Route::post('/',                               [PropietarioLicenciaController::class, 'store'])->middleware('permission:ASIGNAR_LICENCIA');
+        Route::get('/{propietarioLicencia}',           [PropietarioLicenciaController::class, 'show'])->middleware('permission:VER_PROPIETARIO_LICENCIA');
+        Route::put('/{propietarioLicencia}',           [PropietarioLicenciaController::class, 'update'])->middleware('permission:EDITAR_PROPIETARIO_LICENCIA');
+        Route::delete('/{propietarioLicencia}',        [PropietarioLicenciaController::class, 'destroy'])->middleware('permission:ELIMINAR_PROPIETARIO_LICENCIA');
+        Route::post('/{propietarioLicencia}/renovar',  [PropietarioLicenciaController::class, 'renovar'])->middleware('permission:ASIGNAR_LICENCIA');
+        Route::post('/{propietarioLicencia}/cancelar', [PropietarioLicenciaController::class, 'cancelar'])->middleware('permission:EDITAR_PROPIETARIO_LICENCIA');
     });
 
     // ========== LICENCIAS (ADMIN) ==========
@@ -189,16 +188,16 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     // ========== ROLES ==========
     Route::prefix('roles')->group(function () {
-        Route::get('/select-list',               [RoleController::class, 'selectList'])->middleware('permission:VER_ROLES');
-        Route::get('/available-permissions',     [RoleController::class, 'availablePermissions'])->middleware('permission:VER_ROLES');
-        Route::get('/',                          [RoleController::class, 'index'])->middleware('permission:VER_ROLES');
-        Route::post('/',                         [RoleController::class, 'store'])->middleware('permission:CREAR_ROLES');
-        Route::get('/{role}',                    [RoleController::class, 'show'])->middleware('permission:VER_ROLES');
-        Route::get('/{role}/users',              [RoleController::class, 'users'])->middleware('permission:VER_ROLES');
-        Route::put('/{role}',                    [RoleController::class, 'update'])->middleware('permission:EDITAR_ROLES');
-        Route::delete('/{role}',                 [RoleController::class, 'destroy'])->middleware('permission:ELIMINAR_ROLES');
-        Route::post('/{role}/assign-permissions',[RoleController::class, 'assignPermissions'])->middleware('permission:EDITAR_ROLES');
-        Route::post('/{role}/remove-permissions',[RoleController::class, 'removePermissions'])->middleware('permission:EDITAR_ROLES');
+        Route::get('/select-list',                [RoleController::class, 'selectList'])->middleware('permission:VER_ROLES');
+        Route::get('/available-permissions',      [RoleController::class, 'availablePermissions'])->middleware('permission:VER_ROLES');
+        Route::get('/',                           [RoleController::class, 'index'])->middleware('permission:VER_ROLES');
+        Route::post('/',                          [RoleController::class, 'store'])->middleware('permission:CREAR_ROLES');
+        Route::get('/{role}',                     [RoleController::class, 'show'])->middleware('permission:VER_ROLES');
+        Route::get('/{role}/users',               [RoleController::class, 'users'])->middleware('permission:VER_ROLES');
+        Route::put('/{role}',                     [RoleController::class, 'update'])->middleware('permission:EDITAR_ROLES');
+        Route::delete('/{role}',                  [RoleController::class, 'destroy'])->middleware('permission:ELIMINAR_ROLES');
+        Route::post('/{role}/assign-permissions', [RoleController::class, 'assignPermissions'])->middleware('permission:EDITAR_ROLES');
+        Route::post('/{role}/remove-permissions', [RoleController::class, 'removePermissions'])->middleware('permission:EDITAR_ROLES');
     });
 
     // ========== PERMISOS ==========
@@ -215,16 +214,16 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     // ========== PRODUCTOS ==========
     Route::prefix('productos')->group(function () {
-        Route::get('/select-list',                    [ProductoController::class, 'selectList'])->middleware('permission:VER_PRODUCTOS');
-        Route::get('/bajo-stock',                     [ProductoController::class, 'bajoStock'])->middleware('permission:VER_PRODUCTOS');
-        Route::post('/import',                        [ProductoController::class, 'import'])->middleware('permission:CREAR_PRODUCTOS');
-        Route::get('/',                               [ProductoController::class, 'index'])->middleware('permission:VER_PRODUCTOS');
-        Route::post('/',                              [ProductoController::class, 'store'])->middleware('permission:CREAR_PRODUCTOS');
-        Route::get('/{producto}',                     [ProductoController::class, 'show'])->middleware('permission:VER_PRODUCTOS');
-        Route::put('/{producto}',                     [ProductoController::class, 'update'])->middleware('permission:EDITAR_PRODUCTOS');
-        Route::delete('/{producto}',                  [ProductoController::class, 'destroy'])->middleware('permission:ELIMINAR_PRODUCTOS');
-        Route::patch('/{producto}/toggle-active',     [ProductoController::class, 'toggleActive'])->middleware('permission:EDITAR_PRODUCTOS');
-        Route::post('/{producto}/ajustar-stock',      [ProductoController::class, 'ajustarStock'])->middleware('permission:EDITAR_PRODUCTOS');
+        Route::get('/select-list',                 [ProductoController::class, 'selectList'])->middleware('permission:VER_PRODUCTOS');
+        Route::get('/bajo-stock',                  [ProductoController::class, 'bajoStock'])->middleware('permission:VER_PRODUCTOS');
+        Route::post('/import',                     [ProductoController::class, 'import'])->middleware('permission:CREAR_PRODUCTOS');
+        Route::get('/',                            [ProductoController::class, 'index'])->middleware('permission:VER_PRODUCTOS');
+        Route::post('/',                           [ProductoController::class, 'store'])->middleware('permission:CREAR_PRODUCTOS');
+        Route::get('/{producto}',                  [ProductoController::class, 'show'])->middleware('permission:VER_PRODUCTOS');
+        Route::put('/{producto}',                  [ProductoController::class, 'update'])->middleware('permission:EDITAR_PRODUCTOS');
+        Route::delete('/{producto}',               [ProductoController::class, 'destroy'])->middleware('permission:ELIMINAR_PRODUCTOS');
+        Route::patch('/{producto}/toggle-active',  [ProductoController::class, 'toggleActive'])->middleware('permission:EDITAR_PRODUCTOS');
+        Route::post('/{producto}/ajustar-stock',   [ProductoController::class, 'ajustarStock'])->middleware('permission:EDITAR_PRODUCTOS');
     });
 
     // ========== PAQUETES ==========
@@ -273,12 +272,12 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     // ========== ANUNCIOS (ADMIN) ==========
     Route::prefix('admin/anuncios')->group(function () {
-        Route::get('/',        [AnuncioController::class, 'index'])->middleware('permission:VER_RESTAURANTE');
-        Route::post('/',       [AnuncioController::class, 'store'])->middleware('permission:EDITAR_RESTAURANTE');
-        Route::put('/{id}',    [AnuncioController::class, 'update'])->middleware('permission:EDITAR_RESTAURANTE');
-        Route::delete('/{id}', [AnuncioController::class, 'destroy'])->middleware('permission:EDITAR_RESTAURANTE');
-        Route::patch('/{id}/toggle', [AnuncioController::class, 'toggleActivo'])->middleware('permission:EDITAR_RESTAURANTE');
-Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('permission:EDITAR_RESTAURANTE');
+        Route::get('/',               [AnuncioController::class, 'index'])->middleware('permission:VER_RESTAURANTE');
+        Route::post('/',              [AnuncioController::class, 'store'])->middleware('permission:EDITAR_RESTAURANTE');
+        Route::put('/{id}',           [AnuncioController::class, 'update'])->middleware('permission:EDITAR_RESTAURANTE');
+        Route::delete('/{id}',        [AnuncioController::class, 'destroy'])->middleware('permission:EDITAR_RESTAURANTE');
+        Route::patch('/{id}/toggle',  [AnuncioController::class, 'toggleActivo'])->middleware('permission:EDITAR_RESTAURANTE');
+        Route::post('/reordenar',     [AnuncioController::class, 'reordenar'])->middleware('permission:EDITAR_RESTAURANTE');
     });
 
     // ========== ÓRDENES ==========
@@ -309,47 +308,42 @@ Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('
 
     // ========== CLIENTES ==========
     Route::prefix('clientes')->group(function () {
-        Route::get('/select-list',        [ClienteController::class, 'selectList'])->middleware('permission:VER_CLIENTES');
-        Route::get('/',                   [ClienteController::class, 'index'])->middleware('permission:VER_CLIENTES');
-        Route::post('/',                  [ClienteController::class, 'store'])->middleware('permission:CREAR_CLIENTES');
-        Route::get('/{cliente}',          [ClienteController::class, 'show'])->middleware('permission:VER_CLIENTE');
-        Route::get('/{cliente}/historial',[ClienteController::class, 'historial'])->middleware('permission:VER_HISTORIAL_CLIENTE');
-        Route::put('/{cliente}',          [ClienteController::class, 'update'])->middleware('permission:EDITAR_CLIENTES');
-        Route::delete('/{cliente}',       [ClienteController::class, 'destroy'])->middleware('permission:ELIMINAR_CLIENTES');
+        Route::get('/select-list',         [ClienteController::class, 'selectList'])->middleware('permission:VER_CLIENTES');
+        Route::get('/',                    [ClienteController::class, 'index'])->middleware('permission:VER_CLIENTES');
+        Route::post('/',                   [ClienteController::class, 'store'])->middleware('permission:CREAR_CLIENTES');
+        Route::get('/{cliente}',           [ClienteController::class, 'show'])->middleware('permission:VER_CLIENTE');
+        Route::get('/{cliente}/historial', [ClienteController::class, 'historial'])->middleware('permission:VER_HISTORIAL_CLIENTE');
+        Route::put('/{cliente}',           [ClienteController::class, 'update'])->middleware('permission:EDITAR_CLIENTES');
+        Route::delete('/{cliente}',        [ClienteController::class, 'destroy'])->middleware('permission:ELIMINAR_CLIENTES');
     });
 
     // ========== REPORTES ==========
     Route::prefix('reportes')->middleware('permission:VER_REPORTES')->group(function () {
-
-        // ── Rutas principales ────────────────────────────────────────────────
-        Route::get('/ventas',                [ReporteController::class, 'ventasPorPeriodo']);
-        Route::get('/productos-mas-vendidos',[ReporteController::class, 'productosMasVendidos']);
-        Route::get('/productos-mayor-margen',[ReporteController::class, 'productosMayorMargenMenosVendidos']);
-        Route::get('/clientes-frecuentes',   [ReporteController::class, 'clientesFrecuentes']);
-        Route::get('/dashboard',             [ReporteController::class, 'dashboard']);
-        Route::get('/financiero',            [ReporteController::class, 'reporteFinanciero']);
-        Route::get('/reporte-productos',     [ReporteController::class, 'reporteProductos']);
-        Route::get('/tiempos-preparacion',   [ReporteController::class, 'tiempoPromedioPreparacion']);
-        Route::get('/retrasos-preparacion',  [ReporteController::class, 'productosConRetrasoPreparacion']);
-        Route::get('/canal-ventas',          [ReporteController::class, 'ventasPorCanal']);
-        Route::get('/inversion-utilidad',    [ReporteController::class, 'inversionYUtilidad']);
-        Route::get('/propinas',              [ReporteController::class, 'totalPropinas']);
-        Route::get('/utilidad-dia',          [ReporteController::class, 'utilidadDiaAcumulada']);
-        Route::get('/paquete-recomendado',   [ReporteController::class, 'recomendacionPaquete']);
-        Route::get('/roi',                   [ReporteController::class, 'roiCompleto']);
-        Route::get('/roi/config',            [ReporteController::class, 'roiObtenerConfig']);
-        Route::put('/roi/config',            [ReporteController::class, 'roiGuardarConfig']);
+        Route::get('/ventas',                  [ReporteController::class, 'ventasPorPeriodo']);
+        Route::get('/productos-mas-vendidos',  [ReporteController::class, 'productosMasVendidos']);
+        Route::get('/productos-mayor-margen',  [ReporteController::class, 'productosMayorMargenMenosVendidos']);
+        Route::get('/clientes-frecuentes',     [ReporteController::class, 'clientesFrecuentes']);
+        Route::get('/dashboard',               [ReporteController::class, 'dashboard']);
+        Route::get('/financiero',              [ReporteController::class, 'reporteFinanciero']);
+        Route::get('/reporte-productos',       [ReporteController::class, 'reporteProductos']);
+        Route::get('/tiempos-preparacion',     [ReporteController::class, 'tiempoPromedioPreparacion']);
+        Route::get('/retrasos-preparacion',    [ReporteController::class, 'productosConRetrasoPreparacion']);
+        Route::get('/canal-ventas',            [ReporteController::class, 'ventasPorCanal']);
+        Route::get('/ventas-por-canal-tipo',   [ReporteController::class, 'ventasPorCanalTipo']);
+        Route::get('/bajo-stock',              [ReporteController::class, 'bajoStock']);   // ✅ fix: sin prefijo duplicado
+        Route::get('/inversion-utilidad',      [ReporteController::class, 'inversionYUtilidad']);
+        Route::get('/propinas',                [ReporteController::class, 'totalPropinas']);
+        Route::get('/utilidad-dia',            [ReporteController::class, 'utilidadDiaAcumulada']);
+        Route::get('/paquete-recomendado',     [ReporteController::class, 'recomendacionPaquete']);
+        Route::get('/roi',                     [ReporteController::class, 'roiCompleto']);
+        Route::get('/roi/config',              [ReporteController::class, 'roiObtenerConfig']);
+        Route::put('/roi/config',              [ReporteController::class, 'roiGuardarConfig']);
         Route::get('/download/{tipo}/{formato}', [ReporteController::class, 'download']);
-        Route::post('/exportar',             [ReporteController::class, 'exportar'])->middleware('permission:EXPORTAR_REPORTES');
-Route::get('/ventas-por-canal-tipo', [ReporteController::class, 'ventasPorCanalTipo']);
-        // ── ✅ ALIAS para rutas que pide el frontend ──────────────────────────
-        // GET /api/reportes/finanzas-dia  →  utilidadDiaAcumulada
+        Route::post('/exportar',               [ReporteController::class, 'exportar'])->middleware('permission:EXPORTAR_REPORTES');
+
+        // ── Alias para rutas que pide el frontend ──────────────────────────
         Route::get('/finanzas-dia',           [ReporteController::class, 'finanzasDia']);
-
-        // GET /api/reportes/rentabilidad-productos  →  productosMasVendidos
         Route::get('/rentabilidad-productos', [ReporteController::class, 'rentabilidadProductos']);
-
-        // GET /api/reportes/tiempos-rebase  →  productosConRetrasoPreparacion
         Route::get('/tiempos-rebase',         [ReporteController::class, 'tiemposRebase']);
     });
 
@@ -361,16 +355,18 @@ Route::get('/ventas-por-canal-tipo', [ReporteController::class, 'ventasPorCanalT
     });
 
     // ========== MESEROS ==========
-   // ========== MESEROS ==========
-Route::prefix('meseros')->group(function () {
-    Route::get('/',                         [MeseroController::class, 'index']);
-    Route::get('/mis-mesas',                [MeseroController::class, 'misMesas']);
-    Route::get('/mis-ordenes',              [MeseroController::class, 'misOrdenes']);
-    Route::post('/configurar-mesas',        [MeseroController::class, 'configurarTotalMesas']);
-    Route::post('/asignar-mesas',           [MeseroController::class, 'asignarMesas']);
-    Route::get('/metricas-ventas',          [MeseroController::class, 'metricasVentas']);
-    Route::get('/{id}/metricas-detalladas', [MeseroController::class, 'metricasDetalladas']);
-});
+    Route::prefix('meseros')->group(function () {
+        Route::get('/',                          [MeseroController::class, 'index']);
+        Route::get('/mis-mesas',                 [MeseroController::class, 'misMesas']);
+        Route::get('/mis-ordenes',               [MeseroController::class, 'misOrdenes']);
+        Route::get('/metricas-ventas',           [MeseroController::class, 'metricasVentas']);
+        Route::post('/configurar-mesas',         [MeseroController::class, 'configurarTotalMesas']);
+        Route::post('/asignar-mesas',            [MeseroController::class, 'asignarMesas']);
+        Route::post('/satisfaccion',             [MeseroController::class, 'registrarSatisfaccion']);        // ✅
+        Route::get('/satisfaccion/{userId}',     [MeseroController::class, 'getSatisfaccionMesero']);       // ✅
+        Route::patch('/reproceso/{detalleId}',   [MeseroController::class, 'marcarReproceso']);             // ✅ movido de kpis a meseros
+        Route::get('/{id}/metricas-detalladas',  [MeseroController::class, 'metricasDetalladas']);
+    });
 
     // ========== OFERTAS ==========
     Route::prefix('ofertas')->group(function () {
@@ -393,12 +389,12 @@ Route::prefix('meseros')->group(function () {
 
     // ========== EMPLEADOS ==========
     Route::prefix('empleados')->middleware('permission:VER_EMPLEADOS')->group(function () {
-        Route::get('/',                          [EmpleadoController::class, 'index']);
-        Route::post('/',                         [EmpleadoController::class, 'store']);
-        Route::get('/{empleado}',                [EmpleadoController::class, 'show']);
-        Route::put('/{empleado}',                [EmpleadoController::class, 'update']);
-        Route::patch('/{empleado}/toggle-activo',[EmpleadoController::class, 'toggleActivo']);
-        Route::delete('/{empleado}',             [EmpleadoController::class, 'destroy']);
+        Route::get('/',                           [EmpleadoController::class, 'index']);
+        Route::post('/',                          [EmpleadoController::class, 'store']);
+        Route::get('/{empleado}',                 [EmpleadoController::class, 'show']);
+        Route::put('/{empleado}',                 [EmpleadoController::class, 'update']);
+        Route::patch('/{empleado}/toggle-activo', [EmpleadoController::class, 'toggleActivo']);
+        Route::delete('/{empleado}',              [EmpleadoController::class, 'destroy']);
     });
 
     // ========== ASISTENCIAS ==========
@@ -406,53 +402,52 @@ Route::prefix('meseros')->group(function () {
         Route::get('/empleado/{empleado}', [EmpleadoController::class, 'getAsistencias']);
         Route::post('/',                   [EmpleadoController::class, 'registrarAsistencia']);
     });
-// ========== HORARIOS ==========
-Route::prefix('horarios')->middleware('permission:VER_EMPLEADOS')->group(function () {
-    Route::get('/',                     [HorarioController::class, 'index']);
-    Route::post('/',                    [HorarioController::class, 'store']);
-    Route::post('/copiar',              [HorarioController::class, 'copiar']);
-    Route::get('/empleado/{empleadoId}',[HorarioController::class, 'porEmpleado']);
-    Route::get('/{id}',                 [HorarioController::class, 'show']);
-    Route::put('/{id}',                 [HorarioController::class, 'update']);
-    Route::delete('/{id}',              [HorarioController::class, 'destroy']);
-});
 
-// ========== NÓMINAS ==========
-Route::prefix('nominas')->middleware('permission:VER_NOMINA')->group(function () {
-    // Rutas principales de nóminas
-    Route::get('/',                         [EmpleadoController::class, 'getNominas']);
-    Route::get('/resumen',                  [EmpleadoController::class, 'resumenNominas']);
-    Route::get('/{id}',                     [EmpleadoController::class, 'getNomina']);
-    Route::post('/generar',                 [EmpleadoController::class, 'generarNomina']);
-    Route::put('/{id}',                     [EmpleadoController::class, 'updateNomina']);
-    Route::put('/{id}/estado',              [EmpleadoController::class, 'actualizarEstadoNomina']);
-    Route::delete('/{id}',                  [EmpleadoController::class, 'deleteNomina']);
-    
-    // Rutas de detalles de nómina (anidadas dentro de nominas)
-    Route::prefix('{nominaId}/detalles')->group(function () {
-        Route::get('/',                     [NominaDetalleController::class, 'index']);
-        Route::post('/',                    [NominaDetalleController::class, 'store']);
-        Route::get('/{detalleId}',          [NominaDetalleController::class, 'show']);
-        Route::put('/{detalleId}',          [NominaDetalleController::class, 'update']);
-        Route::delete('/{detalleId}',       [NominaDetalleController::class, 'destroy']);
+    // ========== HORARIOS ==========
+    Route::prefix('horarios')->middleware('permission:VER_EMPLEADOS')->group(function () {
+        Route::get('/',                      [HorarioController::class, 'index']);
+        Route::post('/',                     [HorarioController::class, 'store']);
+        Route::post('/copiar',               [HorarioController::class, 'copiar']);
+        Route::get('/empleado/{empleadoId}', [HorarioController::class, 'porEmpleado']);
+        Route::get('/{id}',                  [HorarioController::class, 'show']);
+        Route::put('/{id}',                  [HorarioController::class, 'update']);
+        Route::delete('/{id}',               [HorarioController::class, 'destroy']);
     });
-});
 
-// ========== CONFIGURACIÓN NÓMINA ==========
-Route::prefix('nomina')->middleware('permission:VER_NOMINA')->group(function () {
-    Route::get('/configuracion',            [EmpleadoController::class, 'getConfiguracionNomina']);
-    Route::put('/configuracion',            [EmpleadoController::class, 'updateConfiguracionNomina']);
-});
+    // ========== NÓMINAS ==========
+    Route::prefix('nominas')->middleware('permission:VER_NOMINA')->group(function () {
+        Route::get('/',              [EmpleadoController::class, 'getNominas']);
+        Route::get('/resumen',       [EmpleadoController::class, 'resumenNominas']);
+        Route::post('/generar',      [EmpleadoController::class, 'generarNomina']);
+        Route::get('/{id}',          [EmpleadoController::class, 'getNomina']);
+        Route::put('/{id}',          [EmpleadoController::class, 'updateNomina']);
+        Route::put('/{id}/estado',   [EmpleadoController::class, 'actualizarEstadoNomina']);
+        Route::delete('/{id}',       [EmpleadoController::class, 'deleteNomina']);
 
-// ========== KPIs ==========
-Route::prefix('kpis')->middleware('permission:VER_REPORTES')->group(function () {
-    Route::get('/meseros',   [EmpleadoController::class, 'getKpiMeseros']);
-    Route::get('/cocina',    [EmpleadoController::class, 'getKpiCocina']);
-    Route::get('/cocina/retrasos',   [EmpleadoController::class, 'getKpiCocinaRetrasos']);
-    Route::get('/cocina/reprocesos', [EmpleadoController::class, 'getKpiCocinaReprocesos']);
-    Route::get('/admin',     [EmpleadoController::class, 'getKpiAdmin']);
-    Route::get('/dashboard', [EmpleadoController::class, 'getKpiDashboard']);
-});
+        Route::prefix('{nominaId}/detalles')->group(function () {
+            Route::get('/',                [NominaDetalleController::class, 'index']);
+            Route::post('/',               [NominaDetalleController::class, 'store']);
+            Route::get('/{detalleId}',     [NominaDetalleController::class, 'show']);
+            Route::put('/{detalleId}',     [NominaDetalleController::class, 'update']);
+            Route::delete('/{detalleId}',  [NominaDetalleController::class, 'destroy']);
+        });
+    });
+
+    // ========== CONFIGURACIÓN NÓMINA ==========
+    Route::prefix('nomina')->middleware('permission:VER_NOMINA')->group(function () {
+        Route::get('/configuracion', [EmpleadoController::class, 'getConfiguracionNomina']);
+        Route::put('/configuracion', [EmpleadoController::class, 'updateConfiguracionNomina']);
+    });
+
+    // ========== KPIs ==========
+    Route::prefix('kpis')->middleware('permission:VER_REPORTES')->group(function () {
+        Route::get('/meseros',           [EmpleadoController::class, 'getKpiMeseros']);
+        Route::get('/cocina',            [EmpleadoController::class, 'getKpiCocina']);
+        Route::get('/cocina/retrasos',   [EmpleadoController::class, 'getKpiCocinaRetrasos']);
+        Route::get('/cocina/reprocesos', [EmpleadoController::class, 'getKpiCocinaReprocesos']);  // ✅ sin el patch aquí
+        Route::get('/admin',             [EmpleadoController::class, 'getKpiAdmin']);
+        Route::get('/dashboard',         [EmpleadoController::class, 'getKpiDashboard']);
+    });
 
 });
 

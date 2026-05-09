@@ -3,7 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Requests\ProductoStoreRequest;
+use App\Http\Requests\ProductoUpdateRequest;
 use App\Models\Producto;
 use App\Models\Categoria;
 use Illuminate\Support\Facades\DB;
@@ -342,7 +343,7 @@ class ProductoController extends Controller
      * ACTIVIDAD 2: Si el usuario no asigna categoria_id, se busca o crea
      * automáticamente la categoría "Cocina" para el restaurante activo.
      */
-    public function store(Request $request)
+    public function store(ProductoStoreRequest $request)
     {
         try {
             $user = $request->user();
@@ -482,7 +483,7 @@ class ProductoController extends Controller
      * ACTIVIDAD 2: Si se envía categoria_id vacío/nulo, se asigna "Cocina"
      * en lugar de dejar el campo sin categoría.
      */
-    public function update(Request $request, $id)
+    public function update(ProductoUpdateRequest $request, $id)
     {
         try {
             $user = $request->user();

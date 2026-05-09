@@ -1160,8 +1160,32 @@ public function getKpiMeseros(Request $request)
                 $comisionEstimada = round($ventasReales * ($empleado->comision_por_venta / 100), 2);
             }
 
-            // Calcular satisfacción (si tuvieras encuestas, este es un placeholder)
-            $satisfaccion = null;
+        $satisfaccionStats = DB::table('satisfacciones')
+    ->where('user_id', $empleado->id)
+    ->where('restaurante_id', $restauranteId)
+    ->when($request->filled('fecha_desde'), fn($q) =>
+        $q->where('created_at', '>=', $request->fecha_desde . ' 00:00:00'))
+    ->when($request->filled('fecha_hasta'), fn($q) =>
+        $q->where('created_at', '<=', $request->fecha_hasta . ' 23:59:59'))
+    ->selectRaw('
+        COUNT(*) as total,
+        ROUND(AVG(calificacion), 2) as promedio,
+        SUM(CASE WHEN calificacion = 5 THEN 1 ELSE 0 END) as cinco_estrellas,
+        SUM(CASE WHEN calificacion = 1 THEN 1 ELSE 0 END) as una_estrella
+    ')
+    ->first();
+
+$satisfaccion = $satisfaccionStats->total > 0 ? [
+    'promedio'        => $satisfaccionStats->promedio,
+    'total'           => $satisfaccionStats->total,
+    'cinco_estrellas' => $satisfaccionStats->cinco_estrellas,
+    'una_estrella'    => $satisfaccionStats->una_estrella,
+    'semaforo'        => match(true) {
+        $satisfaccionStats->promedio >= 4.0 => 'verde',
+        $satisfaccionStats->promedio >= 3.0 => 'amarillo',
+        default                             => 'rojo',
+    },
+] : null;
 
             return [
                 'empleado' => $empleado->name,
@@ -1311,51 +1335,129 @@ public function getKpiCocina(Request $request)
                 $asistenciasQuery->whereDate('fecha', '<=', $request->fecha_hasta);
             }
 
-            $asistencias = $asistenciasQuery->get();
-            $horasTotales = $asistencias->sum('horas_trabajadas');
+            $asistencias   = $asistenciasQuery->get();
+            $horasTotales  = $asistencias->sum('horas_trabajadas');
+            $turnosTrabajados = $asistencias->count();
 
-            // ========== CALCULAR ÓRDENES COMPLETADAS POR COCINERO (REAL) ==========
-            $ordenesCompletadas = DB::table('orden_detalles as od')
+            // Items completados durante los turnos del cocinero
+            // (cruzando horarios de asistencia con updated_at de orden_detalles)
+            $itemsCompletados = DB::table('orden_detalles as od')
                 ->join('ordenes as o', 'o.id', '=', 'od.orden_id')
+                ->join('asistencias as a', function ($join) use ($empleado, $restauranteId) {
+                    $join->on('a.user_id', '=', DB::raw($empleado->id))
+                         ->on('a.fecha', '=', DB::raw('DATE(od.updated_at)'))
+                         ->where('a.restaurante_id', '=', $restauranteId);
+                })
                 ->where('o.restaurante_id', $restauranteId)
                 ->where('od.estado_preparacion', 'LISTO')
-                ->when($request->filled('fecha_desde'), fn($q) => 
+                ->when($request->filled('fecha_desde'), fn($q) =>
                     $q->whereDate('od.updated_at', '>=', $request->fecha_desde))
-                ->when($request->filled('fecha_hasta'), fn($q) => 
+                ->when($request->filled('fecha_hasta'), fn($q) =>
                     $q->whereDate('od.updated_at', '<=', $request->fecha_hasta))
                 ->count();
 
-            // ========== CALCULAR ÓRDENES POR HORA ==========
-            $ordenesPorHora = $horasTotales > 0 ? round($ordenesCompletadas / $horasTotales, 2) : 0;
+            // Tiempo promedio de preparación del cocinero
+            $tiempoPromedio = DB::table('orden_detalles as od')
+                ->join('ordenes as o', 'o.id', '=', 'od.orden_id')
+                ->join('asistencias as a', function ($join) use ($empleado, $restauranteId) {
+                    $join->on('a.user_id', '=', DB::raw($empleado->id))
+                         ->on('a.fecha', '=', DB::raw('DATE(od.updated_at)'))
+                         ->where('a.restaurante_id', '=', $restauranteId);
+                })
+                ->where('o.restaurante_id', $restauranteId)
+                ->whereIn('od.estado_preparacion', ['LISTO', 'ENTREGADO'])
+                ->when($request->filled('fecha_desde'), fn($q) =>
+                    $q->whereDate('od.updated_at', '>=', $request->fecha_desde))
+                ->when($request->filled('fecha_hasta'), fn($q) =>
+                    $q->whereDate('od.updated_at', '<=', $request->fecha_hasta))
+                ->avg(DB::raw('TIMESTAMPDIFF(MINUTE, od.created_at, od.updated_at)'));
+
+            // Reprocesos del cocinero
+            $reprocesos = DB::table('orden_detalles as od')
+                ->join('ordenes as o', 'o.id', '=', 'od.orden_id')
+                ->join('asistencias as a', function ($join) use ($empleado, $restauranteId) {
+                    $join->on('a.user_id', '=', DB::raw($empleado->id))
+                         ->on('a.fecha', '=', DB::raw('DATE(od.updated_at)'))
+                         ->where('a.restaurante_id', '=', $restauranteId);
+                })
+                ->where('o.restaurante_id', $restauranteId)
+                ->where('od.reprocesado', true)
+                ->when($request->filled('fecha_desde'), fn($q) =>
+                    $q->whereDate('od.updated_at', '>=', $request->fecha_desde))
+                ->when($request->filled('fecha_hasta'), fn($q) =>
+                    $q->whereDate('od.updated_at', '<=', $request->fecha_hasta))
+                ->count();
+
+            // Retrasos del cocinero
+            $retrasos = DB::table('orden_detalles as od')
+                ->join('ordenes as o', 'o.id', '=', 'od.orden_id')
+                ->join('productos as p', 'p.id', '=', 'od.producto_id')
+                ->join('asistencias as a', function ($join) use ($empleado, $restauranteId) {
+                    $join->on('a.user_id', '=', DB::raw($empleado->id))
+                         ->on('a.fecha', '=', DB::raw('DATE(od.updated_at)'))
+                         ->where('a.restaurante_id', '=', $restauranteId);
+                })
+                ->where('o.restaurante_id', $restauranteId)
+                ->whereIn('od.estado_preparacion', ['LISTO', 'ENTREGADO'])
+                ->whereRaw('TIMESTAMPDIFF(MINUTE, od.created_at, od.updated_at) > p.minutos_produccion')
+                ->when($request->filled('fecha_desde'), fn($q) =>
+                    $q->whereDate('od.updated_at', '>=', $request->fecha_desde))
+                ->when($request->filled('fecha_hasta'), fn($q) =>
+                    $q->whereDate('od.updated_at', '<=', $request->fecha_hasta))
+                ->count();
+
+            $ordenesPorHora      = $horasTotales > 0 ? round($itemsCompletados / $horasTotales, 2) : 0;
+            $eficiencia          = $itemsCompletados > 0
+                ? round((($itemsCompletados - $retrasos) / $itemsCompletados) * 100, 2)
+                : 0;
+            $pctReprocesos       = $itemsCompletados > 0
+                ? round(($reprocesos / $itemsCompletados) * 100, 2)
+                : 0;
+
+            $semaforo = match(true) {
+                $eficiencia >= 85 => 'verde',
+                $eficiencia >= 65 => 'amarillo',
+                default           => 'rojo',
+            };
 
             return [
-                'empleado' => $empleado->name,
-                'empleado_id' => $empleado->id,
-                'user_id' => $empleado->id,
-                'puesto' => 'cocina',
-                'tipo_empleado' => $empleado->tipo_empleado,
-                'horas_trabajadas' => round($horasTotales, 2),
-                'ordenes_completadas' => $ordenesCompletadas,
-                'ordenes_por_hora' => $ordenesPorHora,
-                'tiempo_promedio_preparacion' => null,
-                'retrasos' => 0,
-                'errores' => 0,
-                'desperdicio' => null,
+                'empleado_id'               => $empleado->id,
+                'empleado'                  => $empleado->name,
+                'puesto'                    => 'cocina',
+                'tipo_empleado'             => $empleado->tipo_empleado,
+                'horas_trabajadas'          => round($horasTotales, 2),
+                'turnos_trabajados'         => $turnosTrabajados,
+                'items_completados'         => $itemsCompletados,
+                'ordenes_por_hora'          => $ordenesPorHora,
+                'tiempo_promedio_min'       => $tiempoPromedio ? round($tiempoPromedio, 2) : null,
+                'retrasos'                  => $retrasos,
+                'reprocesos'                => $reprocesos,
+                'pct_reprocesos'            => $pctReprocesos,
+                'eficiencia_pct'            => $eficiencia,
+                'semaforo'                  => $semaforo,
             ];
         });
 
-        $totalOrdenes = $data->sum('ordenes_completadas');
-        $totalHoras = $data->sum('horas_trabajadas');
-        $promedioOrdenesHora = $totalHoras > 0 ? round($totalOrdenes / $totalHoras, 2) : 0;
+        $data = $data->sortByDesc('eficiencia_pct')->values();
 
         return response()->json([
             'success' => true,
             'data' => [
-                'cocina' => $data,
+                'cocina'  => $data,
                 'resumen' => [
-                    'total_ordenes' => $totalOrdenes,
-                    'total_horas' => round($totalHoras, 2),
-                    'promedio_ordenes_hora' => $promedioOrdenesHora,
+                    'total_cocineros'         => $data->count(),
+                    'total_items_completados' => $data->sum('items_completados'),
+                    'total_horas'             => round($data->sum('horas_trabajadas'), 2),
+                    'total_retrasos'          => $data->sum('retrasos'),
+                    'total_reprocesos'        => $data->sum('reprocesos'),
+                    'promedio_eficiencia_pct' => $data->count() > 0
+                        ? round($data->avg('eficiencia_pct'), 2) : 0,
+                    'promedio_ordenes_hora'   => $data->count() > 0
+                        ? round($data->avg('ordenes_por_hora'), 2) : 0,
+                    'periodo' => [
+                        'desde' => $request->fecha_desde,
+                        'hasta' => $request->fecha_hasta,
+                    ],
                 ],
             ],
         ]);
@@ -1437,7 +1539,7 @@ public function getKpiCocinaRetrasos(Request $request)
                     'total_items' => $totalItems,
                     'items_retrasados' => $itemsRetrasados,
                     'porcentaje_retrasos' => $porcentajeRetrasos,
-                    'semafoto' => $porcentajeRetrasos <= 10 ? 'verde' : ($porcentajeRetrasos <= 20 ? 'amarillo' : 'rojo'),
+                    'semaforo' => $porcentajeRetrasos <= 10 ? 'verde' : ($porcentajeRetrasos <= 20 ? 'amarillo' : 'rojo'),
                 ],
                 'por_estacion' => $retrasosPorEstacion,
                 'periodo' => [
@@ -1451,10 +1553,6 @@ public function getKpiCocinaRetrasos(Request $request)
         return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
     }
 }
-/**
- * GET /api/kpis/cocina/reprocesos
- * Porcentaje de platillos devueltos/reprocesados
- */
 public function getKpiCocinaReprocesos(Request $request)
 {
     try {
@@ -1465,34 +1563,80 @@ public function getKpiCocinaReprocesos(Request $request)
             return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
         }
 
-        // NOTA: Para reprocesos, necesitarías una tabla de devoluciones o un campo en orden_detalles
-        // Como no existe, este es un placeholder. Si tienes un campo "devuelto" o "reprocesado", ajústalo.
-        
-        // Placeholder: asumimos que reprocesos son detalles que volvieron a estado PENDIENTE después de estar LISTO
-        $query = DB::table('orden_detalles')
-            ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
-            ->where('ordenes.restaurante_id', $restauranteId);
+        $base = DB::table('orden_detalles as od')
+            ->join('ordenes as o', 'o.id', '=', 'od.orden_id')
+            ->join('productos as p', 'p.id', '=', 'od.producto_id')
+            ->leftJoin('categorias as c', 'c.id', '=', 'p.categoria_id')
+            ->where('o.restaurante_id', $restauranteId)
+            ->when($request->filled('fecha_desde'), fn($q) =>
+                $q->whereDate('od.created_at', '>=', $request->fecha_desde))
+            ->when($request->filled('fecha_hasta'), fn($q) =>
+                $q->whereDate('od.created_at', '<=', $request->fecha_hasta));
 
-        if ($request->filled('fecha_desde')) {
-            $query->whereDate('orden_detalles.created_at', '>=', $request->fecha_desde);
-        }
-        if ($request->filled('fecha_hasta')) {
-            $query->whereDate('orden_detalles.created_at', '<=', $request->fecha_hasta);
-        }
+        $totalItems  = (clone $base)->count();
+        $reprocesos  = (clone $base)->where('od.reprocesado', true)->count();
+        $pctReprocesos = $totalItems > 0 ? round(($reprocesos / $totalItems) * 100, 2) : 0;
 
-        $totalItems = (clone $query)->count();
+        // Detalle por producto
+        $porProducto = (clone $base)
+            ->where('od.reprocesado', true)
+            ->select(
+                'p.id as producto_id',
+                'p.nombre as producto',
+                DB::raw('COALESCE(c.nombre, "Sin categoría") as estacion'),
+                DB::raw('COUNT(*) as total_reprocesos'),
+                DB::raw('ROUND(COUNT(*) * 100.0 / ' . max($totalItems, 1) . ', 2) as pct_del_total')
+            )
+            ->groupBy('p.id', 'p.nombre', 'c.nombre')
+            ->orderByDesc('total_reprocesos')
+            ->limit(10)
+            ->get();
 
-        // Reprocesos: detalles que tienen más de una actualización o campo específico
-        // Por ahora, placeholder con 0
-        $reprocesos = (clone $query)->where('orden_detalles.reprocesado', true)->count();
-        $porcentajeReprocesos = $totalItems > 0 ? round(($reprocesos / $totalItems) * 100, 2) : 0;
+        // Detalle por estación (categoría)
+        $porEstacion = (clone $base)
+            ->select(
+                DB::raw('COALESCE(c.nombre, "Sin categoría") as estacion'),
+                DB::raw('COUNT(*) as total_items'),
+                DB::raw('SUM(CASE WHEN od.reprocesado = 1 THEN 1 ELSE 0 END) as reprocesos'),
+                DB::raw('ROUND(SUM(CASE WHEN od.reprocesado = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as pct_reprocesos')
+            )
+            ->groupBy('c.nombre')
+            ->orderByDesc('reprocesos')
+            ->get();
+
+        // Tendencia diaria
+        $tendencia = (clone $base)
+            ->where('od.reprocesado', true)
+            ->select(
+                DB::raw('DATE(od.created_at) as fecha'),
+                DB::raw('COUNT(*) as reprocesos')
+            )
+            ->groupBy(DB::raw('DATE(od.created_at)'))
+            ->orderBy('fecha')
+            ->get();
+
+        $semaforo = match(true) {
+            $pctReprocesos <= 2  => 'verde',
+            $pctReprocesos <= 5  => 'amarillo',
+            default              => 'rojo',
+        };
 
         return response()->json([
             'success' => true,
             'data' => [
-                'total_platillos' => $totalItems,
-                'reprocesos' => $reprocesos,
-                'porcentaje_reprocesos' => $porcentajeReprocesos,
+                'resumen' => [
+                    'total_platillos'      => $totalItems,
+                    'total_reprocesos'     => $reprocesos,
+                    'pct_reprocesos'       => $pctReprocesos,
+                    'semaforo'             => $semaforo,
+                ],
+                'por_producto' => $porProducto,
+                'por_estacion' => $porEstacion,
+                'tendencia'    => $tendencia,
+                'periodo'      => [
+                    'desde' => $request->fecha_desde,
+                    'hasta' => $request->fecha_hasta,
+                ],
             ],
         ]);
 

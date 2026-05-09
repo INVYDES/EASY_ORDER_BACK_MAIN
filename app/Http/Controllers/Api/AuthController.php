@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
-use App\Http\Controllers\Controller;
+use App\Http\Requests\LoginRequest;
+use App\Http\Requests\LoginEmpleadoRequest;
+use App\Http\Resources\UserResource;
 use App\Models\Categoria;
 use App\Models\Propietario;
 use App\Models\PropietarioLicencia;
@@ -19,6 +21,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password as PasswordRule;
+use App\Http\Controllers\Controller;
 
 final class AuthController extends Controller
 {
@@ -32,13 +35,8 @@ final class AuthController extends Controller
      * Login general — acepta email o username.
      * FIX: Verifica licencia activa del propietario antes de permitir el acceso.
      */
-    public function login(Request $request): JsonResponse
+    public function login(LoginRequest $request): JsonResponse
     {
-        $request->validate([
-            'login'    => ['required', 'string', 'max:255'],
-            'password' => ['required', 'string'],
-        ]);
-
         $field = filter_var($request->login, FILTER_VALIDATE_EMAIL) ? 'email' : 'username';
 
         $user = User::where($field, $request->login)
@@ -49,8 +47,6 @@ final class AuthController extends Controller
             return $this->failure('Credenciales incorrectas o cuenta desactivada', 401);
         }
 
-        // FIX: Verificar licencia activa del propietario
-        // Los empleados heredan la licencia del propietario al que pertenecen
         $licenciaError = $this->verificarLicencia($user);
         if ($licenciaError !== null) {
             return $licenciaError;
@@ -61,27 +57,18 @@ final class AuthController extends Controller
 
         $user->load(['roles', 'restauranteActivo']);
 
+        $user->tokens()->delete();
+
         $token = $user->createToken('api_token_' . $user->id)->plainTextToken;
 
         return $this->success([
-            'user'  => $user,
+            'user'  => new UserResource($user),
             'token' => $token,
         ]);
     }
 
-    /**
-     * Login de empleados — usa la cadena userId-propietarioId-restauranteId.
-     * FIX: También verifica licencia activa.
-     */
-    public function loginEmpleado(Request $request): JsonResponse
+    public function loginEmpleado(LoginEmpleadoRequest $request): JsonResponse
     {
-        $request->validate([
-            'login'    => ['required', 'string', 'regex:/^\d+-\d+-\d+$/'],
-            'password' => ['required', 'string'],
-        ], [
-            'login.regex' => 'El formato debe ser id-propietarioId-restauranteId (ej: 3-1-2)',
-        ]);
-
         [$userId, $propietarioId, $restauranteId] = explode('-', $request->login);
 
         $user = User::where('id', (int) $userId)
@@ -94,7 +81,6 @@ final class AuthController extends Controller
             return $this->failure('Credenciales incorrectas o cuenta desactivada', 401);
         }
 
-        // FIX: Verificar licencia activa
         $licenciaError = $this->verificarLicencia($user);
         if ($licenciaError !== null) {
             return $licenciaError;
@@ -102,10 +88,12 @@ final class AuthController extends Controller
 
         $user->load(['roles', 'restauranteActivo']);
 
+        $user->tokens()->delete();
+
         $token = $user->createToken('empleado_' . $user->id)->plainTextToken;
 
         return $this->success([
-            'user'  => $user,
+            'user'  => new UserResource($user),
             'token' => $token,
         ]);
     }
@@ -144,7 +132,7 @@ final class AuthController extends Controller
         $this->ensureCategoriasBase($user);
 
         return $this->success(
-            $user->load(['roles', 'restauranteActivo']),
+            new UserResource($user->load(['roles', 'restauranteActivo'])),
         );
     }
 

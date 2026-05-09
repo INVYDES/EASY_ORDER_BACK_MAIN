@@ -549,6 +549,185 @@ class MeseroController extends Controller
             ], 500);
         }
     }
+    // ─────────────────────────────────────────────────────────────────────
+    // SATISFACCIÓN — Registrar calificación
+    // POST /api/meseros/satisfaccion
+    // ─────────────────────────────────────────────────────────────────────
+    public function registrarSatisfaccion(Request $request)
+    {
+        try {
+            $user = $request->user();
+            $restauranteId = $this->getRestauranteId($request, $user);
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó sucursal activa'], 400);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'orden_id'     => 'required|exists:ordenes,id',
+                'user_id'      => 'required|exists:users,id',
+                'calificacion' => 'required|integer|min:1|max:5',
+                'comentario'   => 'nullable|string|max:500',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+
+            // Verificar que la orden pertenece al restaurante
+            $orden = DB::table('ordenes')
+                ->where('id', $request->orden_id)
+                ->where('restaurante_id', $restauranteId)
+                ->first();
+
+            if (!$orden) {
+                return response()->json(['success' => false, 'message' => 'Orden no encontrada en este restaurante'], 404);
+            }
+
+            $satisfaccion = \App\Models\Satisfaccion::updateOrCreate(
+                ['orden_id' => $request->orden_id],
+                [
+                    'user_id'        => $request->user_id,
+                    'restaurante_id' => $restauranteId,
+                    'calificacion'   => $request->calificacion,
+                    'comentario'     => $request->comentario,
+                ]
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Calificación registrada',
+                'data'    => $satisfaccion,
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // SATISFACCIÓN — KPI por mesero
+    // GET /api/meseros/satisfaccion/{userId}
+    // ─────────────────────────────────────────────────────────────────────
+    public function getSatisfaccionMesero(Request $request, $userId)
+    {
+        try {
+            $user = $request->user();
+            $restauranteId = $this->getRestauranteId($request, $user);
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó sucursal activa'], 400);
+            }
+
+            $query = DB::table('satisfacciones')
+                ->where('restaurante_id', $restauranteId)
+                ->where('user_id', $userId);
+
+            if ($request->filled('fecha_inicio')) {
+                $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
+            }
+            if ($request->filled('fecha_fin')) {
+                $query->where('created_at', '<=', $request->fecha_fin . ' 23:59:59');
+            }
+
+            $stats = (clone $query)->selectRaw('
+                COUNT(*) as total,
+                ROUND(AVG(calificacion), 2) as promedio,
+                SUM(CASE WHEN calificacion = 5 THEN 1 ELSE 0 END) as cinco_estrellas,
+                SUM(CASE WHEN calificacion = 4 THEN 1 ELSE 0 END) as cuatro_estrellas,
+                SUM(CASE WHEN calificacion = 3 THEN 1 ELSE 0 END) as tres_estrellas,
+                SUM(CASE WHEN calificacion = 2 THEN 1 ELSE 0 END) as dos_estrellas,
+                SUM(CASE WHEN calificacion = 1 THEN 1 ELSE 0 END) as una_estrella
+            ')->first();
+
+            $promedio = $stats->total > 0 ? $stats->promedio : null;
+
+            $semaforo = match(true) {
+                $promedio === null  => 'sin_datos',
+                $promedio >= 4.0   => 'verde',
+                $promedio >= 3.0   => 'amarillo',
+                default            => 'rojo',
+            };
+
+            $comentarios = (clone $query)
+                ->whereNotNull('comentario')
+                ->orderByDesc('created_at')
+                ->limit(5)
+                ->get(['calificacion', 'comentario', 'created_at']);
+
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'user_id'              => (int) $userId,
+                    'total_calificaciones' => $stats->total,
+                    'promedio'             => $promedio,
+                    'semaforo'             => $semaforo,
+                    'distribucion'         => [
+                        '5_estrellas' => $stats->cinco_estrellas,
+                        '4_estrellas' => $stats->cuatro_estrellas,
+                        '3_estrellas' => $stats->tres_estrellas,
+                        '2_estrellas' => $stats->dos_estrellas,
+                        '1_estrella'  => $stats->una_estrella,
+                    ],
+                    'ultimos_comentarios'  => $comentarios,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // REPROCESOS — Marcar detalle como reprocesado
+    // PATCH /api/meseros/reproceso/{ordenDetalleId}
+    // ─────────────────────────────────────────────────────────────────────
+    public function marcarReproceso(Request $request, $ordenDetalleId)
+    {
+        try {
+            $user = $request->user();
+            $restauranteId = $this->getRestauranteId($request, $user);
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó sucursal activa'], 400);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'reprocesado' => 'required|boolean',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+
+            $detalle = DB::table('orden_detalles as od')
+                ->join('ordenes as o', 'o.id', '=', 'od.orden_id')
+                ->where('od.id', $ordenDetalleId)
+                ->where('o.restaurante_id', $restauranteId)
+                ->select('od.id', 'od.reprocesado', 'o.id as orden_id')
+                ->first();
+
+            if (!$detalle) {
+                return response()->json(['success' => false, 'message' => 'Detalle de orden no encontrado'], 404);
+            }
+
+            DB::table('orden_detalles')
+                ->where('id', $ordenDetalleId)
+                ->update(['reprocesado' => (bool) $request->reprocesado]);
+
+            return response()->json([
+                'success' => true,
+                'message' => $request->reprocesado ? 'Platillo marcado como reproceso' : 'Reproceso removido',
+                'data'    => [
+                    'orden_detalle_id' => (int) $ordenDetalleId,
+                    'reprocesado'      => (bool) $request->reprocesado,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
 
     /**
      * Métricas detalladas de un mesero específico

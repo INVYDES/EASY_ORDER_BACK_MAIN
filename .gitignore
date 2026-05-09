@@ -25,3 +25,4 @@ Thumbs.db
 /storage/logs/*
 /storage/framework/*
 .github/PULL_REQUEST_TEMPLATE.md
+backend_documentation.txt

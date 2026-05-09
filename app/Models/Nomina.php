@@ -159,7 +159,22 @@ class Nomina extends Model
             $this->referencia_pago = $referencia;
         }
         
-        return $this->save();
+        $saved = $this->save();
+
+        if ($saved) {
+            // Registrar automáticamente el gasto operativo
+            Gasto::create([
+                'restaurante_id' => $this->restaurante_id,
+                'user_id'        => $this->user_id, // El empleado que recibe el pago
+                'concepto'       => "Pago de Nómina: " . ($this->user->name ?? 'Empleado') . " (" . $this->periodo_formato . ")",
+                'categoria'      => 'nomina',
+                'monto'          => $this->pago_total,
+                'fecha'          => now()->toDateString(),
+                'notas'          => "Generado automáticamente desde el módulo de nóminas. Referencia: " . ($referencia ?? 'N/A'),
+            ]);
+        }
+        
+        return $saved;
     }
 
     /**

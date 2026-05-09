@@ -4,7 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Cliente;
-use Illuminate\Http\Request;
+use App\Http\Requests\ClienteStoreRequest;
+use App\Http\Requests\ClienteUpdateRequest;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
@@ -64,7 +65,7 @@ class ClienteController extends Controller
         }
     }
 
-    public function store(Request $request)
+    public function store(ClienteStoreRequest $request)
     {
         try {
             $user = $request->user();
@@ -186,7 +187,7 @@ class ClienteController extends Controller
         }
     }
 
-    public function update(Request $request, $id)
+    public function update(ClienteUpdateRequest $request, $id)
     {
         try {
             $user = $request->user();

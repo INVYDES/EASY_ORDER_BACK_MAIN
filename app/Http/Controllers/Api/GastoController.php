@@ -5,6 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Gasto;
 use App\Models\Orden;
+use App\Http\Requests\StoreGastoRequest;
+use App\Http\Requests\ReporteFinancieroRequest;
+use App\Http\Resources\GastoResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -46,7 +49,7 @@ class GastoController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => $gastos,
+            'data'    => GastoResource::collection($gastos),
             'totales' => [
                 'total'         => round($totalGeneral, 2),
                 'por_categoria' => $totalesCategoria,
@@ -59,15 +62,8 @@ class GastoController extends Controller
     | CREAR GASTO
     |--------------------------------------------------------------------------
     */
-    public function store(Request $request)
+    public function store(StoreGastoRequest $request)
     {
-        $request->validate([
-            'concepto'   => 'required|string|max:200',
-            'categoria'  => 'required|in:renta,nomina,servicios,insumos,empaque,comisiones,marketing,mantenimiento,software,general',
-            'monto'      => 'required|numeric|min:0.01',
-            'fecha'      => 'required|date',
-            'notas'      => 'nullable|string|max:500',
-        ]);
 
         $restaurante = app('restaurante_activo');
 
@@ -84,7 +80,7 @@ class GastoController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Gasto registrado correctamente',
-            'data'    => $gasto,
+            'data'    => new GastoResource($gasto),
         ], 201);
     }
 
@@ -93,15 +89,8 @@ class GastoController extends Controller
     | ACTUALIZAR GASTO
     |--------------------------------------------------------------------------
     */
-    public function update(Request $request, $id)
+    public function update(StoreGastoRequest $request, $id)
     {
-        $request->validate([
-            'concepto'  => 'sometimes|string|max:200',
-            'categoria' => 'sometimes|in:renta,nomina,servicios,insumos,empaque,comisiones,marketing,mantenimiento,software,general',
-            'monto'     => 'sometimes|numeric|min:0.01',
-            'fecha'     => 'sometimes|date',
-            'notas'     => 'nullable|string|max:500',
-        ]);
 
         $restaurante = app('restaurante_activo');
 
@@ -148,15 +137,9 @@ class GastoController extends Controller
     |   - ROI sobre inversión inicial y sobre gastos totales del período
     |--------------------------------------------------------------------------
     */
-    public function resumen(Request $request)
+    public function resumen(ReporteFinancieroRequest $request)
     {
         $restaurante = app('restaurante_activo');
-
-        $request->validate([
-            'fecha_inicio'      => 'sometimes|date',
-            'fecha_fin'         => 'sometimes|date|after_or_equal:fecha_inicio',
-            'utilidad_objetivo' => 'sometimes|numeric|min:0',
-        ]);
 
         // ── Período ──────────────────────────────────────────────────────────
         $inicio = $request->get('fecha_inicio', now()->startOfMonth()->toDateString());

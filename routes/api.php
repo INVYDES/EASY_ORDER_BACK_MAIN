@@ -51,9 +51,11 @@ Route::prefix('')->group(function () {
     // ========== PROPIETARIOS ==========
     Route::post('/propietarios', [PropietarioController::class, 'store']);
 
-    // ========== WEBHOOKS ==========
-    Route::post('/paypal/licencia-webhook',      [LicenciaController::class, 'webhookPayPal']);
-    Route::post('/mercadopago/licencia-webhook', [LicenciaController::class, 'webhookMercadoPago']);
+    // ========== WEBHOOKS (Protegidos con Rate Limit) ==========
+    Route::middleware('throttle:10,1')->group(function () {
+        Route::post('/paypal/licencia-webhook',      [LicenciaController::class, 'webhookPayPal']);
+        Route::post('/mercadopago/licencia-webhook', [LicenciaController::class, 'webhookMercadoPago']);
+    });
 
     // ========== CALLBACKS PAYPAL ==========
    // ========== CALLBACKS PAYPAL ==========
