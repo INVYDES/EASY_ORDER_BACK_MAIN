@@ -11,23 +11,16 @@ return Application::configure(basePath: dirname(__DIR__))
         apiPrefix: 'api',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        
-        // Aliases de middlewares
+
         $middleware->alias([
-            'tenant' => \App\Http\Middleware\EnsureTenantSelected::class,
+            'tenant'     => \App\Http\Middleware\EnsureTenantSelected::class,
             'permission' => \App\Http\Middleware\CheckPermission::class,
         ]);
-        
-        // Middleware para API (CORS y Sanctum)
-        $middleware->api(prepend: [
-            \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
-        ]);
-        
-        // Excluir rutas API de CSRF
+
         $middleware->validateCsrfTokens(except: [
             'api/*',
         ]);
-        
+
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
@@ -46,9 +39,9 @@ return Application::configure(basePath: dirname(__DIR__))
                     'message' => $e->getMessage(),
                     'errors'  => ($e instanceof \Illuminate\Validation\ValidationException) ? $e->errors() : null,
                     'debug'   => config('app.debug') ? [
-                        'file' => $e->getFile(),
-                        'line' => $e->getLine(),
-                        'trace' => array_slice($e->getTrace(), 0, 5)
+                        'file'  => $e->getFile(),
+                        'line'  => $e->getLine(),
+                        'trace' => array_slice($e->getTrace(), 0, 5),
                     ] : null,
                 ], $status);
             }
