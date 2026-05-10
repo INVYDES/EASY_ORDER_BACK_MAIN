@@ -16,6 +16,10 @@ class OrdenResource extends JsonResource
             'total_formateado' => '$' . number_format((float)$this->total, 2),
             'estado'           => $this->estado,
             'tipo_orden'       => $this->tipo_orden,
+            'mesa'             => $this->mesa,
+            'comensales'       => $this->whenLoaded('detalles', function() {
+                return $this->detalles->pluck('nom_comensal')->unique()->filter()->values();
+            }),
             'mesero'           => $this->usuario ? $this->usuario->name : 'N/A',
             'detalles'         => $this->whenLoaded('detalles', function() {
                 return $this->detalles->map(fn($d) => [
@@ -25,6 +29,9 @@ class OrdenResource extends JsonResource
                     'categoria_id'  => $d->producto->categoria_id ?? null,
                     'categoria'     => $d->producto->categoria?->nombre ?? null,
                     'cantidad'      => $d->cantidad,
+                    'mesa'          => $this->mesa,
+                    'comensal'      => $d->nom_comensal,
+                    'comensal_id'   => $d->comensal_id,
                     'subtotal'      => (float)$d->subtotal,
                     'estado'        => $d->estado_preparacion,
                 ]);

@@ -57,6 +57,9 @@ class OrdenDetalleController extends Controller
                     'categoria'    => null,
                 ],
                 'cantidad'            => $detalle->cantidad,
+                'mesa'                => $orden->mesa,
+                'comensal'            => $detalle->nom_comensal,
+                'comensal_id'         => $detalle->comensal_id,
                 'precio_unitario'     => (float) $detalle->precio_unitario,
                 'precio_formateado'   => '$' . number_format($detalle->precio_unitario, 2),
                 'subtotal'            => (float) $detalle->subtotal,
@@ -73,6 +76,8 @@ class OrdenDetalleController extends Controller
                         'id'              => $orden->id,
                         'folio'           => 'ORD-' . str_pad($orden->id, 6, '0', STR_PAD_LEFT),
                         'estado'          => $orden->estado,
+                        'mesa'            => $orden->mesa,
+                        'comensales'      => $orden->detalles->pluck('nom_comensal')->unique()->filter()->values(),
                         'total'           => (float) $orden->total,
                         'total_formateado'=> '$' . number_format($orden->total, 2),
                     ],
@@ -181,6 +186,8 @@ class OrdenDetalleController extends Controller
                     'cantidad'        => $request->cantidad,
                     'precio_unitario' => $producto->precio,
                     'subtotal'        => $subtotal,
+                    'nom_comensal'    => $request->comensal ?? $request->nom_comensal,
+                    'comensal_id'     => $request->comensal_id,
                 ]);
 
                 $orden->total += $subtotal;
@@ -246,6 +253,8 @@ class OrdenDetalleController extends Controller
                 'cantidad' => $request->cantidad,
                 'notas'    => $request->notas,
                 'subtotal' => $nuevoSubtotal,
+                'nom_comensal' => $request->comensal ?? $request->nom_comensal,
+                'comensal_id'  => $request->comensal_id,
             ]);
 
             $orden->total += $nuevoSubtotal;
@@ -400,8 +409,11 @@ class OrdenDetalleController extends Controller
                         'descripcion'  => $detalle->producto->descripcion,
                         'precio'       => (float) $detalle->producto->precio,
                         'categoria_id' => $detalle->producto->categoria_id,
-                        'categoria'    => $detalle->producto->categoria?->nombre,
+                        'categoria'    => $detalle->producto->categoria?->nombre ?? null,
                     ] : null,
+                    'mesa'                => $orden->mesa,
+                    'comensal'            => $detalle->nom_comensal,
+                    'comensal_id'         => $detalle->comensal_id,
                     'cantidad'            => $detalle->cantidad,
                     'precio_unitario'     => (float) $detalle->precio_unitario,
                     'precio_formateado'   => '$' . number_format($detalle->precio_unitario, 2),
@@ -425,7 +437,9 @@ class OrdenDetalleController extends Controller
         $request->validate([
             'detalles'            => 'required|array|min:1',
             'detalles.*.id'       => 'required|exists:orden_detalles,id',
-            'detalles.*.cantidad' => 'required|integer|min:1|max:100',
+            'detalles.*.cantidad' => 'required|numeric|min:0.1|max:100',
+            'detalles.*.comensal' => 'nullable|string|max:100',
+            'detalles.*.comensal_id' => 'nullable|integer',
         ]);
 
         try {
@@ -457,6 +471,8 @@ class OrdenDetalleController extends Controller
                 $detalle->update([
                     'cantidad' => $item['cantidad'],
                     'subtotal' => $nuevoSubtotal,
+                    'nom_comensal' => $item['comensal'] ?? $item['nom_comensal'] ?? $detalle->nom_comensal,
+                    'comensal_id'  => $item['comensal_id'] ?? $detalle->comensal_id,
                 ]);
 
                 $nuevoTotal += $nuevoSubtotal;

@@ -898,7 +898,7 @@ class ProductoController extends Controller
                 ->firstOrFail();
 
             $validator = Validator::make($request->all(), [
-                'cantidad' => 'required|integer|min:1',
+                'cantidad' => 'required|numeric|min:0.1',
                 'tipo' => 'required|in:sumar,restar,asignar',
                 'motivo' => 'nullable|string|max:255'
             ]);
@@ -1113,6 +1113,7 @@ class ProductoController extends Controller
             $validator = Validator::make($request->all(), [
                 'productos' => 'required|array|min:1|max:100',
                 'productos.*.nombre' => 'required|string|max:150',
+                'productos.*.cantidad' => 'required|numeric|min:0.1',
                 'productos.*.precio' => 'required|numeric|min:0',
                 'productos.*.descripcion' => 'nullable|string',
                 'productos.*.categoria_id' => 'nullable|exists:categorias,id',

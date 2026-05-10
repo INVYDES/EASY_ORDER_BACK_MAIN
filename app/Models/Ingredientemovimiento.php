@@ -24,9 +24,9 @@ class IngredienteMovimiento extends Model
     ];
 
     protected $casts = [
-        'cantidad_anterior'   => 'integer',
-        'cantidad_movimiento' => 'integer',
-        'cantidad_nueva'      => 'integer',
+        'cantidad_anterior'   => 'decimal:3',
+        'cantidad_movimiento' => 'decimal:3',
+        'cantidad_nueva'      => 'decimal:3',
         'created_at'          => 'datetime',
         'updated_at'          => 'datetime',
     ];
@@ -198,7 +198,7 @@ class IngredienteMovimiento extends Model
     /**
      * Obtener el impacto neto en el inventario
      */
-    public function getImpactoNetoAttribute(): int
+    public function getImpactoNetoAttribute(): float
     {
         return match($this->tipo) {
             self::TIPO_ENTRADA => $this->cantidad_movimiento,
@@ -214,8 +214,8 @@ class IngredienteMovimiento extends Model
     public static function registrar(
         $ingrediente,
         string $tipo,
-        int $cantidadMovimiento,
-        int $cantidadNueva,
+        $cantidadMovimiento,
+        $cantidadNueva,
         ?int $userId = null,
         ?string $motivo = null,
         ?int $ordenId = null,
@@ -262,8 +262,8 @@ class IngredienteMovimiento extends Model
                 self::TIPO_AJUSTE  => $movimiento->cantidad_movimiento,
             };
             
-            if ($movimiento->cantidad_nueva !== $expectedNueva) {
-                throw new \Exception('Inconsistencia en el cálculo del stock nuevo');
+            if (round((float)$movimiento->cantidad_nueva, 3) !== round((float)$expectedNueva, 3)) {
+                throw new \Exception('Inconsistencia en el cálculo del stock nuevo. Esperado: ' . $expectedNueva . ', Recibido: ' . $movimiento->cantidad_nueva);
             }
         });
     }

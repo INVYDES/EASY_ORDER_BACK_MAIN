@@ -12,7 +12,9 @@ class StoreOrdenDetalleRequest extends FormRequest
     {
         return [
             'producto_id' => 'required|exists:productos,id',
-            'cantidad'    => 'required|integer|min:1|max:100',
+            'cantidad'    => 'required|numeric|min:0.1|max:100',
+            'comensal'    => 'nullable|string|max:100',
+            'comensal_id' => 'nullable|integer',
         ];
     }
 }

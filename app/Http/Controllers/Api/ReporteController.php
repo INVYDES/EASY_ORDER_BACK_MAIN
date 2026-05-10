@@ -135,7 +135,7 @@ class ReporteController extends Controller
                     'productos.nombre',
                     'productos.precio',
                     DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
-                    DB::raw('CAST(SUM(orden_detalles.cantidad) AS UNSIGNED) as total_vendido'),
+                    DB::raw('ROUND(SUM(orden_detalles.cantidad), 2) as total_vendido'),
                     DB::raw('SUM(orden_detalles.subtotal) as total_ventas'),
                     DB::raw('COUNT(DISTINCT ordenes.id) as veces_vendido'),
                     DB::raw('ROUND(AVG(orden_detalles.precio_unitario), 2) as precio_promedio')

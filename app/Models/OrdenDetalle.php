@@ -20,14 +20,17 @@ class OrdenDetalle extends Model {
         'subtotal',
         'notas',
         'nom_comensal',
+        'comensal_id',
         'estado_preparacion',
         'reprocesado'
     ];
 
     protected $casts = [
+        'cantidad' => 'decimal:2',
         'precio_unitario' => 'decimal:2',
         'subtotal' => 'decimal:2',
-        'reprocesado' => 'boolean'
+        'reprocesado' => 'boolean',
+        'comensal_id' => 'integer'
     ];
 
     /**

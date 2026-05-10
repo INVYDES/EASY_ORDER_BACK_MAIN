@@ -31,8 +31,8 @@ class Producto extends Model
         'precio' => 'decimal:2',
         'costo' => 'decimal:2',
         'activo' => 'boolean',
-        'stock' => 'integer',
-        'stock_minimo' => 'integer',
+        'stock' => 'decimal:2',
+        'stock_minimo' => 'decimal:2',
         'created_at' => 'datetime',
         'updated_at' => 'datetime'
     ];

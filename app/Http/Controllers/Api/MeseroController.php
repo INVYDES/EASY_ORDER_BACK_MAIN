@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\Restaurante;
 use App\Models\MesaMesero;
 use App\Models\Orden;
+use App\Http\Resources\OrdenResource;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
@@ -88,13 +89,31 @@ class MeseroController extends Controller
             });
 
             $restaurante = Restaurante::find($restauranteId);
+            $totalMesas = $restaurante->total_mesas ?? 0;
+            $mesasAsignadas = $asignaciones->pluck('numero_mesa')->unique()->toArray();
+            
+            $mesasSinAsignar = [];
+            for ($i = 1; $i <= $totalMesas; $i++) {
+                if (!in_array($i, $mesasAsignadas)) {
+                    $mesasSinAsignar[] = $i;
+                }
+            }
+
+            // Órdenes "volando" (órdenes en mesas que no tienen mesero asignado)
+            $ordenesVolando = Orden::where('restaurante_id', $restauranteId)
+                ->whereIn('estado', ['ABIERTA', 'POR_PREPARAR', 'EN_PREPARACION', 'LISTA'])
+                ->whereIn('mesa', $mesasSinAsignar)
+                ->with(['usuario', 'cliente', 'detalles.producto.categoria'])
+                ->get();
 
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'meseros' => $data,
-                    'total_meseros' => $data->count(),
-                    'total_mesas' => $restaurante->total_mesas ?? 0
+                    'meseros'           => $data,
+                    'total_meseros'     => $data->count(),
+                    'total_mesas'       => $totalMesas,
+                    'mesas_sin_asignar' => $mesasSinAsignar,
+                    'ordenes_volando'   => OrdenResource::collection($ordenesVolando),
                 ]
             ]);
 
@@ -351,9 +370,8 @@ class MeseroController extends Controller
             $perPage = $request->input('per_page', 20);
             $ordenes = $query->orderBy('id', 'desc')->paginate($perPage);
 
-            return response()->json([
+            return OrdenResource::collection($ordenes)->additional([
                 'success' => true,
-                'data' => $ordenes,
                 'es_admin' => $esAdmin
             ]);
 

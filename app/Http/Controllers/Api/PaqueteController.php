@@ -38,7 +38,7 @@ class PaqueteController extends Controller
             'precio' => 'required|numeric|min:0',
             'productos' => 'required|array|min:1',
             'productos.*.id' => 'required|exists:productos,id',
-            'productos.*.cantidad' => 'required|integer|min:1',
+            'productos.*.cantidad' => 'required|numeric|min:0.1',
             'imagen' => 'nullable|image|max:2048'
         ]);
 
@@ -101,7 +101,7 @@ class PaqueteController extends Controller
             'precio' => 'required|numeric|min:0',
             'productos' => 'required|array|min:1',
             'productos.*.id' => 'required|exists:productos,id',
-            'productos.*.cantidad' => 'required|integer|min:1',
+            'productos.*.cantidad' => 'required|numeric|min:0.1',
             'imagen' => 'nullable|image|max:2048'
         ]);
 

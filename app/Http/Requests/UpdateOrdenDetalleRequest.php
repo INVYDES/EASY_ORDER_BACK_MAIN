@@ -11,7 +11,9 @@ class UpdateOrdenDetalleRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'cantidad' => 'required|integer|min:1|max:100',
+            'cantidad' => 'required|numeric|min:0.1|max:100',
+            'comensal' => 'nullable|string|max:100',
+            'comensal_id' => 'nullable|integer',
             'notas'    => 'nullable|string|max:255',
         ];
     }

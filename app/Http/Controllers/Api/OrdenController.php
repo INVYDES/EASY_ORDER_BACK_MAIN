@@ -227,8 +227,10 @@ class OrdenController extends Controller
             'paquetes'                => 'nullable|array',
             'productos.*.producto_id' => 'required_without:productos.*.paquete_id|nullable|exists:productos,id',
             'productos.*.paquete_id'  => 'required_without:productos.*.producto_id|nullable|exists:paquetes,id',
-            'productos.*.cantidad'    => 'required|integer|min:1|max:100',
+            'productos.*.cantidad'    => 'required|numeric|min:0.1|max:100',
             'productos.*.notas'       => 'nullable|string|max:300',
+            'productos.*.comensal'    => 'nullable|string|max:100',
+            'productos.*.comensal_id' => 'nullable|integer',
             'productos.*.nom_comensal'=> 'nullable|string|max:100',
             'notas'                   => 'nullable|string|max:500',
             'mesa'                    => 'required_if:tipo_orden,local|nullable|integer|min:1',
@@ -339,7 +341,8 @@ class OrdenController extends Controller
                             'producto'     => $producto,
                             'cantidad'     => $item['cantidad'],
                             'notas'        => $item['notas'] ?? null,
-                            'nom_comensal' => $item['nom_comensal'] ?? null,
+                            'nom_comensal' => $item['comensal'] ?? $item['nom_comensal'] ?? null,
+                            'comensal_id'  => $item['comensal_id'] ?? null,
                             'precio'       => $producto->precio,
                         ];
                     }
@@ -358,7 +361,8 @@ class OrdenController extends Controller
                         'producto'     => $producto,
                         'cantidad'     => $item['cantidad'],
                         'notas'        => $item['notas'] ?? null,
-                        'nom_comensal' => $item['nom_comensal'] ?? null,
+                        'nom_comensal' => $item['comensal'] ?? $item['nom_comensal'] ?? null,
+                        'comensal_id'  => $item['comensal_id'] ?? null,
                         'precio'       => $producto->precio,
                     ];
                 }
@@ -794,7 +798,8 @@ class OrdenController extends Controller
             'metodo'                   => 'required|in:equitativo,manual',
             'comensales'               => 'required_if:metodo,equitativo|integer|min:2|max:20',
             'divisiones'               => 'required_if:metodo,manual|array|min:2',
-            'divisiones.*.comensal'    => 'required|integer|min:1',
+            'divisiones.*.comensal'    => 'required|string|max:100',
+            'divisiones.*.comensal_id' => 'nullable|integer',
             'divisiones.*.detalles'    => 'required|array|min:1',
             'divisiones.*.detalles.*'  => 'integer|exists:orden_detalles,id',
         ]);
@@ -869,10 +874,11 @@ class OrdenController extends Controller
                     }
 
                     $cuentas[] = [
-                        'comensal'  => $div['comensal'],
-                        'monto'     => $subtotalComensal,
-                        'monto_fmt' => '$' . number_format($subtotalComensal, 2),
-                        'detalles'  => $detallesComensal,
+                        'comensal'     => $div['comensal'],
+                        'comensal_id'  => $div['comensal_id'] ?? null,
+                        'monto'        => $subtotalComensal,
+                        'monto_fmt'    => '$' . number_format($subtotalComensal, 2),
+                        'detalles'     => $detallesComensal,
                     ];
                 }
 
@@ -1102,6 +1108,7 @@ class OrdenController extends Controller
             'total'                  => (float) $orden->total,
             'total_formateado'       => '$' . number_format($orden->total, 2),
             'mesa'                   => $orden->mesa,
+            'comensales'             => $orden->detalles->pluck('nom_comensal')->unique()->filter()->values(),
             'direccion_entrega'      => $orden->direccion_entrega,
             'telefono_contacto'      => $orden->telefono_contacto,
             'costo_envio'            => (float) ($orden->costo_envio ?? 0),
@@ -1128,12 +1135,14 @@ class OrdenController extends Controller
                 'categoria_id'        => $d->producto->categoria_id ?? null,
                 'categoria'           => $d->producto->categoria?->nombre ?? null,
                 'cantidad'            => $d->cantidad,
+                'mesa'                => $orden->mesa,
                 'precio_unitario'     => (float) $d->precio_unitario,
                 'precio_formateado'   => '$' . number_format($d->precio_unitario, 2),
                 'subtotal'            => (float) $d->subtotal,
                 'subtotal_formateado' => '$' . number_format($d->subtotal, 2),
                 'notas'               => $d->notas ?? null,
-                'nom_comensal'        => $d->nom_comensal ?? null,
+                'comensal'            => $d->nom_comensal ?? null,
+                'comensal_id'         => $d->comensal_id ?? null,
                 'estado_preparacion'  => $d->estado_preparacion ?? 'PENDIENTE',
             ]),
             'created_at'             => $orden->created_at,
