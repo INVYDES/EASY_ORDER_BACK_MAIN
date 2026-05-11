@@ -85,9 +85,14 @@ Route::get('/paypal/capturar-pago',         [CajaController::class, 'capturarPay
     // ========== LICENCIAS ==========
     Route::get('/licencias/disponibles', [LicenciaController::class, 'disponibles']);
 
-    // ========== CHATBOT & SUGERENCIAS ==========
-    Route::post('/chatbot/chat',       [ChatbotController::class, 'chat']);
-    Route::post('/chatbot/sugerencia', [ChatbotController::class, 'sendSuggestion']);
+    // ========== CHATBOT & TICKETS ==========
+    Route::post('/chatbot/chat', [ChatbotController::class, 'chat']);
+    
+    // Rutas administrativas de Tickets (Protegidas)
+    Route::middleware(['auth:sanctum', 'permission:VER_RESTAURANTE'])->group(function () {
+        Route::get('/tickets', [ChatbotController::class, 'index']);
+        Route::put('/tickets/{id}', [ChatbotController::class, 'update']);
+    });
 });
 
 /*

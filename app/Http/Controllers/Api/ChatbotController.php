@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Services\GeminiService;
 use App\Services\WhatsAppService;
+use App\Models\Ticket;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 
 class ChatbotController extends Controller
 {
@@ -20,66 +22,103 @@ class ChatbotController extends Controller
     }
 
     /**
-     * Process a chat message with Gemini AI.
+     * Process a chat message, classify it, create a ticket and respond.
      */
     public function chat(Request $request)
     {
         $request->validate([
             'message' => 'required|string',
-            'history' => 'nullable|array'
+            'name' => 'nullable|string|max:100',
+            'contact' => 'nullable|string|max:100',
+            'restaurante_id' => 'nullable|integer|exists:restaurantes,id'
         ]);
 
         $userMessage = $request->message;
-        $history = $request->history ?? [];
+        $restauranteId = $request->restaurante_id ?: $request->header('X-Restaurante-Id');
 
-        // Define the system behavior
-        $systemPrompt = "Eres el asistente inteligente de TiendaFer (EASY ORDER). " .
-            "Tu objetivo es ayudar a los clientes con dudas sobre el menú, horarios y servicios. " .
-            "Si el usuario tiene una queja, sugerencia o quiere hablar con una persona real, " .
-            "dile que puede dejar su comentario aquí mismo y que llegará directamente al dueño. " .
-            "Mantén un tono amable, profesional y servicial. " .
-            "Si el mensaje es una sugerencia explícita, agradéceles y pídeles confirmación para enviarla a WhatsApp.";
+        // 1. Analyze Intent with AI
+        $analysis = $this->gemini->analyzeIntent($userMessage);
 
-        $response = $this->gemini->generateResponse($systemPrompt . "\n\nUsuario: " . $userMessage, $history);
+        // 2. Create Ticket in Database
+        $ticket = Ticket::create([
+            'restaurante_id' => $restauranteId,
+            'user_id' => Auth::id(),
+            'usuario_nombre' => $request->name ?: (Auth::check() ? Auth::user()->name : 'Invitado'),
+            'contacto' => $request->contact ?: (Auth::check() ? Auth::user()->email : 'No proporcionado'),
+            'mensaje' => $userMessage,
+            'clasificacion' => $analysis['tipo'] ?? 'DUDA_OPERATIVA',
+            'prioridad' => $analysis['prioridad'] ?? 'BAJA',
+            'respuesta_ia' => $analysis['respuesta_sugerida'] ?? 'Gracias por tu mensaje.',
+            'metadata' => $analysis
+        ]);
+
+        // 3. Conditional WhatsApp Notification (Only for high priority or critical errors)
+        if (($analysis['prioridad'] === 'ALTA' || $analysis['tipo'] === 'ERROR_CRITICO' || $analysis['tipo'] === 'FALLA_SISTEMA') 
+            && $analysis['requiere_soporte_humano']) {
+            
+            $waMessage = "🚨 *INCIDENCIA DETECTADA* (" . ($analysis['prioridad']) . ")\n\n" .
+                "🏢 *Restaurante:* " . ($ticket->restaurante?->nombre ?? 'N/A') . "\n" .
+                "👤 *Usuario:* " . ($ticket->usuario_nombre) . "\n" .
+                "🏷️ *Tipo:* " . ($analysis['tipo']) . "\n" .
+                "📝 *Resumen:* " . ($analysis['resumen']) . "\n\n" .
+                "💬 *Mensaje:* " . ($userMessage) . "\n\n" .
+                "🔗 Ver ticket: " . config('app.url') . "/admin/tickets/" . $ticket->id;
+
+            $this->whatsapp->sendNotification($waMessage);
+        }
 
         return response()->json([
             'success' => true,
-            'reply' => $response
+            'ticket_id' => $ticket->id,
+            'reply' => $analysis['respuesta_sugerida'],
+            'category' => $analysis['tipo'],
+            'priority' => $analysis['prioridad']
         ]);
     }
 
     /**
-     * Send a comment or suggestion directly to the owner via WhatsApp.
+     * Admin: List tickets with filters.
      */
-    public function sendSuggestion(Request $request)
+    public function index(Request $request)
     {
-        $request->validate([
-            'name' => 'nullable|string|max:100',
-            'contact' => 'nullable|string|max:100',
-            'message' => 'required|string|max:1000'
-        ]);
+        $query = Ticket::query()->with(['user', 'restaurante']);
 
-        $name = $request->name ?: 'Usuario Anónimo';
-        $contact = $request->contact ?: 'No proporcionado';
-        $content = $request->message;
-
-        $whatsappMessage = "📬 *Nueva Sugerencia de TiendaFer*\n\n" .
-            "👤 *Nombre:* {$name}\n" .
-            "📱 *Contacto:* {$contact}\n\n" .
-            "💬 *Mensaje:* {$content}";
-
-        $sent = $this->whatsapp->sendNotification($whatsappMessage);
-
-        if ($sent) {
-            return response()->json([
-                'success' => true,
-                'message' => 'Tu sugerencia ha sido enviada directamente al dueño por WhatsApp. ¡Gracias!'
-            ]);
+        if ($request->filled('estado')) {
+            $query->where('estado', $request->estado);
+        }
+        if ($request->filled('prioridad')) {
+            $query->where('prioridad', $request->prioridad);
+        }
+        if ($request->filled('clasificacion')) {
+            $query->where('clasificacion', $request->clasificacion);
         }
 
+        $tickets = $query->orderByDesc('created_at')->paginate(20);
+
         return response()->json([
-            'success' => false,
-            'message' => 'No pudimos enviar la sugerencia por WhatsApp en este momento, pero ha sido registrada en el sistema.'
-        ], 500);
+            'success' => true,
+            'data' => $tickets
+        ]);
+    }
+
+    /**
+     * Admin: Update ticket status or notes.
+     */
+    public function update(Request $request, $id)
+    {
+        $request->validate([
+            'estado' => 'sometimes|string|in:pendiente,en_proceso,resuelto,descartado',
+            'notas_admin' => 'nullable|string',
+            'prioridad' => 'sometimes|string|in:ALTA,MEDIA,BAJA'
+        ]);
+
+        $ticket = Ticket::findOrFail($id);
+        $ticket->update($request->only(['estado', 'notas_admin', 'prioridad']));
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Ticket actualizado correctamente',
+            'data' => $ticket
+        ]);
     }
 }
