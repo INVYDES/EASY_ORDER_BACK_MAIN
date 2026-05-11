@@ -14,8 +14,11 @@ use App\Models\Log;
 use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Api\EmpleadoController;
 
+use App\Traits\HandlesApiErrors;
+
 class UserController extends Controller
 {
+    use HandlesApiErrors;
     /**
      * Obtener el usuario autenticado con roles y restaurantes
      */
@@ -26,7 +29,7 @@ class UserController extends Controller
             $user->load(['roles', 'restauranteActivo', 'restaurantes']);
             return response()->json(['success' => true, 'data' => $user]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error al obtener usuario', 'error' => $e->getMessage()], 500);
+            return $this->errorResponse('Error al obtener usuario', $e);
         }
     }
 
@@ -48,7 +51,7 @@ class UserController extends Controller
             $user->update($request->only(['name', 'email', 'username']));
             return response()->json(['success' => true, 'message' => 'Perfil actualizado correctamente', 'data' => $user]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error al actualizar perfil', 'error' => $e->getMessage()], 500);
+            return $this->errorResponse('Error al actualizar perfil', $e);
         }
     }
 /**
@@ -184,7 +187,7 @@ public function toggleActivo(Request $request, $id)
 
             return response()->json(['success' => true, 'data' => $restaurantes]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error al obtener lista', 'error' => $e->getMessage()], 500);
+            return $this->errorResponse('Error al obtener lista', $e);
         }
     }
 
@@ -214,7 +217,7 @@ public function toggleActivo(Request $request, $id)
                 'message' => 'Usuario eliminado correctamente'
             ]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error al eliminar usuario: ' . $e->getMessage()], 500);
+            return $this->errorResponse('Error al eliminar usuario', $e);
         }
     }
 }

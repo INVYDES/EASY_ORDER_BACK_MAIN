@@ -7,8 +7,11 @@ use App\Models\Restaurante;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+use App\Traits\HandlesApiErrors;
+
 class RestauranteController extends Controller
 {
+    use HandlesApiErrors;
     /**
      * Listar restaurantes con paginación y filtros
      */
@@ -130,9 +133,9 @@ class RestauranteController extends Controller
             ],
         ]);
 
-    } catch (\Exception $e) {
-        return response()->json(['success' => false, 'message' => 'Error al obtener restaurantes', 'error' => $e->getMessage()], 500);
-    }
+        } catch (\Exception $e) {
+            return $this->errorResponse('Error al obtener restaurantes', $e);
+        }
 }
 
     /**
@@ -210,7 +213,7 @@ class RestauranteController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['success' => false, 'message' => 'Restaurante no encontrado'], 404);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error al obtener restaurante', 'error' => $e->getMessage()], 500);
+            return $this->errorResponse('Error al obtener restaurante', $e);
         }
     }
 
@@ -316,8 +319,7 @@ class RestauranteController extends Controller
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json(['success' => false, 'message' => 'Error al crear restaurante', 'error' => $e->getMessage()], 500);
+            return $this->errorResponse('Error al crear restaurante', $e);
         }
     }
 
@@ -393,8 +395,7 @@ class RestauranteController extends Controller
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json(['success' => false, 'message' => 'Error al actualizar restaurante', 'error' => $e->getMessage()], 500);
+            return $this->errorResponse('Error al actualizar restaurante', $e);
         }
     }
 
@@ -437,8 +438,7 @@ class RestauranteController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['success' => false, 'message' => 'Restaurante no encontrado'], 404);
         } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json(['success' => false, 'message' => 'Error al eliminar restaurante', 'error' => $e->getMessage()], 500);
+            return $this->errorResponse('Error al eliminar restaurante', $e);
         }
     }
 
@@ -453,7 +453,7 @@ class RestauranteController extends Controller
                 ->get(['id', 'nombre', 'telefono', 'ciudad', 'estado']);
             return response()->json(['success' => true, 'data' => $restaurantes]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error al buscar restaurantes', 'error' => $e->getMessage()], 500);
+            return $this->errorResponse('Error al buscar restaurantes', $e);
         }
     }
 
@@ -521,7 +521,7 @@ class RestauranteController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error al obtener estadísticas', 'error' => $e->getMessage()], 500);
+            return $this->errorResponse('Error al obtener estadísticas', $e);
         }
     }
 
@@ -542,7 +542,7 @@ class RestauranteController extends Controller
                 ]),
             ]);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error al obtener lista', 'error' => $e->getMessage()], 500);
+            return $this->errorResponse('Error al obtener lista', $e);
         }
     }
 }

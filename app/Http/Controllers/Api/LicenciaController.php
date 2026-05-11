@@ -148,7 +148,10 @@ public function disponibles(Request $request)
                 'mercadopago_plan_id' => 'nullable|string|max:100',
             ]);
 
-            $data = $request->all();
+            $data = $request->only([
+                'nombre', 'tipo', 'max_restaurantes', 'max_usuarios', 
+                'precio', 'activo', 'paypal_plan_id', 'mercadopago_plan_id'
+            ]);
             $data['activo'] = $request->has('activo') ? $request->activo : true;
             $data['max_usuarios'] = $request->max_usuarios ?? 5;
 
@@ -198,7 +201,10 @@ public function disponibles(Request $request)
                 'mercadopago_plan_id' => 'nullable|string',
             ]);
 
-            $licencia->update($request->all());
+            $licencia->update($request->only([
+                'nombre', 'tipo', 'max_restaurantes', 'max_usuarios', 
+                'precio', 'activo', 'paypal_plan_id', 'mercadopago_plan_id'
+            ]));
 
             return response()->json(['success' => true, 'message' => 'Licencia actualizada', 'data' => $licencia]);
 

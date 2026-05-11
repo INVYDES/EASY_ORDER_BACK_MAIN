@@ -231,7 +231,9 @@ class ClienteController extends Controller
 
             DB::beginTransaction();
 
-            $cliente->update($request->all());
+            $cliente->update($request->only([
+                'nombre', 'apellido', 'email', 'telefono', 'direccion', 'notas', 'activo'
+            ]));
 
             DB::commit();
 

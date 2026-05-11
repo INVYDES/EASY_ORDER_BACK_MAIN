@@ -5,9 +5,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
+use App\Traits\BelongsToTenant;
+
 class Nomina extends Model
 {
-    use SoftDeletes;
+    use SoftDeletes, BelongsToTenant;
 
     // Constantes de estados
     const ESTADO_PENDIENTE = 'PENDIENTE';

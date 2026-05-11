@@ -207,7 +207,9 @@ class CategoriaController extends Controller
 
             DB::beginTransaction();
 
-            $categoria->update($request->all());
+            $categoria->update($request->only([
+                'nombre', 'descripcion', 'color', 'icono', 'orden', 'activo'
+            ]));
 
             DB::commit();
 

@@ -29,6 +29,7 @@ use App\Http\Controllers\Api\MeseroController;
 use App\Http\Controllers\Api\HorarioController;
 use App\Http\Controllers\Api\NominaDetalleController;
 use App\Http\Controllers\Api\PaqueteController;
+use App\Http\Controllers\Api\ChatbotController;
 
 /*
 |--------------------------------------------------------------------------
@@ -83,6 +84,10 @@ Route::get('/paypal/capturar-pago',         [CajaController::class, 'capturarPay
 
     // ========== LICENCIAS ==========
     Route::get('/licencias/disponibles', [LicenciaController::class, 'disponibles']);
+
+    // ========== CHATBOT & SUGERENCIAS ==========
+    Route::post('/chatbot/chat',       [ChatbotController::class, 'chat']);
+    Route::post('/chatbot/sugerencia', [ChatbotController::class, 'sendSuggestion']);
 });
 
 /*
