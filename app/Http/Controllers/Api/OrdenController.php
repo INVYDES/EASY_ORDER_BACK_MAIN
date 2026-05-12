@@ -709,7 +709,7 @@ class OrdenController extends Controller
                         try {
                             broadcast(new \App\Events\CajaActualizada('venta', $orden->restaurante_id, [
                                 'orden_id'    => $orderIdForLog,
-                                'total'       => (float) $p['monto'],
+                                'total'       => $pTotal,
                                 'metodo_pago' => $metodoPago,
                                 'propina'     => (float) ($p['propina'] ?? 0),
                                 'tipo_orden'  => $orden->tipo_orden,
