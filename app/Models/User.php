@@ -126,6 +126,11 @@ class User extends Authenticatable
         // Cargar roles con sus permisos una sola vez (no recarga si ya están en memoria)
         $this->loadMissing('roles.permissions');
 
+        // Bypas total para PROPIETARIO o DUEÑO
+        if ($this->hasRole('PROPIETARIO') || $this->hasRole('DUEÑO')) {
+            return true;
+        }
+
         // FIX: Usar la colección ya cargada en lugar de llamar hasRole() que haría otra query
         $esMenu = $this->roles->contains(
             fn($r) => strtolower($r->nombre) === 'menu'
