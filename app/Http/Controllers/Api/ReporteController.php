@@ -1441,20 +1441,23 @@ public function ventasPorCanalTipo(Request $request): JsonResponse
 {
     try {
         $restauranteActivo = app('restaurante_activo');
+        // Usar id directamente en DB::table para forzar el scope a nivel de base de datos
+        $restauranteId = is_object($restauranteActivo) ? $restauranteActivo->id : $restauranteActivo;
 
         $request->validate([
             'fecha_inicio' => 'sometimes|date',
             'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
         ]);
 
-        $query = Orden::where('restaurante_id', $restauranteActivo->id)
+        $query = DB::table('ordenes')
+            ->where('restaurante_id', $restauranteId)
             ->where('estado', 'CERRADA');
 
         if ($request->filled('fecha_inicio')) {
-            $query->whereDate('created_at', '>=', $request->fecha_inicio);
+            $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
         }
         if ($request->filled('fecha_fin')) {
-            $query->whereDate('created_at', '<=', $request->fecha_fin);
+            $query->where('created_at', '<=', $request->fecha_fin . ' 23:59:59');
         }
 
         $ventasPorTipo = (clone $query)
@@ -1467,7 +1470,7 @@ public function ventasPorCanalTipo(Request $request): JsonResponse
             ->groupBy('tipo_orden')
             ->get();
 
-        $totalVentas = (clone $query)->sum('total');
+        $totalVentas = (clone $query)->sum('total') ?? 0;
         $totalOrdenes = (clone $query)->count();
 
         // Preparar datos para gráfica donut
@@ -1489,14 +1492,27 @@ public function ventasPorCanalTipo(Request $request): JsonResponse
             'delivery' => 'Delivery',
         ];
 
+        // Datos para KpiVentas.vue (Local, Pickup, Delivery)
+        $canalVentas = [
+            'Local' => 0,
+            'Pickup' => 0,
+            'Delivery' => 0,
+        ];
+
         foreach ($ventasPorTipo as $item) {
-            $labels[] = $textos[$item->tipo_orden] ?? $item->tipo_orden;
+            $tipoKey = strtolower($item->tipo_orden ?: 'local');
+            
+            if ($tipoKey === 'local') $canalVentas['Local'] = (int) $item->total_ordenes;
+            if ($tipoKey === 'pickup') $canalVentas['Pickup'] = (int) $item->total_ordenes;
+            if ($tipoKey === 'delivery') $canalVentas['Delivery'] = (int) $item->total_ordenes;
+
+            $labels[] = $textos[$tipoKey] ?? $tipoKey;
             $datasets[] = [
-                'label' => $textos[$item->tipo_orden] ?? $item->tipo_orden,
+                'label' => $textos[$tipoKey] ?? $tipoKey,
                 'value' => round($item->total_ventas, 2),
                 'percentage' => $totalVentas > 0 ? round(($item->total_ventas / $totalVentas) * 100, 2) : 0,
-                'color' => $colors[$item->tipo_orden] ?? '#6B7280',
-                'icon' => $icons[$item->tipo_orden] ?? '📋',
+                'color' => $colors[$tipoKey] ?? '#6B7280',
+                'icon' => $icons[$tipoKey] ?? '📋',
                 'ordenes' => (int) $item->total_ordenes,
                 'ticket_promedio' => (float) $item->ticket_promedio,
             ];
@@ -1505,14 +1521,17 @@ public function ventasPorCanalTipo(Request $request): JsonResponse
         return response()->json([
             'success' => true,
             'data' => [
+                'Local'    => $canalVentas['Local'],
+                'Pickup'   => $canalVentas['Pickup'],
+                'Delivery' => $canalVentas['Delivery'],
                 'grafica_donut' => [
                     'labels' => $labels,
                     'datasets' => $datasets,
                 ],
                 'resumen' => [
-                    'total_ventas' => round($totalVentas, 2),
+                    'total_ventas' => round((float) $totalVentas, 2),
                     'total_ordenes' => $totalOrdenes,
-                    'ticket_promedio_general' => $totalOrdenes > 0 ? round($totalVentas / $totalOrdenes, 2) : 0,
+                    'ticket_promedio_general' => $totalOrdenes > 0 ? round((float) $totalVentas / $totalOrdenes, 2) : 0,
                 ],
                 'periodo' => [
                     'desde' => $request->fecha_inicio,

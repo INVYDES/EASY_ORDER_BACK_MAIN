@@ -319,7 +319,13 @@ class EmpleadoController extends Controller
                 }
                 if ($request->filled('salario_base')) {
                     $empleado->salario_base = $request->salario_base;
-                    $empleado->salario_por_hora = $request->salario_base / 160;
+                    // Solo recalcular por hora si no se envió explícitamente el valor por hora
+                    if (!$request->filled('salario_por_hora')) {
+                        $empleado->salario_por_hora = $request->salario_base / 160;
+                    }
+                }
+                if ($request->filled('salario_por_hora')) {
+                    $empleado->salario_por_hora = $request->salario_por_hora;
                 }
                 if ($request->filled('comision_por_venta')) {
                     $empleado->comision_por_venta = $request->comision_por_venta;
