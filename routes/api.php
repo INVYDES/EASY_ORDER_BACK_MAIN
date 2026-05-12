@@ -460,10 +460,11 @@ Route::prefix('nomina')->middleware('permission:VER_NOMINA')->group(function () 
 
 // ========== KPIs ==========
 Route::prefix('kpis')->middleware('permission:VER_REPORTES')->group(function () {
-    Route::get('/meseros',   [EmpleadoController::class, 'getKpiMeseros']);
-    Route::get('/cocina',    [EmpleadoController::class, 'getKpiCocina']);
-    Route::get('/cocina/retrasos', [EmpleadoController::class, 'getKpiCocinaRetrasos']); // ← AGREGAR
-    Route::get('/cocina/reprocesos', [EmpleadoController::class, 'getKpiCocinaReprocesos']);
+    Route::get('/meseros',        [EmpleadoController::class, 'getKpiMeseros']);
+    Route::get('/meseros/{id}',   [EmpleadoController::class, 'getKpiMeseroIndividual']); // ← Perfil individual
+    Route::get('/cocina',         [EmpleadoController::class, 'getKpiCocina']);
+    Route::get('/cocina/retrasos',    [EmpleadoController::class, 'getKpiCocinaRetrasos']);
+    Route::get('/cocina/reprocesos',  [EmpleadoController::class, 'getKpiCocinaReprocesos']);
     Route::get('/admin',     [EmpleadoController::class, 'getKpiAdmin']);
     Route::get('/dashboard', [EmpleadoController::class, 'getKpiDashboard']);
 });

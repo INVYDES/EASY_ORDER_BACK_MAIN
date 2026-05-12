@@ -1315,6 +1315,381 @@ $satisfaccion = $satisfaccionStats->total > 0 ? [
 }
 
     /**
+     * GET /api/kpis/meseros/{id}
+     * Perfil de rendimiento INDIVIDUAL de un mesero específico.
+     *
+     * Incluye:
+     *  - Métricas base (ventas, órdenes, horas, ticket promedio, comisión)
+     *  - Tendencia diaria de ventas (para gráfico de línea)
+     *  - Horario pico (hora con más órdenes cerradas)
+     *  - Top 5 productos más pedidos en sus mesas
+     *  - Racha de asistencia consecutiva
+     *  - Comparativa contra el promedio del equipo de meseros
+     *  - Evaluación de satisfacción
+     */
+    public function getKpiMeseroIndividual(Request $request, $id)
+    {
+        try {
+            $authUser      = $request->user();
+            $restauranteId = (int) $this->getRestauranteId($authUser);
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
+            }
+
+            $validator = Validator::make(array_merge($request->all(), ['id' => $id]), [
+                'id'          => 'required|integer|exists:users,id',
+                'fecha_desde' => 'nullable|date',
+                'fecha_hasta' => 'nullable|date|after_or_equal:fecha_desde',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+
+            // ── 1. Obtener el mesero ──────────────────────────────────────────
+            $empleado = $this->empleadosBaseQuery($restauranteId)
+                ->whereHas('roles', fn ($q) => $q->where('nombre', 'MESERO'))
+                ->where('users.id', $id)
+                ->first();
+
+            if (!$empleado) {
+                return response()->json(['success' => false, 'message' => 'Mesero no encontrado en esta sucursal'], 404);
+            }
+
+            // ── 2. Asistencias del período ────────────────────────────────────
+            $asistenciasQuery = Asistencia::where('user_id', $empleado->id)
+                ->where('restaurante_id', $restauranteId);
+
+            if ($request->filled('fecha_desde')) {
+                $asistenciasQuery->whereDate('fecha', '>=', $request->fecha_desde);
+            }
+            if ($request->filled('fecha_hasta')) {
+                $asistenciasQuery->whereDate('fecha', '<=', $request->fecha_hasta);
+            }
+
+            $asistencias     = $asistenciasQuery->orderBy('fecha')->get();
+            $horasTotales    = $asistencias->sum('horas_trabajadas');
+            $turnos          = $asistencias->count();
+
+            // ── 3. Mesas asignadas ───────────────────────────────────────────
+            $mesasAsignadas = \App\Models\MesaMesero::where('user_id', $empleado->id)
+                ->where('restaurante_id', $restauranteId)
+                ->pluck('numero_mesa')
+                ->toArray();
+
+            // ── 4. Órdenes cerradas en esas mesas ───────────────────────────
+            $ordenesBase = \App\Models\Orden::where('restaurante_id', $restauranteId)
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
+
+            if (!empty($mesasAsignadas)) {
+                $ordenesBase->whereIn('mesa', $mesasAsignadas);
+            } else {
+                // Sin mesas asignadas → sin órdenes
+                $ordenesBase->whereRaw('1 = 0');
+            }
+
+            if ($request->filled('fecha_desde')) {
+                $ordenesBase->whereDate('created_at', '>=', $request->fecha_desde);
+            }
+            if ($request->filled('fecha_hasta')) {
+                $ordenesBase->whereDate('created_at', '<=', $request->fecha_hasta);
+            }
+
+            $ordenes           = $ordenesBase->get();
+            $ventasReales      = $ordenes->sum('total');
+            $ordenesCompletadas = $ordenes->count();
+
+            // ── 5. Métricas base ─────────────────────────────────────────────
+            $ventasPorHora   = $horasTotales > 0  ? round($ventasReales / $horasTotales, 2) : 0;
+            $ticketPromedio  = $ordenesCompletadas > 0 ? round($ventasReales / $ordenesCompletadas, 2) : 0;
+            $ventasPorTurno  = $turnos > 0          ? round($ventasReales / $turnos, 2) : 0;
+            $comisionEstimada = $empleado->comision_por_venta > 0
+                ? round($ventasReales * ($empleado->comision_por_venta / 100), 2)
+                : 0;
+
+            // ── 6. Tendencia diaria de ventas (para gráfico de línea) ────────
+            $tendenciaDiariaRaw = \App\Models\Orden::where('restaurante_id', $restauranteId)
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->when(!empty($mesasAsignadas), fn ($q) => $q->whereIn('mesa', $mesasAsignadas))
+                ->when($request->filled('fecha_desde'), fn ($q) => $q->whereDate('created_at', '>=', $request->fecha_desde))
+                ->when($request->filled('fecha_hasta'), fn ($q) => $q->whereDate('created_at', '<=', $request->fecha_hasta))
+                ->selectRaw('DATE(created_at) as fecha, COUNT(*) as ordenes, ROUND(SUM(total),2) as ventas')
+                ->groupByRaw('DATE(created_at)')
+                ->orderBy('fecha')
+                ->get();
+
+            $tendenciaDiaria = $tendenciaDiariaRaw->map(fn ($r) => [
+                'fecha'   => $r->fecha,
+                'ordenes' => (int) $r->ordenes,
+                'ventas'  => (float) $r->ventas,
+            ])->values();
+
+            // ── 7. Horario pico (hora con más órdenes) ───────────────────────
+            $horariosRaw = \App\Models\Orden::where('restaurante_id', $restauranteId)
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->when(!empty($mesasAsignadas), fn ($q) => $q->whereIn('mesa', $mesasAsignadas))
+                ->when($request->filled('fecha_desde'), fn ($q) => $q->whereDate('created_at', '>=', $request->fecha_desde))
+                ->when($request->filled('fecha_hasta'), fn ($q) => $q->whereDate('created_at', '<=', $request->fecha_hasta))
+                ->selectRaw('HOUR(created_at) as hora, COUNT(*) as total_ordenes, ROUND(SUM(total),2) as total_ventas')
+                ->groupByRaw('HOUR(created_at)')
+                ->orderByDesc('total_ordenes')
+                ->get();
+
+            $horarioPico = $horariosRaw->first()
+                ? [
+                    'hora'          => (int) $horariosRaw->first()->hora,
+                    'label'         => sprintf('%02d:00 - %02d:59', $horariosRaw->first()->hora, $horariosRaw->first()->hora),
+                    'ordenes'       => (int) $horariosRaw->first()->total_ordenes,
+                    'ventas'        => (float) $horariosRaw->first()->total_ventas,
+                ]
+                : null;
+
+            $distribucionHoraria = $horariosRaw->map(fn ($r) => [
+                'hora'    => (int) $r->hora,
+                'label'   => sprintf('%02d:00', $r->hora),
+                'ordenes' => (int) $r->total_ordenes,
+                'ventas'  => (float) $r->total_ventas,
+            ])->values();
+
+            // ── 8. Top 5 productos más pedidos en sus mesas ─────────────────
+            $topProductos = DB::table('orden_detalles as od')
+                ->join('ordenes as o', 'o.id', '=', 'od.orden_id')
+                ->join('productos as p', 'p.id', '=', 'od.producto_id')
+                ->where('o.restaurante_id', $restauranteId)
+                ->whereIn('o.estado', ['CERRADA', 'ENTREGADA'])
+                ->when(!empty($mesasAsignadas), fn ($q) => $q->whereIn('o.mesa', $mesasAsignadas))
+                ->when($request->filled('fecha_desde'), fn ($q) => $q->whereDate('o.created_at', '>=', $request->fecha_desde))
+                ->when($request->filled('fecha_hasta'), fn ($q) => $q->whereDate('o.created_at', '<=', $request->fecha_hasta))
+                ->selectRaw('p.id as producto_id, p.nombre as producto, SUM(od.cantidad) as cantidad_total, ROUND(SUM(od.subtotal),2) as ingreso_total')
+                ->groupBy('p.id', 'p.nombre')
+                ->orderByDesc('cantidad_total')
+                ->limit(5)
+                ->get()
+                ->map(fn ($r) => [
+                    'producto_id'   => $r->producto_id,
+                    'producto'      => $r->producto,
+                    'cantidad'      => (float) $r->cantidad_total,
+                    'ingreso_total' => (float) $r->ingreso_total,
+                ])->values();
+
+            // ── 9. Racha de asistencia consecutiva (días) ───────────────────
+            $rachaActual = 0;
+            $rachaMaxima = 0;
+            $rachaTemp   = 0;
+            $fechaAnterior = null;
+            foreach ($asistencias as $asistencia) {
+                $fechaActual = \Carbon\Carbon::parse($asistencia->fecha)->startOfDay();
+                if ($fechaAnterior === null) {
+                    $rachaTemp = 1;
+                } else {
+                    $diff = $fechaAnterior->diffInDays($fechaActual);
+                    $rachaTemp = $diff === 1 ? $rachaTemp + 1 : 1;
+                }
+                if ($rachaTemp > $rachaMaxima) {
+                    $rachaMaxima = $rachaTemp;
+                }
+                $fechaAnterior = $fechaActual;
+            }
+            // Racha actual: ¿está activa hasta hoy o ayer?
+            if ($fechaAnterior !== null) {
+                $hoy = \Carbon\Carbon::today();
+                $diffFin = $fechaAnterior->diffInDays($hoy);
+                $rachaActual = $diffFin <= 1 ? $rachaTemp : 0;
+            }
+
+            // ── 10. Satisfacción ─────────────────────────────────────────────
+            $satisfaccionStats = DB::table('satisfacciones')
+                ->where('user_id', $empleado->id)
+                ->where('restaurante_id', $restauranteId)
+                ->when($request->filled('fecha_desde'), fn ($q) =>
+                    $q->where('created_at', '>=', $request->fecha_desde . ' 00:00:00'))
+                ->when($request->filled('fecha_hasta'), fn ($q) =>
+                    $q->where('created_at', '<=', $request->fecha_hasta . ' 23:59:59'))
+                ->selectRaw('
+                    COUNT(*) as total,
+                    ROUND(AVG(calificacion), 2) as promedio,
+                    SUM(CASE WHEN calificacion = 5 THEN 1 ELSE 0 END) as cinco_estrellas,
+                    SUM(CASE WHEN calificacion = 4 THEN 1 ELSE 0 END) as cuatro_estrellas,
+                    SUM(CASE WHEN calificacion = 3 THEN 1 ELSE 0 END) as tres_estrellas,
+                    SUM(CASE WHEN calificacion = 2 THEN 1 ELSE 0 END) as dos_estrellas,
+                    SUM(CASE WHEN calificacion = 1 THEN 1 ELSE 0 END) as una_estrella
+                ')
+                ->first();
+
+            $satisfaccion = $satisfaccionStats->total > 0 ? [
+                'promedio'          => (float) $satisfaccionStats->promedio,
+                'total_calificaciones' => (int) $satisfaccionStats->total,
+                'distribucion'      => [
+                    '5' => (int) $satisfaccionStats->cinco_estrellas,
+                    '4' => (int) $satisfaccionStats->cuatro_estrellas,
+                    '3' => (int) $satisfaccionStats->tres_estrellas,
+                    '2' => (int) $satisfaccionStats->dos_estrellas,
+                    '1' => (int) $satisfaccionStats->una_estrella,
+                ],
+                'semaforo' => match (true) {
+                    $satisfaccionStats->promedio >= 4.0 => 'verde',
+                    $satisfaccionStats->promedio >= 3.0 => 'amarillo',
+                    default                             => 'rojo',
+                },
+            ] : null;
+
+            // ── 11. Comparativa vs. promedio del equipo ───────────────────────
+            $todosMeseros = $this->empleadosBaseQuery($restauranteId)
+                ->whereHas('roles', fn ($q) => $q->where('nombre', 'MESERO'))
+                ->where('users.id', '!=', $empleado->id)
+                ->pluck('users.id');
+
+            [$equipoVentas, $equipoOrdenes, $equipoHoras] = [0, 0, 0];
+            $totalCompaneros = $todosMeseros->count();
+
+            if ($totalCompaneros > 0) {
+                // Ventas del equipo (sin el mesero actual)
+                $mesas_otros = \App\Models\MesaMesero::whereIn('user_id', $todosMeseros)
+                    ->where('restaurante_id', $restauranteId)
+                    ->pluck('numero_mesa')
+                    ->toArray();
+
+                $equipoVentas = \App\Models\Orden::where('restaurante_id', $restauranteId)
+                    ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                    ->when(!empty($mesas_otros), fn ($q) => $q->whereIn('mesa', $mesas_otros))
+                    ->when($request->filled('fecha_desde'), fn ($q) => $q->whereDate('created_at', '>=', $request->fecha_desde))
+                    ->when($request->filled('fecha_hasta'), fn ($q) => $q->whereDate('created_at', '<=', $request->fecha_hasta))
+                    ->sum('total');
+
+                $equipoOrdenes = \App\Models\Orden::where('restaurante_id', $restauranteId)
+                    ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                    ->when(!empty($mesas_otros), fn ($q) => $q->whereIn('mesa', $mesas_otros))
+                    ->when($request->filled('fecha_desde'), fn ($q) => $q->whereDate('created_at', '>=', $request->fecha_desde))
+                    ->when($request->filled('fecha_hasta'), fn ($q) => $q->whereDate('created_at', '<=', $request->fecha_hasta))
+                    ->count();
+
+                $equipoHoras = Asistencia::whereIn('user_id', $todosMeseros)
+                    ->where('restaurante_id', $restauranteId)
+                    ->when($request->filled('fecha_desde'), fn ($q) => $q->whereDate('fecha', '>=', $request->fecha_desde))
+                    ->when($request->filled('fecha_hasta'), fn ($q) => $q->whereDate('fecha', '<=', $request->fecha_hasta))
+                    ->sum('horas_trabajadas');
+            }
+
+            $promedioEquipoVentas  = $totalCompaneros > 0 ? round($equipoVentas / $totalCompaneros, 2) : 0;
+            $promedioEquipoOrdenes = $totalCompaneros > 0 ? round($equipoOrdenes / $totalCompaneros, 2) : 0;
+            $promedioEquipoHoras   = $totalCompaneros > 0 ? round($equipoHoras / $totalCompaneros, 2) : 0;
+
+            $comparativa = [
+                'ventas' => [
+                    'mesero'        => round($ventasReales, 2),
+                    'promedio_equipo' => $promedioEquipoVentas,
+                    'diferencia'    => round($ventasReales - $promedioEquipoVentas, 2),
+                    'pct_vs_equipo' => $promedioEquipoVentas > 0
+                        ? round((($ventasReales - $promedioEquipoVentas) / $promedioEquipoVentas) * 100, 1)
+                        : null,
+                ],
+                'ordenes' => [
+                    'mesero'          => $ordenesCompletadas,
+                    'promedio_equipo' => $promedioEquipoOrdenes,
+                    'diferencia'      => round($ordenesCompletadas - $promedioEquipoOrdenes, 1),
+                    'pct_vs_equipo'   => $promedioEquipoOrdenes > 0
+                        ? round((($ordenesCompletadas - $promedioEquipoOrdenes) / $promedioEquipoOrdenes) * 100, 1)
+                        : null,
+                ],
+                'horas' => [
+                    'mesero'          => round($horasTotales, 2),
+                    'promedio_equipo' => $promedioEquipoHoras,
+                    'diferencia'      => round($horasTotales - $promedioEquipoHoras, 2),
+                    'pct_vs_equipo'   => $promedioEquipoHoras > 0
+                        ? round((($horasTotales - $promedioEquipoHoras) / $promedioEquipoHoras) * 100, 1)
+                        : null,
+                ],
+            ];
+
+            // ── 12. Semáforo general de rendimiento ───────────────────────────
+            $score = 0;
+            if ($comparativa['ventas']['pct_vs_equipo'] !== null) {
+                $score += $comparativa['ventas']['pct_vs_equipo'];
+            }
+            if ($satisfaccion && $satisfaccion['promedio'] >= 4.0) $score += 20;
+            if ($satisfaccion && $satisfaccion['promedio'] >= 3.0) $score += 10;
+
+            $semaforoGeneral = match (true) {
+                $score >= 10  => 'verde',
+                $score >= -10 => 'amarillo',
+                default       => 'rojo',
+            };
+
+            return response()->json([
+                'success' => true,
+                'modo'    => 'individual',
+                'data'    => [
+                    // Información del empleado
+                    'empleado' => [
+                        'id'                 => $empleado->id,
+                        'nombre'             => $empleado->name,
+                        'email'              => $empleado->email,
+                        'tipo_empleado'      => $empleado->tipo_empleado,
+                        'salario_base'       => (float) $empleado->salario_base,
+                        'comision_por_venta' => (float) $empleado->comision_por_venta,
+                        'mesas_asignadas'    => $mesasAsignadas,
+                    ],
+
+                    // Métricas del período
+                    'metricas' => [
+                        'periodo' => [
+                            'desde' => $request->filled('fecha_desde') ? $request->fecha_desde : null,
+                            'hasta' => $request->filled('fecha_hasta') ? $request->fecha_hasta : null,
+                        ],
+                        'horas_trabajadas'    => round($horasTotales, 2),
+                        'turnos'              => $turnos,
+                        'promedio_horas_dia'  => $turnos > 0 ? round($horasTotales / $turnos, 2) : 0,
+                        'ventas_totales'      => round($ventasReales, 2),
+                        'ventas_por_hora'     => $ventasPorHora,
+                        'ventas_por_turno'    => $ventasPorTurno,
+                        'ordenes_atendidas'   => $ordenesCompletadas,
+                        'ticket_promedio'     => $ticketPromedio,
+                        'comision_estimada'   => $comisionEstimada,
+                        'ingreso_total_estimado' => round((float)$empleado->salario_base + $comisionEstimada, 2),
+                        'semaforo_general'    => $semaforoGeneral,
+                    ],
+
+                    // Racha de asistencia
+                    'asistencia' => [
+                        'racha_actual_dias' => $rachaActual,
+                        'racha_maxima_dias' => $rachaMaxima,
+                        'total_turnos'      => $turnos,
+                    ],
+
+                    // Satisfacción de clientes
+                    'satisfaccion' => $satisfaccion,
+
+                    // Tendencia diaria (para gráfico de línea)
+                    'tendencia_diaria' => $tendenciaDiaria,
+
+                    // Horario pico
+                    'horario_pico'         => $horarioPico,
+                    'distribucion_horaria' => $distribucionHoraria,
+
+                    // Top productos
+                    'top_productos' => $topProductos,
+
+                    // Comparativa vs. equipo
+                    'comparativa_equipo' => $comparativa,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error en getKpiMeseroIndividual: ' . $e->getMessage(), [
+                'trace'          => $e->getTraceAsString(),
+                'restaurante_id' => $restauranteId ?? null,
+                'mesero_id'      => $id,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener KPI del mesero: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
  * GET /api/kpis/cocina
  */
 public function getKpiCocina(Request $request)
