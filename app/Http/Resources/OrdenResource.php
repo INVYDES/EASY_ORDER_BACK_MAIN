@@ -36,7 +36,10 @@ class OrdenResource extends JsonResource
                     'estado'        => $d->estado_preparacion,
                 ]);
             }),
+            'metodo_pago'      => $this->metodo_pago,
+            'propina'          => (float) ($this->propina ?? 0),
             'created_at'       => $this->created_at?->format('Y-m-d H:i:s'),
+            'updated_at'       => $this->updated_at?->format('Y-m-d H:i:s'),
         ];
     }
 }
