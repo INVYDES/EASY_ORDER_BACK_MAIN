@@ -160,10 +160,9 @@ class CajaController extends Controller
             $hoy = now()->format('Y-m-d');
 
             if (Caja::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', $hoy)
                 ->whereNull('fecha_cierre')
                 ->exists()) {
-                return response()->json(['success' => false, 'message' => 'Ya hay una caja abierta para hoy'], 409);
+                return response()->json(['success' => false, 'message' => 'Ya hay una caja abierta para este restaurante. Ciérrala antes de abrir una nueva.'], 409);
             }
 
             DB::beginTransaction();
@@ -236,12 +235,11 @@ class CajaController extends Controller
 
             $caja = Caja::with(['usuarioApertura', 'usuarioCierre'])
                 ->where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', $hoy)
                 ->whereNull('fecha_cierre')
                 ->first();
 
             if (!$caja) {
-                return response()->json(['success' => false, 'message' => 'No hay una caja abierta para hoy'], 404);
+                return response()->json(['success' => false, 'message' => 'No hay una caja abierta actualmente'], 404);
             }
 
             DB::beginTransaction();
