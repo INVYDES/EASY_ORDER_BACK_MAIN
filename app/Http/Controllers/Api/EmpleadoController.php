@@ -606,20 +606,20 @@ class EmpleadoController extends Controller
             // Obtener configuración de nómina
             $config = ConfiguracionNomina::where('restaurante_id', $restauranteId)->first();
             
-            // Usar valores de entrada o los del empleado/configuración
+            // Usar valores de entrada o los del empleado (respetando el 0)
             $valorHora = $request->filled('valor_hora') 
                 ? (float) $request->valor_hora 
-                : ($empleado->salario_por_hora > 0 ? $empleado->salario_por_hora : ($config->valor_hora_por_defecto ?? 50));
+                : ($empleado->salario_por_hora !== null ? (float)$empleado->salario_por_hora : 0);
             
             $salarioBase = $request->filled('salario_base') 
                 ? (float) $request->salario_base 
-                : ($empleado->salario_base > 0 ? $empleado->salario_base : ($config->salario_base_por_defecto ?? 8000));
+                : ($empleado->salario_base !== null ? (float)$empleado->salario_base : 0);
             
             $pagoHoras = round($valorHora * $horasTotales, 2);
             
-            $comisionPorcentaje = $empleado->comision_por_venta > 0 
-                ? $empleado->comision_por_venta 
-                : ($config->porcentaje_comision_ventas ?? 5);
+            $comisionPorcentaje = $empleado->comision_por_venta !== null 
+                ? (float)$empleado->comision_por_venta 
+                : 0;
             
             $comisionVentas = $request->filled('comision_ventas')
                 ? (float) $request->comision_ventas
