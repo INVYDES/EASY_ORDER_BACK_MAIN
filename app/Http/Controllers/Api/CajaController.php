@@ -642,6 +642,7 @@ class CajaController extends Controller
                 'created_at_formateado' => $m->created_at->format('d/m/Y H:i'),
             ]);
 
+            $TotalIngresos = $caja->movimientos->where('tipo', 'ingreso')->sum('monto');
             $TotalIngresosManuales = $caja->movimientos->where('tipo', 'ingreso')->filter(fn($m) => !str_starts_with($m->description ?? $m->descripcion, 'Venta - Orden'))->sum('monto');
             $TotalEgresos  = $caja->movimientos->where('tipo', 'egreso')->sum('monto');
 
