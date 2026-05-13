@@ -695,13 +695,13 @@ class OrdenController extends Controller
                             $ordenesCreadas[] = $nuevaOrden->id;
                         }
 
-                        if ($caja && strtolower($metodoPago) === 'efectivo') {
+                        if ($caja) {
                             \App\Models\CajaMovimientos::create([
                                 'caja_id'     => $caja->id,
                                 'usuario_id'  => $user->id,
                                 'tipo'        => 'ingreso',
                                 'monto'       => $pTotal,
-                                'descripcion' => "Venta - Orden #{$orderIdForLog} ({$orden->tipo_orden}) - " . ($p['comensal'] ?? 'Ticket'),
+                                'descripcion' => "Venta - Orden #{$orderIdForLog} ({$metodoPago}) - " . ($p['comensal'] ?? 'Ticket'),
                                 'referencia'  => $p['referencia'] ?? '',
                             ]);
                         }
@@ -727,13 +727,14 @@ class OrdenController extends Controller
                         'total'       => $orden->detalles()->sum('subtotal') + ($request->propina ?? 0),
                     ]);
 
-                    if ($caja && strtolower($request->metodo_pago ?? 'efectivo') === 'efectivo') {
+                    if ($caja) {
+                        $mPago = $request->metodo_pago ?? 'efectivo';
                         \App\Models\CajaMovimientos::create([
                             'caja_id'     => $caja->id,
                             'usuario_id'  => $user->id,
                             'tipo'        => 'ingreso',
                             'monto'       => $orden->total,
-                            'descripcion' => "Venta - Orden #{$orden->id} ({$orden->tipo_orden})",
+                            'descripcion' => "Venta - Orden #{$orden->id} ({$mPago})",
                             'referencia'  => '',
                         ]);
                     }

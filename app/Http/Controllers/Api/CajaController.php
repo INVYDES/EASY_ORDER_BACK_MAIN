@@ -105,7 +105,7 @@ class CajaController extends Controller
                 ->first();
 
             $movimientos   = CajaMovimientos::where('caja_id', $caja->id)->orderByDesc('created_at')->get();
-            $TotalIngresos = $movimientos->where('tipo', 'ingreso')->sum('monto');
+            $TotalIngresosManuales = $movimientos->where('tipo', 'ingreso')->filter(fn($m) => !str_starts_with($m->description ?? $m->descripcion, 'Venta - Orden'))->sum('monto');
             $TotalEgresos  = $movimientos->where('tipo', 'egreso')->sum('monto');
 
             $v = $this->formatVentas($ventas);
@@ -116,7 +116,7 @@ class CajaController extends Controller
                     'is_open'             => true,
                     'caja_id'             => $caja->id,
                     'opening_amount'      => (float) $caja->monto_inicial,
-                    'cash_in_register'    => (float) ($caja->monto_inicial + $TotalIngresos - $TotalEgresos),
+                    'cash_in_register'    => (float) ($caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $TotalIngresosManuales - $TotalEgresos),
                     'daily_sales'         => $v['efectivo'],
                     'card_sales'          => $v['tarjeta'],
                     'transfer_sales'      => $v['transferencia'],
@@ -254,10 +254,13 @@ class CajaController extends Controller
 
             $v = $this->formatVentas($ventas);
 
-            $ingresos = CajaMovimientos::where('caja_id', $caja->id)->where('tipo', 'ingreso')->sum('monto');
+            $ingresosManuales = CajaMovimientos::where('caja_id', $caja->id)
+                ->where('tipo', 'ingreso')
+                ->where('descripcion', 'NOT LIKE', 'Venta - Orden%')
+                ->sum('monto');
             $egresos  = CajaMovimientos::where('caja_id', $caja->id)->where('tipo', 'egreso')->sum('monto');
 
-            $efectivoEsperado = $caja->monto_inicial + $ingresos - $egresos;
+            $efectivoEsperado = $caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $ingresosManuales - $egresos;
             $diferencia       = $request->efectivo_final - $efectivoEsperado;
             $totalVentas      = $this->totalVentas($ventas);
 
@@ -642,7 +645,7 @@ class CajaController extends Controller
                 'created_at_formateado' => $m->created_at->format('d/m/Y H:i'),
             ]);
 
-            $TotalIngresos = $caja->movimientos->where('tipo', 'ingreso')->sum('monto');
+            $TotalIngresosManuales = $caja->movimientos->where('tipo', 'ingreso')->filter(fn($m) => !str_starts_with($m->description ?? $m->descripcion, 'Venta - Orden'))->sum('monto');
             $TotalEgresos  = $caja->movimientos->where('tipo', 'egreso')->sum('monto');
 
             // Calcular propinas al vuelo para el historial
@@ -671,6 +674,7 @@ class CajaController extends Controller
                         'monto_inicial' => (float) $caja->monto_inicial,
                         'monto_final'   => (float) $caja->monto_final,
                         'diferencia'    => (float) $caja->diferencia,
+                        'efectivo_esperado' => (float) ($caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $TotalIngresosManuales - $TotalEgresos),
                     ],
                     'ventas' => [
                         'efectivo'      => (float) $caja->ventas_efectivo,
