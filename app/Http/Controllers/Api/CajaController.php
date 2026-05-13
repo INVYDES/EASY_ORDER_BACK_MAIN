@@ -76,8 +76,8 @@ class CajaController extends Controller
 
             $caja = Caja::with('usuarioApertura')
                 ->where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', $hoy)
                 ->whereNull('fecha_cierre')
+                ->latest()
                 ->first();
 
             if (!$caja) {
@@ -394,7 +394,6 @@ class CajaController extends Controller
 
             $restauranteActivo = app('restaurante_activo');
             $caja = Caja::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', now()->format('Y-m-d'))
                 ->whereNull('fecha_cierre')
                 ->latest()
                 ->first();
@@ -499,7 +498,6 @@ class CajaController extends Controller
 
             $caja = Caja::with(['usuarioApertura', 'usuarioCierre'])
                 ->where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', $hoy)
                 ->whereNull('fecha_cierre')
                 ->latest()
                 ->first();
