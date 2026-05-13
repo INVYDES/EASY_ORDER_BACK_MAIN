@@ -504,7 +504,16 @@ class CajaController extends Controller
             $movimientos   = CajaMovimientos::where('caja_id', $caja->id)->get();
             $TotalIngresos = $movimientos->where('tipo', 'ingreso')->sum('monto');
             $TotalEgresos  = $movimientos->where('tipo', 'egreso')->sum('monto');
-            $totalVentas   = $caja->total_ventas;
+            
+            // Calcular propinas al vuelo
+            $vRaw = Orden::where('restaurante_id', $restauranteActivo->id)
+                ->where('updated_at', '>=', $caja->fecha_apertura)
+                ->where('estado', 'CERRADA')
+                ->selectRaw($this->ventasSelectRaw())
+                ->first();
+            $v = $this->formatVentas($vRaw);
+            
+            $totalVentas = $caja->total_ventas;
 
             return response()->json([
                 'success' => true,
@@ -529,6 +538,14 @@ class CajaController extends Controller
                         'mercadopago'   => (float) $caja->ventas_mercadopago,
                         'total'         => $totalVentas,
                         'total_ordenes' => (int) $caja->total_ordenes,
+                    ],
+                    'propinas' => [
+                        'efectivo'      => (float) $v['propinas_efectivo'],
+                        'tarjeta'       => (float) $v['propinas_tarjeta'],
+                        'transferencia' => (float) $v['propinas_transferencia'],
+                        'paypal'        => (float) $v['propinas_paypal'],
+                        'mercadopago'   => (float) $v['propinas_mercadopago'],
+                        'total'         => (float) ($v['propinas_efectivo'] + $v['propinas_tarjeta'] + $v['propinas_transferencia'] + $v['propinas_paypal'] + $v['propinas_mercadopago']),
                     ],
                     'movimientos' => [
                         'ingresos'          => (float) $TotalIngresos,
@@ -624,6 +641,18 @@ class CajaController extends Controller
             $TotalIngresos = $caja->movimientos->where('tipo', 'ingreso')->sum('monto');
             $TotalEgresos  = $caja->movimientos->where('tipo', 'egreso')->sum('monto');
 
+            // Calcular propinas al vuelo para el historial
+            $queryPropinas = Orden::where('restaurante_id', $restauranteActivo->id)
+                ->where('estado', 'CERRADA')
+                ->where('updated_at', '>=', $caja->fecha_apertura);
+            
+            if ($caja->fecha_cierre) {
+                $queryPropinas->where('updated_at', '<=', $caja->fecha_cierre);
+            }
+            
+            $vRaw = $queryPropinas->selectRaw($this->ventasSelectRaw())->first();
+            $v = $this->formatVentas($vRaw);
+
             return response()->json([
                 'success' => true,
                 'data'    => [
@@ -647,6 +676,14 @@ class CajaController extends Controller
                         'mercadopago'   => (float) $caja->ventas_mercadopago,
                         'total'         => $caja->total_ventas,
                         'total_ordenes' => (int) $caja->total_ordenes,
+                    ],
+                    'propinas' => [
+                        'efectivo'      => (float) $v['propinas_efectivo'],
+                        'tarjeta'       => (float) $v['propinas_tarjeta'],
+                        'transferencia' => (float) $v['propinas_transferencia'],
+                        'paypal'        => (float) $v['propinas_paypal'],
+                        'mercadopago'   => (float) $v['propinas_mercadopago'],
+                        'total'         => (float) ($v['propinas_efectivo'] + $v['propinas_tarjeta'] + $v['propinas_transferencia'] + $v['propinas_paypal'] + $v['propinas_mercadopago']),
                     ],
                     'movimientos' => [
                         'ingresos'          => (float) $TotalIngresos,
