@@ -16,14 +16,14 @@ class CajaController extends Controller
     private function ventasSelectRaw(): string
     {
         return '
-            SUM(CASE WHEN metodo_pago = "efectivo"       THEN total ELSE 0 END) as ventas_efectivo,
-            SUM(CASE WHEN metodo_pago = "tarjeta"        THEN total ELSE 0 END) as ventas_tarjeta,
-            SUM(CASE WHEN metodo_pago = "transferencia"  THEN total ELSE 0 END) as ventas_transferencia,
-            SUM(CASE WHEN metodo_pago = "paypal"         THEN total ELSE 0 END) as ventas_paypal,
-            SUM(CASE WHEN metodo_pago = "mercadopago"    THEN total ELSE 0 END) as ventas_mercadopago,
+            SUM(CASE WHEN metodo_pago = "efectivo"       THEN (total - propina) ELSE 0 END) as ventas_efectivo,
+            SUM(CASE WHEN metodo_pago = "tarjeta"        THEN (total - propina) ELSE 0 END) as ventas_tarjeta,
+            SUM(CASE WHEN metodo_pago = "transferencia"  THEN (total - propina) ELSE 0 END) as ventas_transferencia,
+            SUM(CASE WHEN metodo_pago = "paypal"         THEN (total - propina) ELSE 0 END) as ventas_paypal,
+            SUM(CASE WHEN metodo_pago = "mercadopago"    THEN (total - propina) ELSE 0 END) as ventas_mercadopago,
             SUM(CASE WHEN metodo_pago NOT IN (
                 "efectivo","tarjeta","transferencia","paypal","mercadopago"
-            ) THEN total ELSE 0 END) as ventas_otros,
+            ) THEN (total - propina) ELSE 0 END) as ventas_otros,
             SUM(CASE WHEN metodo_pago = "efectivo"       THEN propina ELSE 0 END) as propinas_efectivo,
             SUM(CASE WHEN metodo_pago = "tarjeta"        THEN propina ELSE 0 END) as propinas_tarjeta,
             SUM(CASE WHEN metodo_pago = "transferencia"  THEN propina ELSE 0 END) as propinas_transferencia,
@@ -116,7 +116,7 @@ class CajaController extends Controller
                     'is_open'             => true,
                     'caja_id'             => $caja->id,
                     'opening_amount'      => (float) $caja->monto_inicial,
-                    'cash_in_register'    => (float) ($caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $TotalIngresos - $TotalEgresos),
+                    'cash_in_register'    => (float) ($caja->monto_inicial + $TotalIngresos - $TotalEgresos),
                     'daily_sales'         => $v['efectivo'],
                     'card_sales'          => $v['tarjeta'],
                     'transfer_sales'      => $v['transferencia'],
@@ -257,7 +257,7 @@ class CajaController extends Controller
             $ingresos = CajaMovimientos::where('caja_id', $caja->id)->where('tipo', 'ingreso')->sum('monto');
             $egresos  = CajaMovimientos::where('caja_id', $caja->id)->where('tipo', 'egreso')->sum('monto');
 
-            $efectivoEsperado = $caja->monto_inicial + $v['efectivo'] + $v['propinas_efectivo'] + $ingresos - $egresos;
+            $efectivoEsperado = $caja->monto_inicial + $ingresos - $egresos;
             $diferencia       = $request->efectivo_final - $efectivoEsperado;
             $totalVentas      = $this->totalVentas($ventas);
 

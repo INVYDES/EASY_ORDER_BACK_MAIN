@@ -695,7 +695,7 @@ class OrdenController extends Controller
                             $ordenesCreadas[] = $nuevaOrden->id;
                         }
 
-                        if ($caja) {
+                        if ($caja && strtolower($metodoPago) === 'efectivo') {
                             \App\Models\CajaMovimientos::create([
                                 'caja_id'     => $caja->id,
                                 'usuario_id'  => $user->id,
@@ -727,7 +727,7 @@ class OrdenController extends Controller
                         'total'       => $orden->detalles()->sum('subtotal') + ($request->propina ?? 0),
                     ]);
 
-                    if ($caja) {
+                    if ($caja && strtolower($request->metodo_pago ?? 'efectivo') === 'efectivo') {
                         \App\Models\CajaMovimientos::create([
                             'caja_id'     => $caja->id,
                             'usuario_id'  => $user->id,
