@@ -239,7 +239,7 @@ final class AuthController extends Controller
                 'restaurante_activo' => $request->restaurante_id,
             ]);
 
-            $user->update(['username' => "{$request->propietario_id}-{$user->id}"]);
+            $user->update(['username' => "{$request->propietario_id}{$user->id}"]);
 
             $user->roles()->attach((int) $request->rol_id);
             $user->restaurantes()->attach((int) $request->restaurante_id);
