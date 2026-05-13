@@ -22,7 +22,7 @@ class EmpleadoController extends Controller
     /** Roles de personal operativo */
     private function staffRoleNombres(): array
     {
-        return ['MESERO', 'COCINA', 'CAJA', 'ADMIN', 'MENU', 'BARRA'];
+        return ['MESERO', 'COCINA', 'CAJA', 'ADMIN', 'MENU'];
     }
 
     private function empleadosBaseQuery(int $restauranteId)
