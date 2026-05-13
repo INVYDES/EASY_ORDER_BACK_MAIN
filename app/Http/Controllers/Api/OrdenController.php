@@ -1153,4 +1153,37 @@ class OrdenController extends Controller
             'updated_at_formateado'  => $orden->updated_at?->format('d/m/Y H:i'),
         ];
     }
+    /**
+     * Obtener conteo de pedidos pendientes por estación
+     */
+    public function pendientesConteo(Request $request)
+    {
+        try {
+            $restauranteActivo = app('restaurante_activo');
+            
+            $conteos = DB::table('orden_detalles')
+                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->join('categorias', 'productos.categoria_id', '=', 'categorias.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->whereIn('orden_detalles.estado_preparacion', ['PENDIENTE', 'EN_PREPARACION'])
+                ->whereIn('ordenes.estado', ['ABIERTA', 'POR_PREPARAR', 'EN_PREPARACION', 'LISTA', 'ENTREGADA'])
+                ->select('categorias.nombre', DB::raw('count(*) as total'))
+                ->groupBy('categorias.nombre')
+                ->get()
+                ->pluck('total', 'nombre')
+                ->toArray();
+
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'cocina'  => $conteos['Cocina'] ?? $conteos['COCINA'] ?? 0,
+                    'barra'   => $conteos['Barra'] ?? $conteos['BARRA'] ?? 0,
+                    'postres' => $conteos['Postres'] ?? $conteos['POSTRES'] ?? 0,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
 }

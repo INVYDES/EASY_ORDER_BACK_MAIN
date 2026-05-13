@@ -295,6 +295,7 @@ Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('
 
     // ========== ÓRDENES ==========
     Route::prefix('ordenes')->group(function () {
+        Route::get('/pendientes/conteo', [OrdenController::class, 'pendientesConteo'])->middleware('permission:VER_ORDENES');
         Route::get('/resumen', [OrdenController::class, 'resumen'])->middleware('permission:VER_ORDENES');
         Route::get('/hoy',     [OrdenController::class, 'hoy'])->middleware('permission:VER_ORDENES');
         Route::get('/',        [OrdenController::class, 'index'])->middleware('permission:VER_ORDENES');
