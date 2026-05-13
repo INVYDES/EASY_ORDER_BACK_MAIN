@@ -236,6 +236,7 @@ class CajaController extends Controller
             $caja = Caja::with(['usuarioApertura', 'usuarioCierre'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->whereNull('fecha_cierre')
+                ->latest()
                 ->first();
 
             if (!$caja) {
