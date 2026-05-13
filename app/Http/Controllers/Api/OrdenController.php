@@ -630,6 +630,7 @@ class OrdenController extends Controller
             $request->validate([
                 'metodo_pago'        => 'nullable|string|max:50',
                 'propina'            => 'nullable|numeric|min:0',
+                'referencia'         => 'nullable|string|max:100',
                 'pagos'              => 'nullable|array',
                 'pagos.*.monto'      => 'required_with:pagos|numeric|min:0',
                 'pagos.*.metodo'     => 'required_with:pagos|string|max:50',
@@ -724,6 +725,7 @@ class OrdenController extends Controller
                         'estado'      => 'CERRADA',
                         'metodo_pago' => $request->metodo_pago,
                         'propina'     => $request->propina ?? 0,
+                        'referencia'  => $request->referencia,
                         'total'       => $orden->detalles()->sum('subtotal') + ($request->propina ?? 0),
                     ]);
 
@@ -735,7 +737,7 @@ class OrdenController extends Controller
                             'tipo'        => 'ingreso',
                             'monto'       => $orden->total,
                             'descripcion' => "Venta - Orden #{$orden->id} ({$mPago})",
-                            'referencia'  => '',
+                            'referencia'  => $request->referencia ?? '',
                         ]);
                     }
 
