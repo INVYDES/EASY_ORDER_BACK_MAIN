@@ -1167,22 +1167,29 @@ class OrdenController extends Controller
                 ->join('categorias', 'productos.categoria_id', '=', 'categorias.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
                 ->whereIn('orden_detalles.estado_preparacion', ['PENDIENTE', 'EN_PREPARACION'])
-                ->whereIn('ordenes.estado', ['ABIERTA', 'POR_PREPARAR', 'EN_PREPARACION', 'LISTA', 'ENTREGADA'])
-                ->select('categorias.nombre')
+                ->whereIn('ordenes.estado', ['ABIERTA', 'POR_PREPARAR', 'EN_PREPARACION', 'LISTA'])
+                ->select('categorias.nombre as categoria_nombre')
                 ->get();
 
             $res = ['cocina' => 0, 'barra' => 0, 'postres' => 0];
 
             foreach ($detalles as $d) {
-                $nom = strtolower($d->nombre);
-                if (str_contains($nom, 'barra') || str_contains($nom, 'bebida') || str_contains($nom, 'refresco') || str_contains($nom, 'fria')) {
+                $nom = strtolower($d->categoria_nombre ?? '');
+                
+                // Lógica de Barra
+                if (strpos($nom, 'barra') !== false || strpos($nom, 'bebida') !== false || strpos($nom, 'refresco') !== false || strpos($nom, 'fria') !== false) {
                     $res['barra']++;
-                } elseif (str_contains($nom, 'postre') || str_contains($nom, 'dulce') || str_contains($nom, 'helado')) {
-                    $res['postres']++;
-                } else {
-                    // Por defecto, asumimos cocina para el resto si están pendientes
-                    $res['cocina']++;
+                    continue;
                 }
+                
+                // Lógica de Postres
+                if (strpos($nom, 'postre') !== false || strpos($nom, 'dulce') !== false || strpos($nom, 'helado') !== false || strpos($nom, 'pastel') !== false) {
+                    $res['postres']++;
+                    continue;
+                }
+                
+                // Por defecto Cocina
+                $res['cocina']++;
             }
 
             return response()->json([
