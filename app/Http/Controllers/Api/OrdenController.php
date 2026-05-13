@@ -1161,26 +1161,33 @@ class OrdenController extends Controller
         try {
             $restauranteActivo = app('restaurante_activo');
             
-            $conteos = DB::table('orden_detalles')
+            $detalles = DB::table('orden_detalles')
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->join('categorias', 'productos.categoria_id', '=', 'categorias.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
                 ->whereIn('orden_detalles.estado_preparacion', ['PENDIENTE', 'EN_PREPARACION'])
                 ->whereIn('ordenes.estado', ['ABIERTA', 'POR_PREPARAR', 'EN_PREPARACION', 'LISTA', 'ENTREGADA'])
-                ->select('categorias.nombre', DB::raw('count(*) as total'))
-                ->groupBy('categorias.nombre')
-                ->get()
-                ->pluck('total', 'nombre')
-                ->toArray();
+                ->select('categorias.nombre')
+                ->get();
+
+            $res = ['cocina' => 0, 'barra' => 0, 'postres' => 0];
+
+            foreach ($detalles as $d) {
+                $nom = strtolower($d->nombre);
+                if (str_contains($nom, 'barra') || str_contains($nom, 'bebida') || str_contains($nom, 'refresco') || str_contains($nom, 'fria')) {
+                    $res['barra']++;
+                } elseif (str_contains($nom, 'postre') || str_contains($nom, 'dulce') || str_contains($nom, 'helado')) {
+                    $res['postres']++;
+                } else {
+                    // Por defecto, asumimos cocina para el resto si están pendientes
+                    $res['cocina']++;
+                }
+            }
 
             return response()->json([
                 'success' => true,
-                'data'    => [
-                    'cocina'  => $conteos['Cocina'] ?? $conteos['COCINA'] ?? 0,
-                    'barra'   => $conteos['Barra'] ?? $conteos['BARRA'] ?? 0,
-                    'postres' => $conteos['Postres'] ?? $conteos['POSTRES'] ?? 0,
-                ]
+                'data'    => $res
             ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
