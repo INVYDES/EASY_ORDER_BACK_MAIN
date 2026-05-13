@@ -22,7 +22,7 @@ class EmpleadoController extends Controller
     /** Roles de personal operativo */
     private function staffRoleNombres(): array
     {
-        return ['MESERO', 'COCINA', 'CAJA', 'ADMIN'];
+        return ['MESERO', 'COCINA', 'CAJA', 'ADMIN', 'MENU', 'BARRA'];
     }
 
     private function empleadosBaseQuery(int $restauranteId)
@@ -201,7 +201,7 @@ class EmpleadoController extends Controller
                     'fecha_contratacion' => now()->toDateString(),
                 ]);
 
-                $empleadoUser->update(['username' => (string) $restaurante->propietario_id . $empleadoUser->id]);
+                $empleadoUser->update(['username' => $restaurante->propietario_id . $empleadoUser->id]);
 
                 $empleadoUser->roles()->attach($request->rol_id);
                 $empleadoUser->restaurantes()->syncWithoutDetaching([$restauranteId]);

@@ -25,6 +25,10 @@ class CajaController extends Controller
                 "efectivo","tarjeta","transferencia","paypal","mercadopago"
             ) THEN total ELSE 0 END) as ventas_otros,
             SUM(CASE WHEN metodo_pago = "efectivo"       THEN propina ELSE 0 END) as propinas_efectivo,
+            SUM(CASE WHEN metodo_pago = "tarjeta"        THEN propina ELSE 0 END) as propinas_tarjeta,
+            SUM(CASE WHEN metodo_pago = "transferencia"  THEN propina ELSE 0 END) as propinas_transferencia,
+            SUM(CASE WHEN metodo_pago = "paypal"         THEN propina ELSE 0 END) as propinas_paypal,
+            SUM(CASE WHEN metodo_pago = "mercadopago"    THEN propina ELSE 0 END) as propinas_mercadopago,
             COUNT(*) as total_ordenes
         ';
     }
@@ -40,6 +44,10 @@ class CajaController extends Controller
             'mercadopago'       => (float) ($ventas->ventas_mercadopago ?? 0),
             'otros'             => (float) ($ventas->ventas_otros ?? 0),
             'propinas_efectivo' => (float) ($ventas->propinas_efectivo ?? 0),
+            'propinas_tarjeta'  => (float) ($ventas->propinas_tarjeta ?? 0),
+            'propinas_transferencia' => (float) ($ventas->propinas_transferencia ?? 0),
+            'propinas_paypal'   => (float) ($ventas->propinas_paypal ?? 0),
+            'propinas_mercadopago' => (float) ($ventas->propinas_mercadopago ?? 0),
             'total_ordenes'     => (int)   ($ventas->total_ordenes ?? 0),
         ];
     }
