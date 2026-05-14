@@ -219,20 +219,12 @@ class MeseroController extends Controller
                 return response()->json(['success' => false, 'message' => 'No se pueden asignar mesas duplicadas'], 422);
             }
 
-            // Verificar conflictos con otros meseros
-            $mesasEnUso = MesaMesero::where('restaurante_id', $restauranteId)
+            // Liberar las mesas de otros meseros si ya estaban asignadas
+            // Esto permite la reasignación rápida desde el panel administrativo
+            MesaMesero::where('restaurante_id', $restauranteId)
                 ->where('user_id', '!=', $request->user_id)
                 ->whereIn('numero_mesa', $request->mesas)
-                ->pluck('numero_mesa')
-                ->toArray();
-
-            if (!empty($mesasEnUso)) {
-                DB::rollBack();
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Las siguientes mesas ya están asignadas a otro mesero: ' . implode(', ', $mesasEnUso)
-                ], 422);
-            }
+                ->delete();
 
             // 1. Obtener las asignaciones actuales
             $currentAssignments = MesaMesero::where('user_id', $request->user_id)
