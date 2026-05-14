@@ -14,7 +14,7 @@ class PaqueteController extends Controller
     {
         try {
             $restauranteActivo = app('restaurante_activo');
-            $paquetes = Paquete::with('productos.categoria')
+            $paquetes = Paquete::with(['productos.categoria', 'productos.ingredientes'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->when($request->filled('buscar'), function($q) use ($request) {
                     $q->where('nombre', 'LIKE', "%{$request->buscar}%");
