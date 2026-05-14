@@ -150,6 +150,11 @@ class Orden extends Model
         return '$' . number_format($this->total, 2);
     }
 
+    public function getSubtotalAttribute()
+    {
+        return (float) ($this->total - ($this->propina ?? 0));
+    }
+
     public function getPropinaFormateadaAttribute(): string
     {
         return '$' . number_format($this->propina, 2);

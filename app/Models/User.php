@@ -32,7 +32,8 @@ class User extends Authenticatable
         'salario_base',
         'salario_por_hora',
         'comision_por_venta',
-        'fecha_contratacion'
+        'fecha_contratacion',
+        'en_linea'
     ];
 
     protected $hidden = [
@@ -46,6 +47,7 @@ class User extends Authenticatable
         'salario_base'       => 'decimal:2',
         'salario_por_hora'   => 'decimal:2',
         'comision_por_venta' => 'decimal:2',
+        'en_linea'           => 'boolean',
     ];
 
     /*
@@ -88,6 +90,11 @@ class User extends Authenticatable
     public function nominas()
     {
         return $this->hasMany(Nomina::class);
+    }
+
+    public function horarios()
+    {
+        return $this->hasMany(HorarioEmpleado::class, 'user_id');
     }
 
     /*

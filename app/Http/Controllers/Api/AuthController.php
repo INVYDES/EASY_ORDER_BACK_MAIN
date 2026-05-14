@@ -59,6 +59,9 @@ final class AuthController extends Controller
 
         $user->tokens()->delete();
 
+        // Marcar como en línea
+        $user->update(['en_linea' => true]);
+
         $token = $user->createToken('api_token_' . $user->id)->plainTextToken;
 
         return $this->success([
@@ -90,6 +93,9 @@ final class AuthController extends Controller
 
         $user->tokens()->delete();
 
+        // Marcar como en línea
+        $user->update(['en_linea' => true]);
+
         $token = $user->createToken('empleado_' . $user->id)->plainTextToken;
 
         return $this->success([
@@ -103,7 +109,12 @@ final class AuthController extends Controller
      */
     public function logout(Request $request): JsonResponse
     {
-        $request->user()->currentAccessToken()->delete();
+        $user = $request->user();
+        
+        // Marcar como fuera de línea
+        $user->update(['en_linea' => false]);
+
+        $user->currentAccessToken()->delete();
 
         return $this->success(null, message: 'Sesión cerrada correctamente');
     }

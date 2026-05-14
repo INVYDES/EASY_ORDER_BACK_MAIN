@@ -1,0 +1,68 @@
+================================================================================
+RESUMEN DE CAMBIOS - SESIÓN 14 DE MAYO DE 2026
+PROYECTO: EASY ORDER BACK MAIN
+================================================================================
+
+1. OPTIMIZACIÓN DE MIGRACIONES (SEGURIDAD E IDEMPOTENCIA)
+--------------------------------------------------------------------------------
+Se corrigieron errores de "columna duplicada" (SQLSTATE[42S21]) que impedían
+la ejecución fluida de php artisan migrate.
+
+Archivos modificados:
+- database/migrations/2026_05_08_000001_add_tipo_orden_to_ordenes_table.php
+- database/migrations/2026_05_08_000002_add_reprocesado_to_orden_detalles_table.php
+
+Cambio: Se añadieron validaciones Schema::hasColumn() para asegurar que las
+migraciones solo intenten crear o borrar columnas si estas existen/no existen.
+
+
+2. GESTIÓN DE ESTADO DE CONEXIÓN (EN LÍNEA / FUERA DE LÍNEA)
+--------------------------------------------------------------------------------
+Implementación de rastreo automático para saber qué empleados están usando
+el sistema activamente.
+
+Archivos creados/modificados:
+- database/migrations/2026_05_14_132000_add_en_linea_to_users_table.php (NUEVO)
+- app/Models/User.php: Añadido 'en_linea' a $fillable y $casts.
+- app/Http/Controllers/Api/AuthController.php:
+  * Login: Se marca automáticamente en_linea = true.
+  * Logout: Se marca automáticamente en_linea = false.
+
+
+3. INTEGRACIÓN DE HORARIOS LABORALES
+--------------------------------------------------------------------------------
+Conexión de los horarios existentes con el perfil de cada empleado.
+
+Archivos modificados:
+- app/Models/User.php: Añadida relación hasMany('horarios') hacia HorarioEmpleado.
+- app/Http/Controllers/Api/EmpleadoController.php:
+  * Métodos index() y show() ahora devuelven el campo 'en_linea' y el
+    arreglo de 'horarios' asignados al empleado.
+
+
+4. CORRECCIÓN DE ERROR CRÍTICO: "COLUMN NOT FOUND: SUBTOTAL"
+--------------------------------------------------------------------------------
+Se resolvieron los errores de SQL en reportes financieros causados por el uso
+de la columna inexistente 'subtotal' en la tabla 'ordenes'.
+
+Archivos modificados:
+- app/Models/Orden.php:
+  * Añadido Accessor 'subtotal' (calculado como total - propina). Esto permite
+    que el código PHP sume subtotales sin que la columna exista en la DB.
+- app/Http/Controllers/Api/ReporteController.php:
+  * Corregidas consultas SQL en inversionYUtilidad(), utilidadDiaAcumulada(),
+    dashboard() y finanzasDia().
+  * Se reemplazó SUM('subtotal') por SUM(total - COALESCE(propina, 0)).
+- app/Http/Controllers/Api/EmpleadoController.php:
+  * Se corrigieron consultas de KPIs para usar el cálculo de total - propina.
+
+
+5. MEJORAS DE CÓDIGO Y ESTABILIDAD
+--------------------------------------------------------------------------------
+- Corrección de errores de sintaxis (llaves desbalanceadas) en EmpleadoController.
+- Fix de bug en clausuras (use $request) en el cálculo de KPIs de meseros.
+- Optimización de filtros en el listado de empleados para mayor robustez.
+
+================================================================================
+FIN DEL REPORTE
+================================================================================

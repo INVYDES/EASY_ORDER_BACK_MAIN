@@ -466,6 +466,9 @@ Route::prefix('kpis')->middleware('permission:VER_REPORTES')->group(function () 
     Route::get('/cocina',         [EmpleadoController::class, 'getKpiCocina']);
     Route::get('/cocina/retrasos',    [EmpleadoController::class, 'getKpiCocinaRetrasos']);
     Route::get('/cocina/reprocesos',  [EmpleadoController::class, 'getKpiCocinaReprocesos']);
+    Route::get('/cocina/config',      [EmpleadoController::class, 'getCocinaConfig']);
+    Route::post('/cocina/config',     [EmpleadoController::class, 'saveCocinaConfig']);
+    Route::get('/caja',               [EmpleadoController::class, 'getKpiCaja']);
     Route::get('/admin',     [EmpleadoController::class, 'getKpiAdmin']);
     Route::get('/dashboard', [EmpleadoController::class, 'getKpiDashboard']);
 });

@@ -8,14 +8,18 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('orden_detalles', function (Blueprint $table) {
-            $table->boolean('reprocesado')->default(false)->after('estado_preparacion');
+            if (!Schema::hasColumn('orden_detalles', 'reprocesado')) {
+                $table->boolean('reprocesado')->default(false)->after('estado_preparacion');
+            }
         });
     }
 
     public function down(): void
     {
         Schema::table('orden_detalles', function (Blueprint $table) {
-            $table->dropColumn('reprocesado');
+            if (Schema::hasColumn('orden_detalles', 'reprocesado')) {
+                $table->dropColumn('reprocesado');
+            }
         });
     }
 };

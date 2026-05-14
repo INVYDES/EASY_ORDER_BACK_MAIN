@@ -514,7 +514,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 $queryOrdenes->where('created_at', '<=', $request->fecha_fin . ' 23:59:59');
             }
 
-            $totalVentas       = (float) ($queryOrdenes->sum('total') ?? 0);
+            $totalVentas       = (float) ($queryOrdenes->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0);
             
             // ✅ Calcular inversión real basada en el costo de los productos vendidos
             $inversionProducto = (float) DB::table('orden_detalles')
@@ -619,7 +619,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $ventasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
                 ->whereDate('created_at', $fecha)
-                ->sum('total');
+                ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
             // ✅ Calcular costo real del producto para el día
             $costoProducto = (float) DB::table('orden_detalles')
@@ -697,7 +697,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->where('estado', 'CERRADA')
                 ->whereDate('created_at', $hoy);
 
-            $ventasHoy      = (float) ((clone $queryHoy)->sum('total') ?? 0);
+            $ventasHoy      = (float) ((clone $queryHoy)->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0);
             $ordenesHoy     = (clone $queryHoy)->count();
             $ticketPromedio = $ordenesHoy > 0 ? round($ventasHoy / $ordenesHoy, 2) : 0;
 
@@ -718,7 +718,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->select(
                     DB::raw('COALESCE(metodo_pago, "Sin especificar") as metodo_pago'),
                     DB::raw('COUNT(*) as total_ordenes'),
-                    DB::raw('SUM(total) as total_ventas')
+                    DB::raw('SUM(total - COALESCE(propina, 0)) as total_ventas')
                 )
                 ->groupBy('metodo_pago')
                 ->get();
@@ -733,7 +733,18 @@ public function recomendacionPaquete(Request $request): JsonResponse
                     ->sum('total_mano_obra');
             }
 
-            $utilidadBrutaHoy = $ventasHoy;
+            // La utilidad bruta es Ventas (sin propina) - Costo de Productos
+            // Nota: Aquí se asume que costo de productos se calcula igual que en utilidadDiaAcumulada
+            $costoProductoHoy = (float) DB::table('orden_detalles')
+                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->where('ordenes.estado', 'CERRADA')
+                ->whereDate('ordenes.created_at', $hoy)
+                ->selectRaw('SUM(orden_detalles.cantidad * COALESCE(productos.costo, 0)) as total_costo')
+                ->value('total_costo') ?? 0;
+
+            $utilidadBrutaHoy = $ventasHoy - $costoProductoHoy;
             $utilidadNetaHoy  = $utilidadBrutaHoy - $manoObraHoy;
 
             $topClientes = [];
@@ -758,7 +769,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->select(
                     DB::raw('HOUR(created_at) as hora'),
                     DB::raw('COUNT(*) as total_ordenes'),
-                    DB::raw('SUM(total) as total_ventas')
+                    DB::raw('SUM(total - COALESCE(propina, 0)) as total_ventas')
                 )
                 ->groupBy('hora')
                 ->orderBy('hora')
