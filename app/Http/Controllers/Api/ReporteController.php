@@ -45,8 +45,8 @@ class ReporteController extends Controller
                     ->select(
                         DB::raw('DATE(created_at) as fecha'),
                         DB::raw('COUNT(*) as total_ordenes'),
-                        DB::raw('SUM(total) as total_ventas'),
-                        DB::raw('ROUND(AVG(total), 2) as ticket_promedio')
+                        DB::raw('SUM(total - COALESCE(propina, 0)) as total_ventas'),
+                        DB::raw('ROUND(AVG(total - COALESCE(propina, 0)), 2) as ticket_promedio')
                     )
                     ->groupBy(DB::raw('DATE(created_at)'))
                     ->orderBy(DB::raw('DATE(created_at)'))
@@ -58,8 +58,8 @@ class ReporteController extends Controller
                         DB::raw('WEEK(created_at, 1) as semana'),
                         DB::raw('MIN(DATE(created_at)) as fecha'),
                         DB::raw('COUNT(*) as total_ordenes'),
-                        DB::raw('SUM(total) as total_ventas'),
-                        DB::raw('ROUND(AVG(total), 2) as ticket_promedio')
+                        DB::raw('SUM(total - COALESCE(propina, 0)) as total_ventas'),
+                        DB::raw('ROUND(AVG(total - COALESCE(propina, 0)), 2) as ticket_promedio')
                     )
                     ->groupBy(DB::raw('YEAR(created_at)'), DB::raw('WEEK(created_at, 1)'))
                     ->orderBy('anio')->orderBy('semana')
@@ -71,8 +71,8 @@ class ReporteController extends Controller
                         DB::raw('MONTH(created_at) as mes'),
                         DB::raw('DATE_FORMAT(MIN(created_at), "%Y-%m") as fecha'),
                         DB::raw('COUNT(*) as total_ordenes'),
-                        DB::raw('SUM(total) as total_ventas'),
-                        DB::raw('ROUND(AVG(total), 2) as ticket_promedio')
+                        DB::raw('SUM(total - COALESCE(propina, 0)) as total_ventas'),
+                        DB::raw('ROUND(AVG(total - COALESCE(propina, 0)), 2) as ticket_promedio')
                     )
                     ->groupBy(DB::raw('YEAR(created_at)'), DB::raw('MONTH(created_at)'))
                     ->orderBy('anio')->orderBy('mes')
@@ -81,8 +81,8 @@ class ReporteController extends Controller
 
             $totales = [
                 'total_ordenes'      => $base()->count(),
-                'total_ventas'       => (float) ($base()->sum('total') ?? 0),
-                'promedio_por_orden' => (float) ($base()->avg('total')  ?? 0),
+                'total_ventas'       => (float) ($base()->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0),
+                'promedio_por_orden' => (float) ($base()->avg(DB::raw('total - COALESCE(propina, 0)'))  ?? 0),
             ];
 
             return response()->json([
@@ -458,14 +458,14 @@ public function recomendacionPaquete(Request $request): JsonResponse
                     DB::raw($selectRaw),
                     DB::raw('COALESCE(metodo_pago, "Sin especificar") as canal'),
                     DB::raw('COUNT(*) as total_ordenes'),
-                    DB::raw('SUM(total) as total_ventas'),
-                    DB::raw('ROUND(AVG(total), 2) as ticket_promedio')
+                    DB::raw('SUM(total - COALESCE(propina, 0)) as total_ventas'),
+                    DB::raw('ROUND(AVG(total - COALESCE(propina, 0)), 2) as ticket_promedio')
                 )
                 ->groupBy('periodo', 'metodo_pago')
                 ->orderBy('periodo')
                 ->get();
 
-            $totalVentas = (float) ((clone $query)->sum('total') ?: 1);
+            $totalVentas = (float) ((clone $query)->sum(DB::raw('total - COALESCE(propina, 0)')) ?: 1);
 
             $canales = $canales->map(function ($row) use ($totalVentas) {
                 $row->porcentaje_ventas = $totalVentas > 0
@@ -1281,7 +1281,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             $ventasMes = (float) Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
-                ->sum('total');
+                ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
             // ✅ Gastos Variables = Gastos Directos + Costo de Productos Vendidos
             $gastosDirectos = (float) DB::table('gastos')
@@ -1411,6 +1411,61 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
         }
     }
 
+    /**
+     * Dashboard Resumen (Hoy)
+     * GET /api/reportes/dashboard
+     */
+    public function dashboard(Request $request): JsonResponse
+    {
+        try {
+            $restauranteActivo = app('restaurante_activo');
+            $hoy = now()->toDateString();
+
+            // Ventas de hoy (Netas)
+            $ventasHoy = (float) DB::table('ordenes')
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->whereDate('created_at', $hoy)
+                ->sum(DB::raw('total - COALESCE(propina, 0)'));
+
+            // Conteo de órdenes por estado
+            $ordenesPorEstado = DB::table('ordenes')
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->whereDate('created_at', $hoy)
+                ->select('estado', DB::raw('COUNT(*) as total'))
+                ->groupBy('estado')
+                ->get();
+
+            // Total órdenes de hoy
+            $totalOrdenesHoy = $ordenesPorEstado->sum('total');
+
+            // Utilidad bruta hoy (aproximada: Ventas - Costo Insumos)
+            $costoInsumosHoy = (float) DB::table('orden_detalles')
+                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
+                ->whereDate('ordenes.created_at', $hoy)
+                ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
+
+            $utilidadHoy = round($ventasHoy - $costoInsumosHoy, 2);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'ventas_hoy' => round($ventasHoy, 2),
+                    'ordenes_hoy' => $totalOrdenesHoy,
+                    'utilidad_hoy' => $utilidadHoy,
+                    'ordenes_por_estado' => $ordenesPorEstado,
+                    'fecha' => $hoy
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return $this->error('Error al cargar dashboard', $e);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // HELPERS PRIVADOS
     // ─────────────────────────────────────────────────────────────────────────
@@ -1475,13 +1530,13 @@ public function ventasPorCanalTipo(Request $request): JsonResponse
             ->select(
                 'tipo_orden',
                 DB::raw('COUNT(*) as total_ordenes'),
-                DB::raw('COALESCE(SUM(total), 0) as total_ventas'),
-                DB::raw('ROUND(AVG(total), 2) as ticket_promedio')
+                DB::raw('COALESCE(SUM(total - COALESCE(propina, 0)), 0) as total_ventas'),
+                DB::raw('ROUND(AVG(total - COALESCE(propina, 0)), 2) as ticket_promedio')
             )
             ->groupBy('tipo_orden')
             ->get();
 
-        $totalVentas = (clone $query)->sum('total') ?? 0;
+        $totalVentas = (clone $query)->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0;
         $totalOrdenes = (clone $query)->count();
 
         // Preparar datos para gráfica donut

@@ -1946,7 +1946,7 @@ public function getKpiCocinaReprocesos(Request $request)
                 ->where('restaurante_id', $restauranteId)
                 ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
                 ->whereBetween('created_at', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
-                ->sum(DB::raw('total - COALESCE(propina, 0)')); // Usamos total - propina que es el subtotal real
+                ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
             $totalGastado = $ventasTotales;
 
@@ -2020,7 +2020,7 @@ public function getKpiCocinaReprocesos(Request $request)
 
             $ventasQuery = DB::table('ordenes')
                 ->where('restaurante_id', $restauranteId)
-                ->whereIn('estado', ['completada', 'pagada']);
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
 
             if ($request->filled('fecha_desde')) {
                 $ventasQuery->whereDate('created_at', '>=', $request->fecha_desde);
@@ -2029,7 +2029,7 @@ public function getKpiCocinaReprocesos(Request $request)
                 $ventasQuery->whereDate('created_at', '<=', $request->fecha_hasta);
             }
 
-            $ventasTotales = $ventasQuery->sum('total');
+            $ventasTotales = $ventasQuery->sum(DB::raw('total - COALESCE(propina, 0)'));
             $totalOrdenes = $ventasQuery->count();
 
             $gastosQuery = DB::table('gastos')

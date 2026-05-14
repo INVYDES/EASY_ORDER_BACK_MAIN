@@ -432,8 +432,8 @@ class MeseroController extends Controller
                     'users.username as mesero_username',
                     'users.email as mesero_email',
                     DB::raw('COUNT(DISTINCT ordenes.id) as total_ordenes'),
-                    DB::raw('COALESCE(SUM(ordenes.total), 0) as total_ventas'),
-                    DB::raw('COALESCE(AVG(ordenes.total), 0) as ticket_promedio'),
+                    DB::raw('COALESCE(SUM(ordenes.total - COALESCE(ordenes.propina, 0)), 0) as total_ventas'),
+                    DB::raw('COALESCE(AVG(ordenes.total - COALESCE(ordenes.propina, 0)), 0) as ticket_promedio'),
                     DB::raw('COUNT(DISTINCT ordenes.mesa) as mesas_atendidas'),
                     DB::raw('COUNT(DISTINCT ordenes.cliente_id) as clientes_atendidos'),
                     DB::raw('MIN(ordenes.created_at) as primera_venta'),
@@ -455,7 +455,7 @@ class MeseroController extends Controller
                     $q->whereDate('created_at', '<=', $request->fecha_hasta))
                 ->when($request->filled('estado'), fn($q) =>
                     $q->where('estado', strtoupper($request->estado)))
-                ->selectRaw('COUNT(*) as total_ordenes, COALESCE(SUM(total),0) as total_ventas')
+                ->selectRaw('COUNT(*) as total_ordenes, COALESCE(SUM(total - COALESCE(propina, 0)), 0) as total_ventas')
                 ->first();
 
             // Calcular total de meseros activos
@@ -794,7 +794,9 @@ class MeseroController extends Controller
 
             $ordenes = $ordenesQuery->get();
             
-            $totalVentas = $ordenes->sum('total');
+            $totalVentas = $ordenes->sum(function($o) {
+                return $o->total - ($o->propina ?? 0);
+            });
             $totalOrdenes = $ordenes->count();
             $ticketPromedio = $totalOrdenes > 0 ? $totalVentas / $totalOrdenes : 0;
             

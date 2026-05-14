@@ -39,12 +39,11 @@ final class AuthController extends Controller
     {
         $field = filter_var($request->login, FILTER_VALIDATE_EMAIL) ? 'email' : 'username';
 
-        $user = User::where($field, $request->login)
-            ->where('activo', true)
-            ->first();
+        // Buscamos al usuario sin filtrar por 'activo' para permitir que el login lo reactive
+        $user = User::where($field, $request->login)->first();
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
-            return $this->failure('Credenciales incorrectas o cuenta desactivada', 401);
+            return $this->failure('Credenciales incorrectas', 401);
         }
 
         $licenciaError = $this->verificarLicencia($user);
@@ -59,8 +58,11 @@ final class AuthController extends Controller
 
         $user->tokens()->delete();
 
-        // Marcar como en línea
-        $user->update(['en_linea' => true]);
+        // Al loguearse, marcamos como Activo y En Línea
+        $user->update([
+            'activo'   => true,
+            'en_linea' => true
+        ]);
 
         $token = $user->createToken('api_token_' . $user->id)->plainTextToken;
 

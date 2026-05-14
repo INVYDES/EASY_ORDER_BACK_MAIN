@@ -12,10 +12,7 @@ class CheckTenant
         $user = $request->user();
 
         if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No autenticado'
-            ], 401);
+            return $next($request);
         }
 
         if (!$user->restaurante_activo) {

@@ -18,7 +18,7 @@ class EnsureTenantSelected
         $user = $request->user();
 
         if (!$user) {
-            return response()->json(['success' => false, 'message' => 'No autenticado'], 401);
+            return $next($request);
         }
 
         // 1. PRIORIDAD: Header o Parámetro (Switch dinámico)
