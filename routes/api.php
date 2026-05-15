@@ -380,9 +380,7 @@ Route::get('/ventas-por-canal-tipo', [ReporteController::class, 'ventasPorCanalT
     Route::prefix('users')->group(function () {
         Route::put('/{id}',    [UserController::class, 'updateById'])->middleware('permission:VER_RESTAURANTE');
         Route::delete('/{id}', [UserController::class, 'destroy'])->middleware('permission:ELIMINAR_EMPLEADOS');
-            Route::put('/{id}',    [UserController::class, 'updateById'])->middleware('permission:VER_RESTAURANTE');
-    Route::patch('/{id}/toggle-activo', [UserController::class, 'toggleActivo'])->middleware('permission:VER_RESTAURANTE');
-    Route::delete('/{id}', [UserController::class, 'destroy'])->middleware('permission:ELIMINAR_EMPLEADOS');
+        Route::patch('/{id}/toggle-activo', [UserController::class, 'toggleActivo'])->middleware('permission:VER_RESTAURANTE');
     });
 
     // ========== MESEROS ==========

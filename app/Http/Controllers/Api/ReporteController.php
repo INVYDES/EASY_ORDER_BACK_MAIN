@@ -9,6 +9,7 @@ use App\Models\Orden;
 use App\Models\Producto;
 use App\Models\Cliente;
 use App\Models\Nomina;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
@@ -506,6 +507,61 @@ public function recomendacionPaquete(Request $request): JsonResponse
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // COSTO REAL DETALLADO POR PRODUCTO (insumos + MO + indirectos)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private function calcularCostoRealProductos($restauranteId, $fechaInicio = null, $fechaFin = null): float
+    {
+        $query = DB::table('orden_detalles')
+            ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+            ->where('ordenes.restaurante_id', $restauranteId)
+            ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA']);
+
+        if ($fechaInicio) {
+            $query->where('ordenes.created_at', '>=', $fechaInicio . ' 00:00:00');
+        }
+        if ($fechaFin) {
+            $query->where('ordenes.created_at', '<=', $fechaFin . ' 23:59:59');
+        }
+
+        $productosVendidos = $query
+            ->select('orden_detalles.producto_id', DB::raw('SUM(orden_detalles.cantidad) as cantidad_total'))
+            ->groupBy('orden_detalles.producto_id')
+            ->get();
+
+        if ($productosVendidos->isEmpty()) return 0;
+
+        $totalNominaMensual = User::where('restaurante_activo', $restauranteId)->sum('salario_base');
+
+        $productos = Producto::with('ingredientes')
+            ->whereIn('id', $productosVendidos->pluck('producto_id'))
+            ->get()
+            ->keyBy('id');
+
+        $costoTotal = 0;
+
+        foreach ($productosVendidos as $pv) {
+            $producto = $productos->get($pv->producto_id);
+            if (!$producto) continue;
+
+            $costoInsumos = $producto->ingredientes->reduce(fn($c, $ing) =>
+                $c + ($ing->costo_unitario * ($ing->pivot->cantidad ?? 0)), 0);
+
+            $minProd = (float) ($producto->minutos_produccion ?? 0);
+            $costoMO = $totalNominaMensual > 0 && $minProd > 0
+                ? ($totalNominaMensual / 14400) * 1.36 * $minProd
+                : 0;
+
+            $costoBase = $costoInsumos + $costoMO;
+            $costoUnitario = $costoBase + ($costoBase * 0.05);
+
+            $costoTotal += $costoUnitario * $pv->cantidad_total;
+        }
+
+        return $costoTotal;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // INVERSIÓN Y UTILIDAD
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -530,18 +586,12 @@ public function recomendacionPaquete(Request $request): JsonResponse
             }
 
             $totalVentas       = (float) ($queryOrdenes->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0);
-            
-            // ✅ Calcular inversión real basada en el costo de los productos vendidos
-            $inversionProducto = (float) DB::table('orden_detalles')
-                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
-                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
-                ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
-                ->when($request->filled('fecha_inicio'), fn($q) => 
-                    $q->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00'))
-                ->when($request->filled('fecha_fin'), fn($q) => 
-                    $q->where('ordenes.created_at', '<=', $request->fecha_fin . ' 23:59:59'))
-                ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
+
+            $inversionProducto = $this->calcularCostoRealProductos(
+                $restauranteActivo->id,
+                $request->fecha_inicio,
+                $request->fecha_fin
+            );
 
             $inversionManoObra = 0.0;
             if (Schema::hasTable('nomina_diaria')) {
@@ -687,14 +737,9 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->whereDate('created_at', $fecha)
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
-            // ✅ Calcular costo real del producto para el día
-            $costoProducto = (float) DB::table('orden_detalles')
-                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
-                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
-                ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
-                ->whereDate('ordenes.created_at', $fecha)
-                ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
+            $costoProducto = $this->calcularCostoRealProductos(
+                $restauranteActivo->id, $fecha, $fecha
+            );
 
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
                 ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
@@ -812,16 +857,10 @@ if ($cajaHoy) {
                     ->sum('total_mano_obra');
             }
 
-            // La utilidad bruta es Ventas (sin propina) - Costo de Productos
-            // Nota: Aquí se asume que costo de productos se calcula igual que en utilidadDiaAcumulada
-            $costoProductoHoy = (float) DB::table('orden_detalles')
-                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
-                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
-                ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
-                ->whereDate('ordenes.created_at', $hoy)
-                ->selectRaw('SUM(orden_detalles.cantidad * COALESCE(productos.costo, 0)) as total_costo')
-                ->value('total_costo') ?? 0;
+            // La utilidad bruta usa costo real detallado (insumos + MO + indirectos)
+            $costoProductoHoy = $this->calcularCostoRealProductos(
+                $restauranteActivo->id, $hoy, $hoy
+            );
 
             $utilidadBrutaHoy = $ventasHoy - $costoProductoHoy;
             $utilidadNetaHoy  = $utilidadBrutaHoy - $manoObraHoy;
