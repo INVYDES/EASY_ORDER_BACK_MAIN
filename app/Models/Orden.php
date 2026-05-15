@@ -219,8 +219,8 @@ class Orden extends Model
     {
         $transiciones = [
             'ABIERTA' => ['POR_PREPARAR', 'CANCELADA'],
-            'POR_PREPARAR' => ['EN_PREPARACION', 'CANCELADA'],
-            'EN_PREPARACION' => ['LISTA', 'CANCELADA'],
+            'POR_PREPARAR' => ['EN_PREPARACION', 'LISTA', 'ENTREGADA', 'CANCELADA'],
+            'EN_PREPARACION' => ['LISTA', 'ENTREGADA', 'CANCELADA'],
             'LISTA' => ['ENTREGADA', 'CERRADA'],
             'ENTREGADA' => ['CERRADA', 'PAGADA'],
             'CERRADA' => ['PAGADA'],

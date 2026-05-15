@@ -340,6 +340,7 @@ Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('
         Route::get('/productos-mayor-margen',[ReporteController::class, 'productosMayorMargenMenosVendidos']);
         Route::get('/clientes-frecuentes',   [ReporteController::class, 'clientesFrecuentes']);
         Route::get('/dashboard',             [ReporteController::class, 'dashboard']);
+        Route::get('/platillos-devueltos',       [ReporteController::class, 'platillosDevueltos']);
         Route::get('/financiero',            [ReporteController::class, 'reporteFinanciero']);
         Route::get('/reporte-productos',     [ReporteController::class, 'reporteProductos']);
         Route::get('/tiempos-preparacion',   [ReporteController::class, 'tiempoPromedioPreparacion']);
@@ -381,7 +382,7 @@ Route::prefix('meseros')->group(function () {
     Route::get('/',                         [MeseroController::class, 'index']);
     Route::get('/mis-mesas',                [MeseroController::class, 'misMesas']);
     Route::get('/mis-ordenes',              [MeseroController::class, 'misOrdenes']);
-    Route::post('/configurar-mesas',        [MeseroController::class, 'configurarTotalMesas']);
+    Route::post('/config-mesas',            [MeseroController::class, 'configurarTotalMesas']);
     Route::post('/asignar-mesas',           [MeseroController::class, 'asignarMesas']);
     Route::get('/metricas-ventas',          [MeseroController::class, 'metricasVentas']);
     Route::get('/{id}/metricas-detalladas', [MeseroController::class, 'metricasDetalladas']);

@@ -358,4 +358,76 @@ class CategoriaController extends Controller
             ], 500);
         }
     }
+    /**
+     * Listar categorías públicamente (para el Kiosko de Menú)
+     */
+    public function indexPublic(Request $request)
+    {
+        try {
+            $restauranteId = $request->get('restaurante_id');
+            if (!$restauranteId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Se requiere restaurante_id'
+                ], 422);
+            }
+
+            $categorias = Categoria::withoutGlobalScope(\App\Scopes\TenantScope::class)
+                ->where('restaurante_id', $restauranteId)
+                ->where('activo', true)
+                ->orderBy('orden')
+                ->orderBy('nombre')
+                ->get(['id', 'nombre', 'color', 'icono', 'orden']);
+
+            return response()->json([
+                'success' => true,
+                'data' => $categorias
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener categorías',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    /**
+     * Mostrar una categoría específica públicamente
+     */
+    public function showPublic($id, Request $request)
+    {
+        try {
+            $restauranteId = $request->get('restaurante_id');
+            if (!$restauranteId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Se requiere restaurante_id'
+                ], 422);
+            }
+
+            $categoria = Categoria::withoutGlobalScope(\App\Scopes\TenantScope::class)
+                ->where('restaurante_id', $restauranteId)
+                ->where('id', $id)
+                ->where('activo', true)
+                ->firstOrFail();
+
+            return response()->json([
+                'success' => true,
+                'data' => $categoria
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Categoría no encontrada'
+            ], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener categoría',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 }

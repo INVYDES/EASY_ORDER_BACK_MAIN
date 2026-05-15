@@ -133,9 +133,9 @@ class RestauranteController extends Controller
             ],
         ]);
 
-        } catch (\Exception $e) {
-            return $this->errorResponse('Error al obtener restaurantes', $e);
-        }
+    } catch (\Exception $e) {
+        return $this->errorResponse('Error al obtener restaurantes', $e);
+    }
 }
 
     /**

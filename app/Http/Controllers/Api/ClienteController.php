@@ -401,7 +401,7 @@ class ClienteController extends Controller
         try {
             $user = $request->user();
             
-            if (!$user->hasPermission('VER_CLIENTES')) {
+            if (!$user->hasPermission('VER_CLIENTES') && !$user->hasRole('MESERO')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'No tienes permiso'

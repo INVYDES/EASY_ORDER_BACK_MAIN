@@ -5,9 +5,10 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class OrdenDetalle extends Model {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $table = 'orden_detalles';
 
@@ -22,7 +23,9 @@ class OrdenDetalle extends Model {
         'nom_comensal',
         'comensal_id',
         'estado_preparacion',
-        'reprocesado'
+        'reprocesado',
+        'motivo_cancelacion',
+        'usuario_cancelo_id'
     ];
 
     protected $casts = [
@@ -30,7 +33,8 @@ class OrdenDetalle extends Model {
         'precio_unitario' => 'decimal:2',
         'subtotal' => 'decimal:2',
         'reprocesado' => 'boolean',
-        'comensal_id' => 'integer'
+        'comensal_id' => 'integer',
+        'usuario_cancelo_id' => 'integer'
     ];
 
     /**
@@ -49,6 +53,11 @@ class OrdenDetalle extends Model {
     public function paquete()
     {
         return $this->belongsTo(Paquete::class);
+    }
+
+    public function usuarioCancelo()
+    {
+        return $this->belongsTo(User::class, 'usuario_cancelo_id');
     }
 
     /**

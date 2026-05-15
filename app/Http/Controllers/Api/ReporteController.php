@@ -24,21 +24,36 @@ class ReporteController extends Controller
         try {
             $restauranteActivo = app('restaurante_activo');
 
-            // ✅ FIX: fecha_inicio y fecha_fin ahora son 'sometimes' con defaults
+            // ✅ FIX: fecha_inicio y fecha_fin ahora son 'sometimes' con defaults, y permitimos cualquier orden de fechas
             $request->validate([
-                'fecha_inicio' => 'sometimes|date',
-                'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
+                'fecha_inicio' => 'sometimes|nullable|date',
+                'fecha_fin'    => 'sometimes|nullable|date',
                 'grupo'        => 'sometimes|in:dia,semana,mes',
+                'user_id'      => 'sometimes|nullable|integer',
             ]);
 
-            $grupo       = $request->get('grupo', 'dia');
+            $grupo = $request->get('grupo', 'dia');
+            
             // ✅ FIX: defaults si no se envían
-            $fechaInicio = ($request->fecha_inicio ?? now()->startOfMonth()->format('Y-m-d')) . ' 00:00:00';
-            $fechaFin    = ($request->fecha_fin    ?? now()->format('Y-m-d'))                . ' 23:59:59';
+            $fInicioStr = $request->fecha_inicio ?: '2020-01-01'; // Si es "Todo", buscar desde el inicio
+            $fFinStr    = $request->fecha_fin    ?: now()->format('Y-m-d');
+
+            // Invertir fechas si vienen al revés para no fallar
+            if ($fInicioStr > $fFinStr) {
+                $temp = $fInicioStr;
+                $fInicioStr = $fFinStr;
+                $fFinStr = $temp;
+            }
+
+            $fechaInicio = $fInicioStr . ' 00:00:00';
+            $fechaFin    = $fFinStr . ' 23:59:59';
 
             $base = fn () => Orden::where('restaurante_id', $restauranteActivo->id)
                 ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
-                ->whereBetween('created_at', [$fechaInicio, $fechaFin]);
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin])
+                ->when($request->filled('user_id'), function ($q) use ($request) {
+                    $q->where('usuario_id', $request->user_id);
+                });
 
             $ventas = match ($grupo) {
                 'dia' => $base()
@@ -118,8 +133,9 @@ class ReporteController extends Controller
             try {
                 $request->validate([
                     'limite'       => 'sometimes|integer|min:1|max:500', // ✅ ampliado de 100 a 500
-                    'fecha_inicio' => 'sometimes|date',
-                    'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
+                    'fecha_inicio' => 'sometimes|nullable|date',
+                    'fecha_fin'    => 'sometimes|nullable|date',
+                    'user_id'      => 'sometimes|nullable|integer',
                 ]);
             } catch (\Illuminate\Validation\ValidationException $e) {
                 return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
@@ -226,6 +242,51 @@ class ReporteController extends Controller
 
         } catch (\Exception $e) {
             return $this->error('Error al generar reporte de tiempos de preparación', $e);
+        }
+    }
+
+
+    public function platillosDevueltos(Request $request): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $restauranteActivo = app('restaurante_activo');
+
+            $query = \App\Models\OrdenDetalle::onlyTrashed()
+                ->with(['producto:id,nombre', 'usuarioCancelo:id,name', 'orden:id,mesa'])
+                ->whereHas('orden', function ($q) use ($restauranteActivo) {
+                    $q->where('restaurante_id', $restauranteActivo->id);
+                });
+
+            if ($request->filled('fecha_inicio')) {
+                $query->where('deleted_at', '>=', $request->fecha_inicio . ' 00:00:00');
+            }
+            if ($request->filled('fecha_fin')) {
+                $query->where('deleted_at', '<=', $request->fecha_fin . ' 23:59:59');
+            }
+
+            $devueltos = $query->orderByDesc('deleted_at')->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $devueltos->map(fn($d) => [
+                    'id'              => $d->id,
+                    'producto'        => $d->producto->nombre ?? 'N/A',
+                    'cantidad'        => (float) $d->cantidad,
+                    'precio_unitario' => (float) $d->precio_unitario,
+                    'subtotal'        => (float) $d->subtotal,
+                    'motivo'          => $d->motivo_cancelacion ?? 'Sin motivo',
+                    'usuario'         => $d->usuarioCancelo->name ?? 'N/A',
+                    'mesa'            => $d->orden->mesa ?? 'N/A',
+                    'orden_id'        => $d->orden_id,
+                    'fecha'           => $d->deleted_at->format('Y-m-d H:i:s'),
+                ])
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener platillos devueltos',
+                'error'   => $e->getMessage()
+            ], 500);
         }
     }
 
@@ -704,7 +765,7 @@ if ($cajaHoy) {
     {
         try {
             $restauranteActivo = app('restaurante_activo');
-            $hoy = today()->format('Y-m-d');
+            $hoy = now()->timezone('America/Mexico_City')->format('Y-m-d');
 
             $queryHoy = Orden::where('restaurante_id', $restauranteActivo->id)
                 ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
@@ -1427,7 +1488,10 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
         }
     }
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> de07536 (Mejoras en nominas, factores de productos y filtros de fechas)
 
     // ─────────────────────────────────────────────────────────────────────────
     // HELPERS PRIVADOS
@@ -1441,11 +1505,22 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             ->where('ordenes.restaurante_id', $restauranteId)
             ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA']);
 
+        // Intercambiar fechas si vienen invertidas
+        $fInicioStr = $request->fecha_inicio;
+        $fFinStr    = $request->fecha_fin;
+        if ($request->filled('fecha_inicio') && $request->filled('fecha_fin') && $fInicioStr > $fFinStr) {
+            $fInicioStr = $request->fecha_fin;
+            $fFinStr    = $request->fecha_inicio;
+        }
+
         if ($request->filled('fecha_inicio')) {
-            $query->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00');
+            $query->where('ordenes.created_at', '>=', $fInicioStr . ' 00:00:00');
         }
         if ($request->filled('fecha_fin')) {
-            $query->where('ordenes.created_at', '<=', $request->fecha_fin . ' 23:59:59');
+            $query->where('ordenes.created_at', '<=', $fFinStr . ' 23:59:59');
+        }
+        if ($request->filled('user_id')) {
+            $query->where('ordenes.usuario_id', $request->user_id);
         }
 
         return $query;

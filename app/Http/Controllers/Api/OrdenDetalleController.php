@@ -311,9 +311,10 @@ class OrdenDetalleController extends Controller
 
             $restauranteActivo = app('restaurante_activo');
 
+            // Permitir eliminar en casi cualquier estado excepto CERRADA o PAGADA
             $orden = Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $ordenId)
-                ->whereIn('estado', ['ABIERTA', 'EN_PREPARACION'])
+                ->whereNotIn('estado', ['CERRADA', 'PAGADA', 'CANCELADA'])
                 ->firstOrFail();
 
             $detalle = OrdenDetalle::with('producto.ingredientes')
@@ -325,14 +326,15 @@ class OrdenDetalleController extends Controller
 
             $productoNombre = $detalle->producto->nombre ?? 'Producto';
             $cantidad       = $detalle->cantidad;
+            $motivo         = $request->get('motivo', 'Cancelación sin motivo especificado');
 
-            // 🔄 DEVOLUCIÓN DE STOCK: Solo si ya se había descontado (estaba en preparación o listo)
-            if (in_array($detalle->estado_preparacion, ['EN_PREPARACION', 'LISTO'])) {
+            // 🔄 DEVOLUCIÓN DE STOCK: Solo si ya se había descontado (estaba en preparación, listo o entregado)
+            if (in_array($detalle->estado_preparacion, ['EN_PREPARACION', 'LISTO', 'ENTREGADO'])) {
                 $producto = $detalle->producto;
                 
                 if ($producto && $producto->ingredientes->isNotEmpty()) {
                     foreach ($producto->ingredientes as $ingrediente) {
-                        $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (int) $detalle->cantidad;
+                        $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (float) $detalle->cantidad;
                         \App\Models\Ingrediente::where('id', $ingrediente->id)
                             ->increment('stock_actual', $cantidadARestaurar);
                     }
@@ -343,10 +345,16 @@ class OrdenDetalleController extends Controller
                 }
             }
 
-            $orden->total -= $detalle->subtotal;
-            $orden->save();
+            // Registrar motivo y usuario antes de borrar suavemente
+            $detalle->update([
+                'motivo_cancelacion' => $motivo,
+                'usuario_cancelo_id' => $user->id
+            ]);
 
-            $detalle->delete();
+            $detalle->delete(); // Soft delete
+
+            // Recalcular total de la orden
+            $orden->recalcularTotal();
 
             DB::commit();
 

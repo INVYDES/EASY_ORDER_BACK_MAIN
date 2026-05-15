@@ -63,10 +63,12 @@ class EmpleadoController extends Controller
     private function getRestauranteId($user)
     {
         $headerId = request()->header('X-Restaurante-Id');
+        $requestId = request()->input('restaurante_id');
         $userRestId = is_object($user->restaurante_activo) ? $user->restaurante_activo->id : $user->restaurante_activo;
-        $requestId = request()->restaurante_id;
 
-        return (!empty($headerId)) ? $headerId : ((!empty($userRestId)) ? $userRestId : $requestId);
+        if (!empty($headerId)) return (int)$headerId;
+        if (!empty($requestId)) return (int)$requestId;
+        return (int)$userRestId;
     }
 
     /**
@@ -617,15 +619,17 @@ class EmpleadoController extends Controller
             $config = ConfiguracionNomina::where('restaurante_id', $restauranteId)->first();
             
             // Usar valores de entrada o los del empleado (respetando el 0)
-            $valorHora = $request->filled('valor_hora') 
-                ? (float) $request->valor_hora 
-                : ($empleado->salario_por_hora !== null ? (float)$empleado->salario_por_hora : 0);
-            
             $salarioBase = $request->filled('salario_base') 
                 ? (float) $request->salario_base 
                 : ($empleado->salario_base !== null ? (float)$empleado->salario_base : 0);
+
+            // Cálculo AUTOMÁTICO del valor por minuto basado en el sueldo base
+            // 14400 minutos = 30 días * 8 horas * 60 minutos
+            $valorMinuto = $salarioBase > 0 ? ($salarioBase / 14400) : 0;
             
-            $pagoHoras = round($valorHora * $horasTotales, 2);
+            // Cálculo por MINUTOS con factor 1.36
+            $minutosTotales = $horasTotales * 60;
+            $pagoMinutos = round(($valorMinuto * $minutosTotales) * 1.36, 2);
             
             $comisionPorcentaje = $empleado->comision_por_venta !== null 
                 ? (float)$empleado->comision_por_venta 
@@ -643,8 +647,8 @@ class EmpleadoController extends Controller
                 $restauranteId,
                 $request,
                 $horasTotales,
-                $valorHora,
-                $pagoHoras,
+                $valorMinuto,
+                $pagoMinutos,
                 $salarioBase,
                 $comisionVentas,
                 $bonos,
@@ -660,8 +664,8 @@ class EmpleadoController extends Controller
                         'restaurante_id' => $restauranteId,
                         'horas_totales' => round($horasTotales, 2),
                         'salario_base' => $salarioBase,
-                        'valor_hora' => round($valorHora, 2),
-                        'pago_horas' => $pagoHoras,
+                        'valor_hora' => round($valorMinuto, 2), // Guardamos el valor por minuto
+                        'pago_horas' => $pagoMinutos, // Guardamos el resultado con factor 1.36
                         'comision_ventas' => $comisionVentas,
                         'bonos' => $bonos,
                         'descuentos' => $descuentos,
@@ -672,6 +676,7 @@ class EmpleadoController extends Controller
                 
                 $nomina->pago_total = round(
                     (float) $nomina->salario_base + 
+                    (float) $nomina->pago_horas + 
                     (float) $nomina->comision_ventas + 
                     (float) $nomina->bonos - 
                     (float) $nomina->descuentos,
@@ -1122,7 +1127,7 @@ class EmpleadoController extends Controller
 
                 $ordenes = \App\Models\Orden::where('restaurante_id', $restauranteId)
                     ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
-                    ->where('mesero_id', $empleado->id)
+                    ->where('usuario_id', $empleado->id)
                     ->whereBetween('created_at', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
                     ->withCount('detalles as total_items')
                     ->get();
@@ -1161,7 +1166,7 @@ class EmpleadoController extends Controller
             $tendenciaVentas = \App\Models\Orden::where('restaurante_id', $restauranteId)
                 ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
                 ->whereBetween('created_at', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
-                ->when($request->filled('user_id'), fn($q) => $q->where('mesero_id', $request->user_id))
+                ->when($request->filled('user_id'), fn($q) => $q->where('usuario_id', $request->user_id))
                 ->selectRaw('DATE(created_at) as fecha, SUM(total - COALESCE(propina, 0)) as total')
                 ->groupBy('fecha')
                 ->orderBy('fecha')

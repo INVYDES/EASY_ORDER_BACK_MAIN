@@ -1255,7 +1255,7 @@ class ProductoController extends Controller
                 ], 404);
             }
 
-            $query = Producto::with(['categoria'])
+            $query = Producto::withoutGlobalScope(\App\Scopes\TenantScope::class)->with(['categoria'])
                 ->where('restaurante_id', $restaurante->id)
                 ->where('activo', true);
 
@@ -1470,7 +1470,8 @@ class ProductoController extends Controller
                 ], 404);
             }
 
-            $productos = Producto::with(['categoria', 'ingredientes'])
+            $productos = Producto::withoutGlobalScope(\App\Scopes\TenantScope::class)
+                ->with(['categoria', 'ingredientes'])
                 ->where('restaurante_id', $restaurante->id)
                 ->where('activo', true)
                 ->get();

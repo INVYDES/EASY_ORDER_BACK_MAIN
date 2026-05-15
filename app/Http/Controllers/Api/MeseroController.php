@@ -324,7 +324,7 @@ class MeseroController extends Controller
             $esAdmin = $this->esAdminOPropietario($user);
  
             $query = Orden::where('restaurante_id', $restauranteId)
-                ->with(['detalles.producto.categoria', 'user', 'cliente']);
+                ->with(['detalles' => function($q) { $q->withTrashed()->with('producto.categoria'); }, 'user', 'cliente']);
 
             // Si NO es admin/propietario, aplicamos el filtro de mesas asignadas
             if (!$esAdmin) {
