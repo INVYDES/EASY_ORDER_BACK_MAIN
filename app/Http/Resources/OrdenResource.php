@@ -34,10 +34,12 @@ class OrdenResource extends JsonResource
                     'comensal_id'   => $d->comensal_id,
                     'subtotal'      => (float)$d->subtotal,
                     'estado'        => $d->estado_preparacion,
+                    'notas'         => $d->notas,
                     'cancelado'     => $d->trashed(),
                     'motivo_cancelacion' => $d->motivo_cancelacion,
                 ]);
             }),
+            'notas'            => $this->notas,
             'metodo_pago'      => $this->metodo_pago,
             'propina'          => (float) ($this->propina ?? 0),
             'created_at'       => $this->created_at?->format('Y-m-d H:i:s'),
