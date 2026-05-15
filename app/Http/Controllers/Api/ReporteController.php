@@ -37,7 +37,7 @@ class ReporteController extends Controller
             $fechaFin    = ($request->fecha_fin    ?? now()->format('Y-m-d'))                . ' 23:59:59';
 
             $base = fn () => Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'CERRADA')
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
                 ->whereBetween('created_at', [$fechaInicio, $fechaFin]);
 
             $ventas = match ($grupo) {
@@ -89,8 +89,8 @@ class ReporteController extends Controller
                 'success' => true,
                 'data'    => [
                     'periodo' => [
-                        'inicio' => rtrim($fechaInicio, ' 00:00:00'),
-                        'fin'    => rtrim($fechaFin,    ' 23:59:59'),
+                        'inicio' => substr($fechaInicio, 0, 10),
+                        'fin'    => substr($fechaFin, 0, 10),
                     ],
                     'ventas'  => $ventas,
                     'totales' => $totales,
@@ -438,7 +438,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $grupo = $request->get('grupo', 'dia');
 
             $query = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'CERRADA');
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
 
             if ($request->filled('fecha_inicio')) {
                 $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
@@ -505,7 +505,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             ]);
 
             $queryOrdenes = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'CERRADA');
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
 
             if ($request->filled('fecha_inicio')) {
                 $queryOrdenes->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
@@ -521,7 +521,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->where('ordenes.estado', 'CERRADA')
+                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
                 ->when($request->filled('fecha_inicio'), fn($q) => 
                     $q->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00'))
                 ->when($request->filled('fecha_fin'), fn($q) => 
@@ -573,7 +573,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             ]);
 
             $query = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'CERRADA');
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
 
             if ($request->filled('fecha_inicio')) {
                 $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
@@ -617,7 +617,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $fecha = $request->get('fecha', today()->format('Y-m-d'));
 
             $ventasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'CERRADA')
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
                 ->whereDate('created_at', $fecha)
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
@@ -626,12 +626,12 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->where('ordenes.estado', 'CERRADA')
+                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
                 ->whereDate('ordenes.created_at', $fecha)
                 ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
 
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'CERRADA')
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
                 ->whereDate('created_at', $fecha)
                 ->sum('propina');
 
@@ -642,14 +642,26 @@ public function recomendacionPaquete(Request $request): JsonResponse
                     ->whereDate('fecha', $fecha)
                     ->sum('total_mano_obra');
             }
+// Retiros parciales de caja del día (egresos manuales)
+$retirosCaja = 0.0;
+$cajaHoy = DB::table('cajas')
+    ->where('restaurante_id', $restauranteActivo->id)
+    ->whereDate('fecha_apertura', $fecha)
+    ->first();
 
+if ($cajaHoy) {
+    $retirosCaja = (float) DB::table('caja_movimientos')
+        ->where('caja_id', $cajaHoy->id)
+        ->where('tipo', 'egreso')
+        ->sum('monto');
+}
             $ordenesEnProceso = Orden::where('restaurante_id', $restauranteActivo->id)
                 ->whereNotIn('estado', ['CERRADA', 'CANCELADA'])
                 ->whereDate('created_at', $fecha)
                 ->count();
 
             $utilidadBruta = $ventasDia - $costoProducto;
-            $utilidadNeta  = $utilidadBruta - $manoObraDia;
+            $utilidadNeta  = $utilidadBruta - $manoObraDia - $retirosCaja;
 
             return response()->json([
                 'success' => true,
@@ -659,6 +671,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                     'costo_producto_dia' => round($costoProducto, 2),
                     'propinas_dia'       => round($propinasDia, 2),
                     'mano_obra_dia'      => round($manoObraDia, 2),
+                    'retiros_caja_dia'   => round($retirosCaja, 2),
                     'utilidad_bruta_dia' => round($utilidadBruta, 2),
                     'utilidad_neta_dia'  => round($utilidadNeta, 2),
                     'margen_bruto_pct'   => $ventasDia > 0 ? round(($utilidadBruta / $ventasDia) * 100, 2) : 0,
@@ -694,7 +707,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $hoy = today()->format('Y-m-d');
 
             $queryHoy = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'CERRADA')
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
                 ->whereDate('created_at', $hoy);
 
             $ventasHoy      = (float) ((clone $queryHoy)->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0);
@@ -739,7 +752,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->where('ordenes.estado', 'CERRADA')
+                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
                 ->whereDate('ordenes.created_at', $hoy)
                 ->selectRaw('SUM(orden_detalles.cantidad * COALESCE(productos.costo, 0)) as total_costo')
                 ->value('total_costo') ?? 0;
@@ -856,7 +869,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $fechaFin    = $request->get('fecha_fin', now()->format('Y-m-d'));
 
             $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'CERRADA')
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum('total');
 
@@ -1144,11 +1157,14 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
      */
     private function obtenerDatosReporte(string $tipo, Request $request, $restaurante): mixed
     {
+        $fInicio = $request->get('fecha_inicio', now()->subDays(30)->format('Y-m-d')) . ' 00:00:00';
+        $fFin    = $request->get('fecha_fin', now()->format('Y-m-d')) . ' 23:59:59';
+
         switch ($tipo) {
             case 'ventas':
                 return Orden::where('restaurante_id', $restaurante->id)
-                    ->where('estado', 'CERRADA')
-                    ->whereBetween('created_at', [$request->fecha_inicio . ' 00:00:00', $request->fecha_fin . ' 23:59:59'])
+                    ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                    ->whereBetween('created_at', [$fInicio, $fFin])
                     ->with('usuario')
                     ->get();
 
@@ -1279,7 +1295,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             $utilidadObjetivo = (float) $config->utilidad_objetivo;
 
             $ventasMes = (float) Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'CERRADA')
+                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
@@ -1293,7 +1309,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->where('ordenes.estado', 'CERRADA')
+                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
                 ->whereBetween('ordenes.created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
 
@@ -1351,7 +1367,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->where('ordenes.estado', 'CERRADA')
+                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
                 ->whereBetween('ordenes.created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->select(
                     'productos.id',
@@ -1411,60 +1427,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
         }
     }
 
-    /**
-     * Dashboard Resumen (Hoy)
-     * GET /api/reportes/dashboard
-     */
-    public function dashboard(Request $request): JsonResponse
-    {
-        try {
-            $restauranteActivo = app('restaurante_activo');
-            $hoy = now()->toDateString();
 
-            // Ventas de hoy (Netas)
-            $ventasHoy = (float) DB::table('ordenes')
-                ->where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
-                ->whereDate('created_at', $hoy)
-                ->sum(DB::raw('total - COALESCE(propina, 0)'));
-
-            // Conteo de órdenes por estado
-            $ordenesPorEstado = DB::table('ordenes')
-                ->where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)
-                ->select('estado', DB::raw('COUNT(*) as total'))
-                ->groupBy('estado')
-                ->get();
-
-            // Total órdenes de hoy
-            $totalOrdenesHoy = $ordenesPorEstado->sum('total');
-
-            // Utilidad bruta hoy (aproximada: Ventas - Costo Insumos)
-            $costoInsumosHoy = (float) DB::table('orden_detalles')
-                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
-                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
-                ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
-                ->whereDate('ordenes.created_at', $hoy)
-                ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
-
-            $utilidadHoy = round($ventasHoy - $costoInsumosHoy, 2);
-
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'ventas_hoy' => round($ventasHoy, 2),
-                    'ordenes_hoy' => $totalOrdenesHoy,
-                    'utilidad_hoy' => $utilidadHoy,
-                    'ordenes_por_estado' => $ordenesPorEstado,
-                    'fecha' => $hoy
-                ]
-            ]);
-
-        } catch (\Exception $e) {
-            return $this->error('Error al cargar dashboard', $e);
-        }
-    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // HELPERS PRIVADOS
@@ -1476,7 +1439,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
             ->join('ordenes',   'orden_detalles.orden_id',    '=', 'ordenes.id')
             ->where('ordenes.restaurante_id', $restauranteId)
-            ->where('ordenes.estado', 'CERRADA');
+            ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA']);
 
         if ($request->filled('fecha_inicio')) {
             $query->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00');
@@ -1517,7 +1480,7 @@ public function ventasPorCanalTipo(Request $request): JsonResponse
 
         $query = DB::table('ordenes')
             ->where('restaurante_id', $restauranteId)
-            ->where('estado', 'CERRADA');
+            ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
 
         if ($request->filled('fecha_inicio')) {
             $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');

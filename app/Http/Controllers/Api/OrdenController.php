@@ -103,7 +103,7 @@ class OrdenController extends Controller
                     'pickup'   => Orden::where('restaurante_id', $rid)->where('tipo_orden', 'pickup')->count(),
                     'delivery' => Orden::where('restaurante_id', $rid)->where('tipo_orden', 'delivery')->count(),
                 ],
-                'total_ventas_hoy' => Orden::where('restaurante_id', $rid)->whereDate('created_at', $hoy)->where('estado', 'CERRADA')->sum('total'),
+                'total_ventas_hoy' => Orden::where('restaurante_id', $rid)->whereDate('created_at', $hoy)->whereIn('estado', ['CERRADA', 'ENTREGADA'])->sum('total'),
                 'ordenes_hoy'      => Orden::where('restaurante_id', $rid)->whereDate('created_at', $hoy)->count(),
             ];
 
@@ -176,7 +176,7 @@ class OrdenController extends Controller
                         'pickup'   => $ordenes->where('tipo_orden', 'pickup')->count(),
                         'delivery' => $ordenes->where('tipo_orden', 'delivery')->count(),
                     ],
-                    'ventas_totales' => $ordenes->where('estado', 'CERRADA')->sum('total'),
+                    'ventas_totales' => $ordenes->whereIn('estado', ['CERRADA', 'ENTREGADA'])->sum('total'),
                 ],
             ]);
 
