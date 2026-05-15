@@ -603,7 +603,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             }
 
             $utilidadBruta = $totalVentas - $inversionProducto;
-            $utilidadNeta  = $utilidadBruta - $inversionManoObra;
+            $utilidadNeta  = $utilidadBruta;
 
             return response()->json([
                 'success' => true,
@@ -772,7 +772,7 @@ if ($cajaHoy) {
                 ->count();
 
             $utilidadBruta = $ventasDia - $costoProducto;
-            $utilidadNeta  = $utilidadBruta - $manoObraDia - $retirosCaja;
+            $utilidadNeta  = $utilidadBruta - $retirosCaja;
 
             return response()->json([
                 'success' => true,
@@ -863,7 +863,7 @@ if ($cajaHoy) {
             );
 
             $utilidadBrutaHoy = $ventasHoy - $costoProductoHoy;
-            $utilidadNetaHoy  = $utilidadBrutaHoy - $manoObraHoy;
+            $utilidadNetaHoy  = $utilidadBrutaHoy;
 
             $topClientes = [];
             if (class_exists('App\Models\Cliente')) {
