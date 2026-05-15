@@ -143,7 +143,7 @@ class OrdenController extends Controller
             $hoy   = now()->format('Y-m-d');
             $query = Orden::with([
                     'usuario:id,name,username,email',
-                    'detalles.producto.categoria',
+                    'detalles' => function($q) { $q->withTrashed()->with('producto.categoria'); },
                     'cliente'
                 ])
                 ->where('restaurante_id', $restauranteActivo->id)
@@ -199,7 +199,7 @@ class OrdenController extends Controller
             $restauranteActivo = app('restaurante_activo');
             $orden = Orden::with([
                     'usuario:id,name,username,email',
-                    'detalles.producto.categoria',
+                    'detalles' => function($q) { $q->withTrashed()->with('producto.categoria'); },
                     'cliente'
                 ])
                 ->where('restaurante_id', $restauranteActivo->id)
@@ -1019,7 +1019,7 @@ class OrdenController extends Controller
 
             $query = Orden::with([
                     'usuario:id,name',
-                    'detalles.producto.categoria',
+                    'detalles' => function($q) { $q->withTrashed()->with('producto.categoria'); },
                     'cliente',
                 ])
                 ->where('restaurante_id', $restauranteActivo->id)
@@ -1147,6 +1147,12 @@ class OrdenController extends Controller
                 'comensal'            => $d->nom_comensal ?? null,
                 'comensal_id'         => $d->comensal_id ?? null,
                 'estado_preparacion'  => $d->estado_preparacion ?? 'PENDIENTE',
+                'cancelado'           => $d->trashed(),
+                'motivo_cancelacion'  => $d->motivo_cancelacion,
+                'usuario_cancelo'     => $d->usuarioCancelo ? [
+                    'id'   => $d->usuarioCancelo->id,
+                    'name' => $d->usuarioCancelo->name
+                ] : null
             ]),
             'created_at'             => $orden->created_at,
             'created_at_formateado'  => $orden->created_at_formateado,

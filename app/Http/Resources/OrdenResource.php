@@ -34,6 +34,8 @@ class OrdenResource extends JsonResource
                     'comensal_id'   => $d->comensal_id,
                     'subtotal'      => (float)$d->subtotal,
                     'estado'        => $d->estado_preparacion,
+                    'cancelado'     => $d->trashed(),
+                    'motivo_cancelacion' => $d->motivo_cancelacion,
                 ]);
             }),
             'metodo_pago'      => $this->metodo_pago,

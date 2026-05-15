@@ -199,6 +199,76 @@ class PaqueteController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al actualizar estado'], 500);
         }
     }
+    /**
+     * Listar paquetes públicamente (para el Kiosko de Menú)
+     */
+    public function indexPublic(Request $request)
+    {
+        try {
+            $restauranteId = $request->get('restaurante_id');
+            if (!$restauranteId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Se requiere restaurante_id'
+                ], 422);
+            }
+
+            $paquetes = Paquete::withoutGlobalScope(\App\Scopes\TenantScope::class)->with(['productos.categoria'])
+                ->where('restaurante_id', $restauranteId)
+                ->where('activo', true)
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $paquetes
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener paquetes',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    /**
+     * Mostrar un paquete específico públicamente
+     */
+    public function showPublic($id, Request $request)
+    {
+        try {
+            $restauranteId = $request->get('restaurante_id');
+            if (!$restauranteId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Se requiere restaurante_id'
+                ], 422);
+            }
+
+            $paquete = Paquete::withoutGlobalScope(\App\Scopes\TenantScope::class)->with(['productos.categoria'])
+                ->where('restaurante_id', $restauranteId)
+                ->where('id', $id)
+                ->where('activo', true)
+                ->firstOrFail();
+
+            return response()->json([
+                'success' => true,
+                'data' => $paquete
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Paquete no encontrado'
+            ], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener paquete',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 
     // =========================================================================
     // MÉTODOS PRIVADOS

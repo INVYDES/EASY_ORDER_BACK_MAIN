@@ -11,7 +11,15 @@ class AnuncioController extends Controller
     public function index(Request $request)
     {
         try {
-            $restaurante = app('restaurante_activo');
+            $restaurante = app()->bound('restaurante_activo') ? app('restaurante_activo') : null;
+            if (!$restaurante && auth()->check()) {
+                $restaurante = auth()->user()->restauranteActivo;
+            }
+
+            if (!$restaurante) {
+                 return response()->json(['success'=>true,'data'=>[]]);
+            }
+
             $anuncios = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
                 ->where('restaurante_id', $restaurante->id)
                 ->orderBy('orden')->orderByDesc('created_at')
@@ -27,7 +35,15 @@ class AnuncioController extends Controller
     public function vigentes(Request $request)
     {
         try {
-            $restaurante = app('restaurante_activo');
+            $restaurante = app()->bound('restaurante_activo') ? app('restaurante_activo') : null;
+            if (!$restaurante && auth()->check()) {
+                $restaurante = auth()->user()->restauranteActivo;
+            }
+            
+            if (!$restaurante) {
+                return response()->json(['success'=>true,'data'=>[]]);
+            }
+
             $tipo        = $request->get('tipo', 'cliente'); // cliente | interno
 
             $query = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
@@ -65,7 +81,15 @@ class AnuncioController extends Controller
             'orden'            => 'nullable|integer',
         ]);
         try {
-            $restaurante = app('restaurante_activo');
+            $restaurante = app()->bound('restaurante_activo') ? app('restaurante_activo') : null;
+            if (!$restaurante && auth()->check()) {
+                $restaurante = auth()->user()->restauranteActivo;
+            }
+            
+            if (!$restaurante) {
+                throw new \Exception("No hay restaurante activo configurado");
+            }
+
             $anuncio = Anuncio::create([
                 'restaurante_id'  => $restaurante->id,
                 'titulo'          => $request->titulo,
@@ -105,7 +129,15 @@ class AnuncioController extends Controller
             'orden'           => 'nullable|integer',
         ]);
         try {
-            $restaurante = app('restaurante_activo');
+            $restaurante = app()->bound('restaurante_activo') ? app('restaurante_activo') : null;
+            if (!$restaurante && auth()->check()) {
+                $restaurante = auth()->user()->restauranteActivo;
+            }
+            
+            if (!$restaurante) {
+                throw new \Exception("No hay restaurante activo configurado");
+            }
+
             $anuncio = Anuncio::where('restaurante_id',$restaurante->id)->findOrFail($id);
             $anuncio->update($request->only([
                 'titulo','contenido','tipo','producto_id','paquete_id','precio_promo',
@@ -121,7 +153,15 @@ class AnuncioController extends Controller
     public function destroy($id)
     {
         try {
-            $restaurante = app('restaurante_activo');
+            $restaurante = app()->bound('restaurante_activo') ? app('restaurante_activo') : null;
+            if (!$restaurante && auth()->check()) {
+                $restaurante = auth()->user()->restauranteActivo;
+            }
+            
+            if (!$restaurante) {
+                throw new \Exception("No hay restaurante activo configurado");
+            }
+
             Anuncio::where('restaurante_id',$restaurante->id)->findOrFail($id)->delete();
             return response()->json(['success'=>true,'message'=>'Eliminado']);
         } catch (\Exception $e) {
@@ -181,10 +221,13 @@ class AnuncioController extends Controller
         // Forzamos la detección del usuario aunque la ruta sea pública para la vista previa admin
         $user = auth('sanctum')->user();
         
-        // CORREGIDO: Obtener restaurante activo del usuario
+        // CORREGIDO: Obtener restaurante activo del usuario solo si existe el binding
         if (!$restauranteId && $user) {
-            $restauranteActivo = app('restaurante_activo');
-            $restauranteId = $restauranteActivo ? $restauranteActivo->id : null;
+            try {
+                $restauranteId = app()->bound('restaurante_activo') ? app('restaurante_activo')->id : $user->restaurante_activo;
+            } catch (\Exception $e) {
+                $restauranteId = $user->restaurante_activo;
+            }
         }
 
         $mostrarCliente = $request->boolean('mostrar_cliente', false);
@@ -272,7 +315,15 @@ public function scopeVigentes($query)
 public function toggleActivo($id)
 {
     try {
-        $restaurante = app('restaurante_activo');
+        $restaurante = app()->bound('restaurante_activo') ? app('restaurante_activo') : null;
+        if (!$restaurante && auth()->check()) {
+            $restaurante = auth()->user()->restauranteActivo;
+        }
+        
+        if (!$restaurante) {
+            throw new \Exception("No hay restaurante activo configurado");
+        }
+
         $anuncio = Anuncio::where('restaurante_id', $restaurante->id)->findOrFail($id);
         $anuncio->activo = !$anuncio->activo;
         $anuncio->save();
@@ -299,7 +350,14 @@ public function reordenar(Request $request)
             'ordenes.*.orden' => 'required|integer|min:0',
         ]);
         
-        $restaurante = app('restaurante_activo');
+        $restaurante = app()->bound('restaurante_activo') ? app('restaurante_activo') : null;
+        if (!$restaurante && auth()->check()) {
+            $restaurante = auth()->user()->restauranteActivo;
+        }
+        
+        if (!$restaurante) {
+            throw new \Exception("No hay restaurante activo configurado");
+        }
         
         foreach ($request->ordenes as $item) {
             Anuncio::where('restaurante_id', $restaurante->id)
