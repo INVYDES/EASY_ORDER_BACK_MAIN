@@ -559,6 +559,57 @@ public function recomendacionPaquete(Request $request): JsonResponse
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // PLATILLOS DEVUELTOS / CANCELADOS
+    // Ruta: GET /api/reportes/platillos-devueltos
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function platillosDevueltos(Request $request): JsonResponse
+    {
+        try {
+            $restauranteActivo = app('restaurante_activo');
+
+            $request->validate([
+                'fecha_inicio' => 'sometimes|date',
+                'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
+            ]);
+
+            $query = DB::table('orden_detalles')
+                ->join('ordenes',   'orden_detalles.orden_id',    '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->leftJoin('users', 'ordenes.user_id', '=', 'users.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->where('ordenes.estado', 'CANCELADA')
+                ->select(
+                    'orden_detalles.id',
+                    'ordenes.created_at as fecha',
+                    'productos.nombre as producto',
+                    'orden_detalles.cantidad',
+                    DB::raw('orden_detalles.subtotal'),
+                    DB::raw('COALESCE(ordenes.motivo_cancelacion, "Sin motivo") as motivo'),
+                    DB::raw('COALESCE(users.name, "Sistema") as usuario')
+                );
+
+            if ($request->filled('fecha_inicio')) {
+                $query->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00');
+            }
+            if ($request->filled('fecha_fin')) {
+                $query->where('ordenes.created_at', '<=', $request->fecha_fin . ' 23:59:59');
+            }
+
+            $resultados = $query->orderByDesc('ordenes.created_at')->get();
+
+            return response()->json([
+                'success' => true,
+                'data'    => $resultados,
+                'total_mermas' => round($resultados->sum('subtotal'), 2),
+            ]);
+
+        } catch (\Exception $e) {
+            return $this->error('Error al obtener platillos devueltos', $e);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // PROPINAS
     // ─────────────────────────────────────────────────────────────────────────
 

@@ -7,6 +7,7 @@ use App\Http\Requests\ProductoStoreRequest;
 use App\Http\Requests\ProductoUpdateRequest;
 use App\Models\Producto;
 use App\Models\Categoria;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
@@ -107,11 +108,16 @@ class ProductoController extends Controller
                 $query->orderBy('nombre', 'asc');
             }
 
+            $query->withCount(['ordenDetalles as total_ventas']);
+            $query->withSum('ordenDetalles', 'cantidad');
+
             $productos = $query->paginate($perPage, ['*'], 'page', $page);
 
-            $productosData = $productos->map(function($producto) {
+            $totalNomina = $this->obtenerTotalNominaMensual($restauranteActivo->id);
+            $productosData = $productos->map(function($producto) use ($totalNomina) {
                 $bajoStock = $producto->stock <= $producto->stock_minimo;
-                
+                $c = $this->calcularCostosProducto($producto, $totalNomina);
+
                 return [
                     'id' => $producto->id,
                     'nombre' => $producto->nombre,
@@ -145,6 +151,12 @@ class ProductoController extends Controller
                     
                     'precio' => (float) $producto->precio,
                     'precio_formateado' => '$' . number_format($producto->precio, 2),
+                    'costo_insumos' => round($c['costoInsumos'], 4),
+                    'costo_mo' => round($c['costoMO'], 4),
+                    'costo_indirectos' => round($c['costoIndirectos'], 4),
+                    'costo_total' => round($c['costoTotal'], 4),
+                    'margen' => round($c['margenValor'], 2),
+                    'margen_pct' => $c['margenPct'],
                     'minutos_produccion' => (float) $producto->minutos_produccion,
                     'nomina_diaria' => (float) $producto->nomina_diaria,
                     
@@ -163,8 +175,8 @@ class ProductoController extends Controller
                     'updated_at' => $producto->updated_at,
                     'updated_at_formateado' => $producto->updated_at ? $producto->updated_at->format('d/m/Y H:i') : null,
                     
-                    'total_ventas' => $producto->ordenDetalles()->count(),
-                    'cantidad_vendida' => (int) $producto->ordenDetalles()->sum('cantidad')
+                    'total_ventas' => (int) ($producto->total_ventas ?? 0),
+                    'cantidad_vendida' => (int) ($producto->orden_detalles_sum_cantidad ?? 0)
                 ];
             });
 
@@ -248,66 +260,18 @@ class ProductoController extends Controller
             $restauranteActivo = app('restaurante_activo');
 
             $producto = Producto::with(['categoria', 'ingredientes'])
+                ->withCount(['ordenDetalles as total_ventas'])
+                ->withSum('ordenDetalles', 'cantidad')
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();
 
-            $bajoStock = $producto->stock <= $producto->stock_minimo;
+            $totalNomina = $this->obtenerTotalNominaMensual($producto->restaurante_id);
 
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'id' => $producto->id,
-                    'nombre' => $producto->nombre,
-                    'descripcion' => $producto->descripcion,
-                    
-                    'categoria' => $producto->categoria ? [
-                        'id' => $producto->categoria->id,
-                        'nombre' => $producto->categoria->nombre,
-                        'color' => $producto->categoria->color,
-                        'icono' => $producto->categoria->icono
-                    ] : null,
-                    'categoria_id' => $producto->categoria_id,
-
-                    'ingredientes' => $producto->ingredientes->map(function($ing) {
-                        return [
-                            'id' => $ing->id,
-                            'nombre' => $ing->nombre,
-                            'unidad' => $ing->unidad,
-                            'stock_actual' => (float) $ing->stock_actual,
-                            'stock_minimo' => (float) $ing->stock_minimo,
-                            'costo_unitario' => (float) $ing->costo_unitario,
-                            'cantidad_necesaria' => (float) ($ing->pivot->cantidad ?? 0)
-                        ];
-                    })->toArray(),
-                    
-                    'tiene_ingredientes' => $producto->ingredientes->isNotEmpty(),
-                    'puede_prepararse' => $this->puedePrepararse($producto),
-                    'unidades_posibles' => $this->calcularUnidadesPosibles($producto),
-
-                    'imagen' => $producto->imagen,
-                    'imagen_url' => $producto->imagen_url,
-                    
-                    'precio' => (float) $producto->precio,
-                    'precio_formateado' => '$' . number_format($producto->precio, 2),
-                    'minutos_produccion' => (float) $producto->minutos_produccion,
-                    'nomina_diaria' => (float) $producto->nomina_diaria,
-                    
-                    'stock' => (int) $producto->stock,
-                    'stock_minimo' => (int) $producto->stock_minimo,
-                    'bajo_stock' => $bajoStock,
-                    'agotado' => $producto->stock <= 0,
-                    'estado_stock' => $this->getEstadoStock($producto->stock, $producto->stock_minimo),
-                    
-                    'activo' => (bool) $producto->activo,
-                    'created_at' => $producto->created_at,
-                    'created_at_formateado' => $producto->created_at ? $producto->created_at->format('d/m/Y H:i') : null,
-                    'updated_at' => $producto->updated_at,
-                    'updated_at_formateado' => $producto->updated_at ? $producto->updated_at->format('d/m/Y H:i') : null,
-                    
-                    'total_ventas' => $producto->ordenDetalles()->count(),
-                    'cantidad_vendida' => (int) $producto->ordenDetalles()->sum('cantidad'),
-                    'ultimas_ventas' => $producto->ordenDetalles()
+            $productoData = $this->formatProductoResponse($producto);
+            $productoData['total_ventas'] = (int) ($producto->total_ventas ?? 0);
+            $productoData['cantidad_vendida'] = (int) ($producto->orden_detalles_sum_cantidad ?? 0);
+            $productoData['ultimas_ventas'] = $producto->ordenDetalles()
                         ->with('orden')
                         ->latest()
                         ->limit(5)
@@ -319,8 +283,11 @@ class ProductoController extends Controller
                                 'subtotal' => (float) $detalle->subtotal,
                                 'total_formateado' => '$' . number_format($detalle->subtotal, 2)
                             ];
-                        })
-                ]
+                        });
+
+            return response()->json([
+                'success' => true,
+                'data' => $productoData
             ]);
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
@@ -366,6 +333,7 @@ class ProductoController extends Controller
                 'stock' => 'nullable|integer|min:0',
                 'stock_minimo' => 'nullable|integer|min:0',
                 'activo' => 'nullable|boolean',
+                'minutos_produccion' => 'nullable|numeric|min:0|max:1440',
                 'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
                 'imagen_url' => 'nullable|url|max:500',
                 'ingredientes' => 'nullable|array'
@@ -390,10 +358,6 @@ class ProductoController extends Controller
                 ], 409);
             }
 
-            // ---------------------------------------------------------------
-            // ACTIVIDAD 2: Si no se envía categoria_id (o viene vacío/nulo),
-            // obtener o crear la categoría "Cocina" para este restaurante.
-            // ---------------------------------------------------------------
             $categoriaId = $request->categoria_id;
             if (!$categoriaId) {
                 $categoriaDefault = Categoria::firstOrCreate(
@@ -419,6 +383,7 @@ class ProductoController extends Controller
                 'precio' => $request->precio,
                 'stock' => $request->stock ?? 0,
                 'stock_minimo' => $request->stock_minimo ?? 5,
+                'minutos_produccion' => $request->minutos_produccion ?? 0,
                 'activo' => $request->has('activo') ? $request->activo : true
             ];
 
@@ -510,6 +475,7 @@ class ProductoController extends Controller
                 'stock' => 'sometimes|integer|min:0',
                 'stock_minimo' => 'sometimes|integer|min:0',
                 'activo' => 'sometimes|boolean',
+                'minutos_produccion' => 'nullable|numeric|min:0|max:1440',
                 'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
                 'imagen_url' => 'nullable|url|max:500',
                 'eliminar_imagen' => 'nullable|boolean',
@@ -1119,6 +1085,7 @@ class ProductoController extends Controller
                 'productos.*.categoria_id' => 'nullable|exists:categorias,id',
                 'productos.*.stock' => 'nullable|integer|min:0',
                 'productos.*.stock_minimo' => 'nullable|integer|min:0',
+                'productos.*.minutos_produccion' => 'nullable|numeric|min:0|max:1440',
                 'sobrescribir' => 'nullable|boolean'
             ]);
 
@@ -1153,6 +1120,7 @@ class ProductoController extends Controller
                             'categoria_id' => $item['categoria_id'] ?? $producto->categoria_id,
                             'stock' => $item['stock'] ?? $producto->stock,
                             'stock_minimo' => $item['stock_minimo'] ?? $producto->stock_minimo,
+                            'minutos_produccion' => $item['minutos_produccion'] ?? $producto->minutos_produccion,
                             'activo' => true
                         ]);
                         $resultados['actualizados']++;
@@ -1165,6 +1133,7 @@ class ProductoController extends Controller
                             'precio' => $item['precio'],
                             'stock' => $item['stock'] ?? 0,
                             'stock_minimo' => $item['stock_minimo'] ?? 5,
+                            'minutos_produccion' => $item['minutos_produccion'] ?? 0,
                             'activo' => true
                         ]);
                         $resultados['creados']++;
@@ -1546,17 +1515,53 @@ class ProductoController extends Controller
     // =========================================================================
 
     /**
+     * Calcula la nómina mensual total del restaurante (suma salarios base)
+     */
+    private function obtenerTotalNominaMensual($restauranteId)
+    {
+        return User::where('restaurante_activo', $restauranteId)
+            ->sum('salario_base');
+    }
+
+    /**
+     * Calcula costos y margen de un producto (insumos + MO + indirectos)
+     */
+    private function calcularCostosProducto($producto, $totalNominaMensual)
+    {
+        $costoInsumos = $producto->ingredientes->reduce(function($carry, $ing) {
+            $cant = $ing->pivot->cantidad ?? 0;
+            return $carry + ($ing->costo_unitario * $cant);
+        }, 0);
+
+        $minProd = (float) ($producto->minutos_produccion ?? 0);
+        $costoMO = $totalNominaMensual > 0 && $minProd > 0
+            ? ($totalNominaMensual / 14400) * 1.36 * $minProd
+            : 0;
+
+        $costoBase = $costoInsumos + $costoMO;
+        $costoIndirectos = $costoBase * 0.05;
+        $costoTotal = $costoBase + $costoIndirectos;
+
+        $margenValor = $producto->precio - $costoTotal;
+        $margenPct = $producto->precio > 0 ? round(($margenValor / $producto->precio) * 100, 2) : 0;
+
+        return compact('costoInsumos', 'costoMO', 'costoIndirectos', 'costoTotal', 'margenValor', 'margenPct');
+    }
+
+    /**
      * Formatear respuesta de producto con ingredientes
      */
     private function formatProductoResponse($producto)
     {
         $bajoStock = $producto->stock <= $producto->stock_minimo;
-        
+        $totalNominaMensual = $this->obtenerTotalNominaMensual($producto->restaurante_id);
+        $c = $this->calcularCostosProducto($producto, $totalNominaMensual);
+
         return [
             'id' => $producto->id,
             'nombre' => $producto->nombre,
             'descripcion' => $producto->descripcion,
-            
+
             'categoria' => $producto->categoria ? [
                 'id' => $producto->categoria->id,
                 'nombre' => $producto->categoria->nombre,
@@ -1576,25 +1581,33 @@ class ProductoController extends Controller
                     'cantidad_necesaria' => (float) ($ing->pivot->cantidad ?? 0)
                 ];
             })->toArray(),
-            
+
             'tiene_ingredientes' => $producto->ingredientes->isNotEmpty(),
             'puede_prepararse' => $this->puedePrepararse($producto),
             'unidades_posibles' => $this->calcularUnidadesPosibles($producto),
-            
+
             'imagen' => $producto->imagen,
             'imagen_url' => $producto->imagen_url,
 
             'precio' => (float) $producto->precio,
             'precio_formateado' => '$' . number_format($producto->precio, 2),
+
+            'costo_insumos' => round($c['costoInsumos'], 4),
+            'costo_mo' => round($c['costoMO'], 4),
+            'costo_indirectos' => round($c['costoIndirectos'], 4),
+            'costo_total' => round($c['costoTotal'], 4),
+            'margen' => round($c['margenValor'], 2),
+            'margen_pct' => $c['margenPct'],
+
             'minutos_produccion' => (float) $producto->minutos_produccion,
-            'nomina_diaria' => (float) $producto->nomina_diaria,
-            
+            'nomina_mensual_base' => (float) $totalNominaMensual,
+
             'stock' => (int) $producto->stock,
             'stock_minimo' => (int) $producto->stock_minimo,
             'bajo_stock' => $bajoStock,
             'agotado' => $producto->stock <= 0,
             'estado_stock' => $this->getEstadoStock($producto->stock, $producto->stock_minimo),
-            
+
             'activo' => (bool) $producto->activo,
             'created_at' => $producto->created_at,
             'created_at_formateado' => $producto->created_at ? $producto->created_at->format('d/m/Y H:i') : null,

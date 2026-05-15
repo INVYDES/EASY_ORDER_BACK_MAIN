@@ -37,6 +37,12 @@ use App\Http\Controllers\Api\ChatbotController;
 |--------------------------------------------------------------------------
 */
 Route::prefix('')->group(function () {
+    // Endpoint to provide server current date/time for frontend synchronization
+    Route::get('/server-time', fn() => response()->json([
+        'success' => true,
+        'current_time' => now()->toDateTimeString(), // format Y-m-d H:i:s
+        'timezone' => config('app.timezone'),
+    ]));
 
     // ========== AUTENTICACIÓN ==========
     Route::middleware('throttle:auth')->group(function () {
@@ -364,6 +370,9 @@ Route::get('/ventas-por-canal-tipo', [ReporteController::class, 'ventasPorCanalT
 
         // GET /api/reportes/tiempos-rebase  →  productosConRetrasoPreparacion
         Route::get('/tiempos-rebase',         [ReporteController::class, 'tiemposRebase']);
+
+        // GET /api/reportes/platillos-devueltos
+        Route::get('/platillos-devueltos',    [ReporteController::class, 'platillosDevueltos']);
     });
 
     // ========== USUARIOS ==========

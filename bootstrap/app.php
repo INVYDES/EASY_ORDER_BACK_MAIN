@@ -9,7 +9,9 @@ return Application::configure(basePath: dirname(__DIR__))
         web: __DIR__.'/../routes/web.php',
         api: __DIR__.'/../routes/api.php',
         apiPrefix: 'api',
+        channels: __DIR__.'/../routes/channels.php',
     )
+    ->withBroadcasting(__DIR__.'/../routes/channels.php', attributes: ['middleware' => ['api', 'auth:sanctum']])
     ->withMiddleware(function (Middleware $middleware) {
 
         $middleware->alias([

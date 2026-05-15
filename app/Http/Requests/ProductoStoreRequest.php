@@ -22,6 +22,7 @@ class ProductoStoreRequest extends FormRequest
             'categoria_id' => 'nullable|exists:categorias,id',
             'stock' => 'nullable|numeric|min:0',
             'stock_minimo' => 'nullable|numeric|min:0',
+            'minutos_produccion' => 'nullable|numeric|min:0|max:1440',
             'activo' => 'nullable|boolean',
             'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
             'imagen_url' => 'nullable|url|max:500',

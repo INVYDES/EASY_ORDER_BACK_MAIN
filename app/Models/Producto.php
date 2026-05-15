@@ -204,7 +204,7 @@ public function ingredienteMovimientos()
     public function eliminarImagenFisica()
     {
         if ($this->imagen) {
-            $ruta = storage_path('app/public/productos/' . $this->imagen);
+            $ruta = storage_path('app/public/' . $this->imagen);
             if (file_exists($ruta)) {
                 return unlink($ruta);
             }
@@ -215,7 +215,7 @@ public function ingredienteMovimientos()
     public function getRutaImagenAttribute()
     {
         if ($this->imagen) {
-            return storage_path('app/public/productos/' . $this->imagen);
+            return storage_path('app/public/' . $this->imagen);
         }
         return null;
     }
@@ -269,7 +269,7 @@ public function ingredienteMovimientos()
             if ($producto->isDirty('imagen')) {
                 $imagenAnterior = $producto->getOriginal('imagen');
                 if ($imagenAnterior) {
-                    $rutaAnterior = storage_path('app/public/productos/' . $imagenAnterior);
+                    $rutaAnterior = storage_path('app/public/' . $imagenAnterior);
                     if (file_exists($rutaAnterior)) {
                         unlink($rutaAnterior);
                     }

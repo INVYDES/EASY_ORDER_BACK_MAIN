@@ -3,7 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\OrdenDetalle;
 use App\Models\Paquete;
+use App\Models\Producto;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -21,9 +24,11 @@ class PaqueteController extends Controller
                 })
                 ->get();
 
+            $data = $paquetes->map(fn($p) => $this->formatPaqueteResponse($p));
+
             return response()->json([
                 'success' => true,
-                'data' => $paquetes
+                'data' => $data
             ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error al obtener paquetes', 'error' => $e->getMessage()], 500);
@@ -69,7 +74,7 @@ class PaqueteController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Paquete creado correctamente',
-                'data' => $paquete->load('productos')
+                'data' => $this->formatPaqueteResponse($paquete)
             ], 201);
 
         } catch (\Exception $e) {
@@ -82,12 +87,12 @@ class PaqueteController extends Controller
     {
         try {
             $restauranteActivo = app('restaurante_activo');
-            $paquete = Paquete::with('productos.categoria')
+            $paquete = Paquete::with(['productos.categoria', 'productos.ingredientes'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();
 
-            return response()->json(['success' => true, 'data' => $paquete]);
+            return response()->json(['success' => true, 'data' => $this->formatPaqueteResponse($paquete)]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Paquete no encontrado'], 404);
         }
@@ -138,7 +143,7 @@ class PaqueteController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Paquete actualizado correctamente',
-                'data' => $paquete->load('productos')
+                'data' => $this->formatPaqueteResponse($paquete)
             ]);
 
         } catch (\Exception $e) {
@@ -154,6 +159,14 @@ class PaqueteController extends Controller
             $paquete = Paquete::where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();
+
+            $ordenesAsociadas = OrdenDetalle::where('paquete_id', $paquete->id)->count();
+            if ($ordenesAsociadas > 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "No se puede eliminar el paquete porque tiene {$ordenesAsociadas} orden(es) asociada(s)"
+                ], 409);
+            }
 
             if ($paquete->imagen) {
                 Storage::disk('public')->delete($paquete->imagen);
@@ -185,5 +198,72 @@ class PaqueteController extends Controller
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error al actualizar estado'], 500);
         }
+    }
+
+    // =========================================================================
+    // MÉTODOS PRIVADOS
+    // =========================================================================
+
+    private function obtenerTotalNominaMensual($restauranteId)
+    {
+        return User::where('restaurante_activo', $restauranteId)
+            ->sum('salario_base');
+    }
+
+    private function calcularCostosProducto($producto, $totalNominaMensual)
+    {
+        $costoInsumos = $producto->ingredientes->reduce(function($carry, $ing) {
+            $cant = $ing->pivot->cantidad ?? 0;
+            return $carry + ($ing->costo_unitario * $cant);
+        }, 0);
+
+        $minProd = (float) ($producto->minutos_produccion ?? 0);
+        $costoMO = $totalNominaMensual > 0 && $minProd > 0
+            ? ($totalNominaMensual / 14400) * 1.36 * $minProd
+            : 0;
+
+        $costoBase = $costoInsumos + $costoMO;
+        $costoIndirectos = $costoBase * 0.05;
+        $costoTotal = $costoBase + $costoIndirectos;
+
+        $margenValor = $producto->precio - $costoTotal;
+        $margenPct = $producto->precio > 0 ? round(($margenValor / $producto->precio) * 100, 2) : 0;
+
+        return compact('costoInsumos', 'costoMO', 'costoIndirectos', 'costoTotal', 'margenValor', 'margenPct');
+    }
+
+    private function formatPaqueteResponse($paquete)
+    {
+        $paquete->loadMissing(['productos.categoria', 'productos.ingredientes']);
+
+        $totalNominaMensual = $this->obtenerTotalNominaMensual($paquete->restaurante_id);
+
+        $costoTotalPaquete = 0;
+        $costoInsumosPaquete = 0;
+        $costoMOPaquete = 0;
+        $costoIndirectosPaquete = 0;
+
+        foreach ($paquete->productos as $producto) {
+            $c = $this->calcularCostosProducto($producto, $totalNominaMensual);
+            $cantidad = (float) ($producto->pivot->cantidad ?? 1);
+            $costoTotalPaquete += $c['costoTotal'] * $cantidad;
+            $costoInsumosPaquete += $c['costoInsumos'] * $cantidad;
+            $costoMOPaquete += $c['costoMO'] * $cantidad;
+            $costoIndirectosPaquete += $c['costoIndirectos'] * $cantidad;
+        }
+
+        $margenValor = $paquete->precio - $costoTotalPaquete;
+        $margenPct = $paquete->precio > 0 ? round(($margenValor / $paquete->precio) * 100, 2) : 0;
+
+        $data = $paquete->toArray();
+        $data['costo_insumos'] = round($costoInsumosPaquete, 4);
+        $data['costo_mo'] = round($costoMOPaquete, 4);
+        $data['costo_indirectos'] = round($costoIndirectosPaquete, 4);
+        $data['costo_total'] = round($costoTotalPaquete, 4);
+        $data['margen'] = round($margenValor, 2);
+        $data['margen_pct'] = $margenPct;
+        $data['nomina_mensual_base'] = (float) $totalNominaMensual;
+
+        return $data;
     }
 }
