@@ -595,8 +595,15 @@ class EmpleadoController extends Controller
                 return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
             }
 
-            if (!$this->findStaffUser($userId, $restauranteId)) {
+            $targetUser = $this->findStaffUser($userId, $restauranteId);
+            if (!$targetUser) {
                 return response()->json(['success' => false, 'message' => 'Empleado no encontrado'], 404);
+            }
+
+            // Bloquear generación de nómina para Cuentas de Menú
+            $esMenu = $targetUser->roles->contains(fn($r) => strtoupper($r->nombre) === 'MENU');
+            if ($esMenu) {
+                return response()->json(['success' => false, 'message' => 'Las cuentas de menú no generan nómina ni pagos.'], 422);
             }
 
             $empleado = User::find($userId);
@@ -711,7 +718,11 @@ class EmpleadoController extends Controller
                 return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
             }
 
-            $query = Nomina::where('restaurante_id', $restauranteId)->with('user');
+            $query = Nomina::where('restaurante_id', $restauranteId)
+                ->whereHas('user.roles', function($q) {
+                    $q->where(DB::raw('UPPER(nombre)'), '!=', 'MENU');
+                })
+                ->with('user');
 
             $filterUserId = $this->resolveUserId($request);
             if ($filterUserId) {
@@ -979,7 +990,10 @@ class EmpleadoController extends Controller
                 return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
             }
 
-            $query = Nomina::where('restaurante_id', $restauranteId);
+            $query = Nomina::where('restaurante_id', $restauranteId)
+                ->whereHas('user.roles', function($q) {
+                    $q->where(DB::raw('UPPER(nombre)'), '!=', 'MENU');
+                });
 
             if ($request->filled('fecha_desde')) {
                 $query->whereDate('periodo_fin', '>=', $request->fecha_desde);
