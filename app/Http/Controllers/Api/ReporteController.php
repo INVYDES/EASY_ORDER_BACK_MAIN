@@ -643,25 +643,30 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->leftJoin('users', 'orden_detalles.usuario_cancelo_id', '=', 'users.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->where('ordenes.estado', 'CANCELADA')
+                // ✅ FIX: Incluir tanto platillos borrados individualmente como órdenes canceladas completas
+                ->where(function($q) {
+                    $q->whereNotNull('orden_detalles.motivo_cancelacion')
+                      ->orWhere('ordenes.estado', 'CANCELADA');
+                })
                 ->select(
                     'orden_detalles.id',
-                    'ordenes.created_at as fecha',
+                    // ✅ Usar el momento de la cancelación (deleted_at o updated_at de la orden)
+                    DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at) as fecha'),
                     'productos.nombre as producto',
                     'orden_detalles.cantidad',
-                    DB::raw('orden_detalles.subtotal'),
-                    DB::raw('COALESCE(orden_detalles.motivo_cancelacion, "Sin motivo") as motivo'),
+                    'orden_detalles.subtotal',
+                    DB::raw('COALESCE(orden_detalles.motivo_cancelacion, "Orden Cancelada") as motivo'),
                     DB::raw('COALESCE(users.name, "Sistema") as usuario')
                 );
 
             if ($request->filled('fecha_inicio')) {
-                $query->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00');
+                $query->where(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'), '>=', $request->fecha_inicio . ' 00:00:00');
             }
             if ($request->filled('fecha_fin')) {
-                $query->where('ordenes.created_at', '<=', $request->fecha_fin . ' 23:59:59');
+                $query->where(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'), '<=', $request->fecha_fin . ' 23:59:59');
             }
 
-            $resultados = $query->orderByDesc('ordenes.created_at')->get();
+            $resultados = $query->orderByDesc(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'))->get();
 
             return response()->json([
                 'success' => true,
