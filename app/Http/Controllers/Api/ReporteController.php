@@ -254,32 +254,48 @@ class ReporteController extends Controller
         try {
             $restauranteActivo = app('restaurante_activo');
 
-            $query = DB::table('orden_detalles')
+            $baseQuery = DB::table('orden_detalles')
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
-                ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->whereIn('orden_detalles.estado_preparacion', ['LISTO', 'ENTREGADO'])
-                ->whereRaw('TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) > productos.minutos_produccion')
-                ->select(
-                    'productos.nombre as producto',
-                    'categorias.nombre as estacion',
-                    'productos.minutos_produccion as tiempo_estimado',
-                    DB::raw('TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) as tiempo_real'),
-                    'ordenes.id as orden_id',
-                    'orden_detalles.created_at as fecha'
-                );
+                ->where(function($q) {
+                    $q->whereIn('orden_detalles.estado_preparacion', ['LISTO', 'ENTREGADO'])
+                      ->orWhereIn('ordenes.estado', ['ENTREGADA', 'CERRADA']);
+                })
+                ->whereRaw('TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) > productos.minutos_produccion');
 
-            $hoy    = (clone $query)->whereDate('orden_detalles.created_at', today())->get();
-            $semana = (clone $query)->where('orden_detalles.created_at', '>=', now()->subDays(7))->get();
-            $mes    = (clone $query)->where('orden_detalles.created_at', '>=', now()->subMonths(1))->get();
+            $selectFields = [
+                'productos.id',
+                'productos.nombre',
+                'productos.minutos_produccion as tiempo_estimado',
+                DB::raw('ROUND(AVG(TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at)), 1) as tiempo_real'),
+                DB::raw('ROUND(AVG(TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) - productos.minutos_produccion), 1) as exceso'),
+                DB::raw('COUNT(*) as veces')
+            ];
+
+            $hoy = (clone $baseQuery)->whereDate('orden_detalles.created_at', today())
+                ->select($selectFields)
+                ->groupBy('productos.id', 'productos.nombre', 'productos.minutos_produccion')
+                ->orderByDesc('veces')->limit(5)->get();
+
+            $semana = (clone $baseQuery)->where('orden_detalles.created_at', '>=', now()->subDays(7))
+                ->select($selectFields)
+                ->groupBy('productos.id', 'productos.nombre', 'productos.minutos_produccion')
+                ->orderByDesc('veces')->limit(5)->get();
+
+            $mes = (clone $baseQuery)->where('orden_detalles.created_at', '>=', now()->subMonths(1))
+                ->select($selectFields)
+                ->groupBy('productos.id', 'productos.nombre', 'productos.minutos_produccion')
+                ->orderByDesc('veces')->limit(5)->get();
 
             return response()->json([
                 'success' => true,
                 'data'    => [
                     'hoy'            => $hoy,
-                    'ultimos_7_dias' => $semana,
-                    'ultimo_mes'     => $mes,
+                    'semana'         => $semana,
+                    'mes'            => $mes,
+                    'ultimos_7_dias' => $semana, // Para compatibilidad
+                    'ultimo_mes'     => $mes      // Para compatibilidad
                 ],
             ]);
 
