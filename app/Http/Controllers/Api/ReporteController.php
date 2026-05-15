@@ -244,52 +244,6 @@ class ReporteController extends Controller
             return $this->error('Error al generar reporte de tiempos de preparación', $e);
         }
     }
-
-
-    public function platillosDevueltos(Request $request): \Illuminate\Http\JsonResponse
-    {
-        try {
-            $restauranteActivo = app('restaurante_activo');
-
-            $query = \App\Models\OrdenDetalle::onlyTrashed()
-                ->with(['producto:id,nombre', 'usuarioCancelo:id,name', 'orden:id,mesa'])
-                ->whereHas('orden', function ($q) use ($restauranteActivo) {
-                    $q->where('restaurante_id', $restauranteActivo->id);
-                });
-
-            if ($request->filled('fecha_inicio')) {
-                $query->where('deleted_at', '>=', $request->fecha_inicio . ' 00:00:00');
-            }
-            if ($request->filled('fecha_fin')) {
-                $query->where('deleted_at', '<=', $request->fecha_fin . ' 23:59:59');
-            }
-
-            $devueltos = $query->orderByDesc('deleted_at')->get();
-
-            return response()->json([
-                'success' => true,
-                'data' => $devueltos->map(fn($d) => [
-                    'id'              => $d->id,
-                    'producto'        => $d->producto->nombre ?? 'N/A',
-                    'cantidad'        => (float) $d->cantidad,
-                    'precio_unitario' => (float) $d->precio_unitario,
-                    'subtotal'        => (float) $d->subtotal,
-                    'motivo'          => $d->motivo_cancelacion ?? 'Sin motivo',
-                    'usuario'         => $d->usuarioCancelo->name ?? 'N/A',
-                    'mesa'            => $d->orden->mesa ?? 'N/A',
-                    'orden_id'        => $d->orden_id,
-                    'fecha'           => $d->deleted_at->format('Y-m-d H:i:s'),
-                ])
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error al obtener platillos devueltos',
-                'error'   => $e->getMessage()
-            ], 500);
-        }
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // PRODUCTOS CON RETRASO EN PREPARACIÓN
     // ─────────────────────────────────────────────────────────────────────────
@@ -1538,11 +1492,6 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             return $this->error('Error al calcular ROI', $e);
         }
     }
-
-<<<<<<< HEAD
-
-=======
->>>>>>> de07536 (Mejoras en nominas, factores de productos y filtros de fechas)
 
     // ─────────────────────────────────────────────────────────────────────────
     // HELPERS PRIVADOS
