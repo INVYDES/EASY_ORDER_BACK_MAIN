@@ -641,7 +641,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $query = DB::table('orden_detalles')
                 ->join('ordenes',   'orden_detalles.orden_id',    '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
-                ->leftJoin('users', 'ordenes.user_id', '=', 'users.id')
+                ->leftJoin('users', 'orden_detalles.usuario_cancelo_id', '=', 'users.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
                 ->where('ordenes.estado', 'CANCELADA')
                 ->select(
@@ -650,7 +650,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                     'productos.nombre as producto',
                     'orden_detalles.cantidad',
                     DB::raw('orden_detalles.subtotal'),
-                    DB::raw('COALESCE(ordenes.motivo_cancelacion, "Sin motivo") as motivo'),
+                    DB::raw('COALESCE(orden_detalles.motivo_cancelacion, "Sin motivo") as motivo'),
                     DB::raw('COALESCE(users.name, "Sistema") as usuario')
                 );
 
