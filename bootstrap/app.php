@@ -47,5 +47,9 @@ return Application::configure(basePath: dirname(__DIR__))
                     ] : null,
                 ], $status);
             }
+
+            if ($e instanceof \Symfony\Component\Routing\Exception\RouteNotFoundException) {
+                return response()->json(['success' => false, 'message' => 'Ruta no encontrada'], 404);
+            }
         });
     })->create();

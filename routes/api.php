@@ -40,8 +40,8 @@ Route::prefix('')->group(function () {
     // Endpoint to provide server current date/time for frontend synchronization
     Route::get('/server-time', fn() => response()->json([
         'success' => true,
-        'current_time' => now()->toDateTimeString(), // format Y-m-d H:i:s
-        'timezone' => config('app.timezone'),
+        'current_time' => now()->timezone('America/Mexico_City')->toDateTimeString(),
+        'timezone' => 'America/Mexico_City',
     ]));
 
     // ========== AUTENTICACIÓN ==========
