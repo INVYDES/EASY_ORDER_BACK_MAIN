@@ -1859,11 +1859,10 @@ public function getKpiCocinaReprocesos(Request $request)
                 ->join('users as u', 'u.id', '=', 'o.cajero_id')
                 ->where('o.restaurante_id', $restauranteId)
                 ->where('o.estado', 'CERRADA')
-                ->whereNotNull('o.cierre_solicitado_at')
                 ->whereBetween('o.created_at', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
                 ->select(
                     'u.name as cajero',
-                    DB::raw('AVG(TIMESTAMPDIFF(SECOND, o.cierre_solicitado_at, o.updated_at)) / 60 as tiempo_avg_min'),
+                    DB::raw('AVG(TIMESTAMPDIFF(SECOND, o.created_at, o.updated_at)) / 60 as tiempo_avg_min'),
                     DB::raw('COUNT(*) as total_cobros')
                 )
                 ->groupBy('o.cajero_id', 'u.name')
