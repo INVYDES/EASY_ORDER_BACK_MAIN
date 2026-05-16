@@ -110,6 +110,7 @@ class ReporteController extends Controller
                     ],
                     'ventas'  => $ventas,
                     'totales' => $totales,
+                    'detalles_costos' => $detallesCostos,
                 ],
             ]);
 
@@ -815,6 +816,35 @@ if ($cajaHoy) {
             $utilidadBruta = $ventasDia - $costoProducto;
             $utilidadNeta  = $utilidadBruta - $retirosCaja;
 
+            // DEBUG: Desglose para entender por qué la utilidad no cuadra
+            $detallesCostos = DB::table('orden_detalles')
+                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->where('ordenes.estado', 'CERRADA')
+                ->whereDate('ordenes.created_at', $fecha)
+                ->where('orden_detalles.cancelado', false)
+                ->select('producto_id', 'producto', DB::raw('SUM(cantidad) as cantidad'))
+                ->groupBy('producto_id', 'producto')
+                ->get();
+
+            $totalNomina = DB::table('restaurante_user')
+                ->join('users', 'restaurante_user.user_id', '=', 'users.id')
+                ->where('restaurante_user.restaurante_id', $restauranteActivo->id)
+                ->whereNull('users.deleted_at')
+                ->sum('users.salario_base');
+
+            foreach ($detallesCostos as $dc) {
+                $p = Producto::with('ingredientes')->find($dc->producto_id);
+                if ($p) {
+                    $costoI = $p->ingredientes->sum(fn($i) => $i->pivot->cantidad * $i->precio_compra);
+                    $costoMO = ($totalNomina > 0 && $p->tiempo_preparacion > 0) ? (($totalNomina / 14400) * 1.36 * $p->tiempo_preparacion) : 0;
+                    $dc->costo_insumos_unitario = round($costoI, 2);
+                    $dc->costo_mo_unitario = round($costoMO, 2);
+                    $dc->costo_integral_unitario = round(($costoI + $costoMO) * 1.05, 2);
+                    $dc->subtotal_costo = round($dc->costo_integral_unitario * $dc->cantidad, 2);
+                }
+            }
+
             return response()->json([
                 'success' => true,
                 'data'    => [
@@ -830,6 +860,8 @@ if ($cajaHoy) {
                     'margen_neto_pct'    => $ventasDia > 0 ? round(($utilidadNeta  / $ventasDia) * 100, 2) : 0,
                     'ordenes_en_proceso' => $ordenesEnProceso,
                     'hora_calculo'       => now()->format('H:i:s'),
+                    'nomina_total_detectada' => $totalNomina,
+                    'desglose_costos' => $detallesCostos
                 ],
             ]);
 
