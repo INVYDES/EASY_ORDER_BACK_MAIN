@@ -779,7 +779,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
             $costoProducto = $this->calcularCostoRealProductos(
-                $restauranteActivo->id, $fecha, $fecha, true
+                $restauranteActivo->id, $fecha, $fecha, false
             );
 
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
