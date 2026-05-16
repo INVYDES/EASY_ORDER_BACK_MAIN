@@ -167,19 +167,31 @@ class PlataformaController extends Controller
             'restaurante_user' => 'restaurante_id'
         ];
 
-        // 1. Detalles de ordenes y tickets de soporte (cascada manual)
-        $ordenIds = DB::table('ordenes')->where('restaurante_id', $restauranteId)->pluck('id');
-        DB::table('orden_detalles')->whereIn('orden_id', $ordenIds)->delete();
-        DB::table('tickets')->where('restaurante_id', $restauranteId)->delete();
+        // 1. Detalles de ordenes y tickets de soporte (cascada manual blindada)
+        if (Schema::hasTable('ordenes')) {
+            $ordenIds = DB::table('ordenes')->where('restaurante_id', $restauranteId)->pluck('id');
+            if (Schema::hasTable('orden_detalles')) {
+                DB::table('orden_detalles')->whereIn('orden_id', $ordenIds)->delete();
+            }
+            if (Schema::hasTable('tickets')) {
+                DB::table('tickets')->where('restaurante_id', $restauranteId)->delete();
+            }
+        }
 
-        // 2. Movimientos de caja (cascada manual)
-        $cajaIds = DB::table('cajas')->where('restaurante_id', $restauranteId)->pluck('id');
-        DB::table('caja_movimientos')->whereIn('caja_id', $cajaIds)->delete();
+        // 2. Movimientos de caja (cascada manual blindada)
+        if (Schema::hasTable('cajas')) {
+            $cajaIds = DB::table('cajas')->where('restaurante_id', $restauranteId)->pluck('id');
+            if (Schema::hasTable('caja_movimientos')) {
+                DB::table('caja_movimientos')->whereIn('caja_id', $cajaIds)->delete();
+            }
+        }
 
-        // 3. El resto de tablas directas
+        // 3. El resto de tablas directas (Blindado: verifica si la tabla existe)
         foreach ($tablas as $tabla => $columna) {
-            if ($columna === 'restaurante_id') {
-                DB::table($tabla)->where('restaurante_id', $restauranteId)->delete();
+            if (Schema::hasTable($tabla)) {
+                if ($columna === 'restaurante_id') {
+                    DB::table($tabla)->where('restaurante_id', $restauranteId)->delete();
+                }
             }
         }
     }
