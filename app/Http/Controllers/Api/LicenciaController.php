@@ -17,9 +17,9 @@ class LicenciaController extends Controller
 {
     public function __construct()
     {
-        // Configurar Mercado Pago si hay token
-        if (env('MERCADOPAGO_ACCESS_TOKEN')) {
-            MercadoPagoConfig::setAccessToken(env('MERCADOPAGO_ACCESS_TOKEN'));
+        // Configurar Mercado Pago si existe la clase y hay token
+        if (class_exists('MercadoPago\MercadoPagoConfig') && env('MERCADOPAGO_ACCESS_TOKEN')) {
+            \MercadoPago\MercadoPagoConfig::setAccessToken(env('MERCADOPAGO_ACCESS_TOKEN'));
         }
     }
    
