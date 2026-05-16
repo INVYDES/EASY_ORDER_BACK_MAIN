@@ -533,11 +533,15 @@ public function recomendacionPaquete(Request $request): JsonResponse
             ->where('ordenes.restaurante_id', $restauranteId)
             ->where('ordenes.estado', 'CERRADA'); // Solo lo cobrado
 
-        if ($fechaInicio) {
-            $query->where('ordenes.created_at', '>=', $fechaInicio . ' 00:00:00');
-        }
-        if ($fechaFin) {
-            $query->where('ordenes.created_at', '<=', $fechaFin . ' 23:59:59');
+        if ($fechaInicio && $fechaFin && $fechaInicio === $fechaFin) {
+            $query->whereDate('ordenes.created_at', $fechaInicio);
+        } else {
+            if ($fechaInicio) {
+                $query->where('ordenes.created_at', '>=', $fechaInicio . ' 00:00:00');
+            }
+            if ($fechaFin) {
+                $query->where('ordenes.created_at', '<=', $fechaFin . ' 23:59:59');
+            }
         }
 
         $productosVendidos = $query
@@ -778,9 +782,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->whereDate('created_at', $fecha)
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
-            $costoProducto = $this->calcularCostoRealProductos(
-                $restauranteActivo->id, $fecha, $fecha, false
-            );
+            $costoProducto = (float) $this->calcularCostoRealProductos($restauranteActivo->id, $fecha, false, $fecha);
 
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
