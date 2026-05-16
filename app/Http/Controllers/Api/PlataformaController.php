@@ -7,6 +7,7 @@ use App\Models\Propietario;
 use App\Models\Restaurante;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Models\User;
 
 class PlataformaController extends Controller
 {
@@ -80,8 +81,8 @@ class PlataformaController extends Controller
             $stats = [
                 'total_propietarios' => Propietario::count(),
                 'total_restaurantes' => Restaurante::count(),
-                'licencias_activas' => DB::table('propietario_licencia')->where('estado', 'activa')->count(),
-                'total_usuarios' => \App\Models\User::count()
+                'licencias_activas' => DB::table('propietario_licencia')->where('estado', 'ACTIVA')->count(),
+                'total_usuarios' => User::count()
             ];
 
             return response()->json([
