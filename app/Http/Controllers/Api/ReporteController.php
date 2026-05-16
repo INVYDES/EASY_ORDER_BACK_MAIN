@@ -470,7 +470,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $grupo = $request->get('grupo', 'dia');
 
             $query = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
+                ->where('estado', 'CERRADA');
 
             if ($request->filled('fecha_inicio')) {
                 $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
@@ -606,7 +606,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             ]);
 
             $queryOrdenes = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
+                ->where('estado', 'CERRADA');
 
             if ($request->filled('fecha_inicio')) {
                 $queryOrdenes->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
@@ -724,7 +724,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             ]);
 
             $query = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
+                ->where('estado', 'CERRADA');
 
             if ($request->filled('fecha_inicio')) {
                 $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
@@ -853,7 +853,7 @@ if ($cajaHoy) {
             $hoy = now()->timezone('America/Mexico_City')->format('Y-m-d');
 
             $queryHoy = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereDate('created_at', $hoy);
 
             $ventasHoy      = (float) ((clone $queryHoy)->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0);
@@ -1009,7 +1009,7 @@ if ($cajaHoy) {
             $fechaFin    = $request->get('fecha_fin', now()->format('Y-m-d'));
 
             $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum('total');
 
@@ -1303,7 +1303,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
         switch ($tipo) {
             case 'ventas':
                 return Orden::where('restaurante_id', $restaurante->id)
-                    ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                    ->where('estado', 'CERRADA')
                     ->whereBetween('created_at', [$fInicio, $fFin])
                     ->with('usuario')
                     ->get();
@@ -1435,7 +1435,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             $utilidadObjetivo = (float) $config->utilidad_objetivo;
 
             $ventasMes = (float) Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
@@ -1577,7 +1577,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
             ->join('ordenes',   'orden_detalles.orden_id',    '=', 'ordenes.id')
             ->where('ordenes.restaurante_id', $restauranteId)
-            ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA']);
+            ->where('ordenes.estado', 'CERRADA');
 
         // Intercambiar fechas si vienen invertidas
         $fInicioStr = $request->fecha_inicio;
@@ -1629,7 +1629,7 @@ public function ventasPorCanalTipo(Request $request): JsonResponse
 
         $query = DB::table('ordenes')
             ->where('restaurante_id', $restauranteId)
-            ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
+            ->where('estado', 'CERRADA');
 
         if ($request->filled('fecha_inicio')) {
             $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
