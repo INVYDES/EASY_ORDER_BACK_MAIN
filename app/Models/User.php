@@ -134,7 +134,7 @@ class User extends Authenticatable
         $this->loadMissing('roles.permissions');
 
         // Bypas total para PROPIETARIO o DUEÑO
-        if ($this->hasRole('PROPIETARIO') || $this->hasRole('DUEÑO')) {
+        if ($this->hasRole('PROPIETARIO') || $this->hasRole('DUEÑO') || $this->hasRole('SUPER_ADMIN')) {
             return true;
         }
 

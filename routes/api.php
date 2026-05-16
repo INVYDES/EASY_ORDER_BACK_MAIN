@@ -30,6 +30,7 @@ use App\Http\Controllers\Api\HorarioController;
 use App\Http\Controllers\Api\NominaDetalleController;
 use App\Http\Controllers\Api\PaqueteController;
 use App\Http\Controllers\Api\ChatbotController;
+use App\Http\Controllers\Api\PlataformaController;
 
 /*
 |--------------------------------------------------------------------------
@@ -134,6 +135,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/{licenciaId}/comprar',             [LicenciaController::class, 'comprarLicencia']);
         Route::post('/{licenciaId}/comprar-paypal',      [LicenciaController::class, 'comprarLicenciaPayPal']);
         Route::post('/{licenciaId}/comprar-mercadopago', [LicenciaController::class, 'comprarLicenciaMercadoPago']);
+    });
+
+    // ========== PLATAFORMA (SUPER ADMIN) ==========
+    Route::prefix('plataforma')->group(function () {
+        Route::get('/propietarios', [PlataformaController::class, 'index']);
+        Route::get('/stats',         [PlataformaController::class, 'stats']);
     });
 });
 
