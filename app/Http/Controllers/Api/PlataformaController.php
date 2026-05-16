@@ -163,7 +163,6 @@ class PlataformaController extends Controller
             'gastos'         => 'restaurante_id',
             'ingredientes'   => 'restaurante_id',
             'anuncios'       => 'restaurante_id',
-            'horarios'       => 'restaurante_id',
             'mesas'          => 'restaurante_id',
             'restaurante_user' => 'restaurante_id'
         ];
