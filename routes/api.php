@@ -141,6 +141,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('plataforma')->group(function () {
         Route::get('/propietarios', [PlataformaController::class, 'index']);
         Route::get('/stats',         [PlataformaController::class, 'stats']);
+        Route::delete('/propietarios/{id}', [PlataformaController::class, 'destroyPropietario']);
+        Route::delete('/restaurantes/{id}', [PlataformaController::class, 'destroyRestaurante']);
     });
 });
 
