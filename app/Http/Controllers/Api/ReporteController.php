@@ -571,7 +571,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
 
             // 1. Costo de Insumos (desde receta)
             $costoInsumos = $producto->ingredientes->reduce(fn($c, $ing) =>
-                $c + (($ing->precio_compra ?? $ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
+                $c + (($ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
 
             // Fallback al costo manual si no hay ingredientes
             if ($costoInsumos <= 0) {
@@ -839,7 +839,7 @@ if ($cajaHoy) {
                 $p = Producto::with('ingredientes')->find($dc->producto_id);
                 if ($p) {
                     $costoI = $p->ingredientes->reduce(fn($c, $ing) =>
-                        $c + (($ing->precio_compra ?? $ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
+                        $c + (($ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
                     
                     $dc->usó_costo_manual = false;
                     if ($costoI <= 0) {
@@ -848,10 +848,14 @@ if ($cajaHoy) {
                     }
 
                     $costoMO = ($totalNomina > 0 && $p->minutos_produccion > 0) ? (($totalNomina / 14400) * 1.36 * $p->minutos_produccion) : 0;
+                    
+                    $dc->precio_venta = (float) $p->precio;
                     $dc->costo_insumos_unitario = round($costoI, 2);
                     $dc->costo_mo_unitario = round($costoMO, 2);
                     $dc->costo_integral_unitario = round(($costoI + $costoMO) * 1.05, 2);
+                    $dc->utilidad_unitaria = round($dc->precio_venta - $dc->costo_integral_unitario, 2);
                     $dc->subtotal_costo = round($dc->costo_integral_unitario * $dc->cantidad, 2);
+                    $dc->subtotal_utilidad = round($dc->utilidad_unitaria * $dc->cantidad, 2);
                 }
             }
 
