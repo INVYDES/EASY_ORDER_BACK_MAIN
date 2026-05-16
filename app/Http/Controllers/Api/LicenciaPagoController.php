@@ -7,6 +7,7 @@ use App\Models\PropietarioLicencia;
 use App\Models\Licencia;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class LicenciaPagoController extends Controller
@@ -165,5 +166,86 @@ class LicenciaPagoController extends Controller
                 'message' => 'Error al verificar suscripción'
             ], 500);
         }
+    }
+
+    /**
+     * Cancelar mi propia suscripción (propietario)
+     */
+    public function cancelarMiSuscripcion(Request $request)
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user || !$user->propietario_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tienes un propietario asociado'
+                ], 403);
+            }
+
+            $licencia = PropietarioLicencia::with('licencia')
+                ->where('propietario_id', $user->propietario_id)
+                ->where('estado', 'ACTIVA')
+                ->first();
+
+            if (!$licencia) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tienes una licencia activa para cancelar'
+                ], 404);
+            }
+
+            if ($licencia->paypal_subscription_id) {
+                try {
+                    $accessToken = $this->getPayPalAccessToken();
+                    Http::withToken($accessToken)
+                        ->withBody(json_encode(['reason' => 'Cancelada por el usuario']), 'application/json')
+                        ->post(config('services.paypal.base_url') . "/v1/billing/subscriptions/{$licencia->paypal_subscription_id}/cancel");
+                } catch (\Exception $e) {
+                    Log::warning('No se pudo cancelar suscripción en PayPal', [
+                        'subscription_id' => $licencia->paypal_subscription_id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
+            $licencia->update([
+                'estado' => 'CANCELADA',
+                'auto_renovar' => false
+            ]);
+
+            Log::info('Licencia cancelada por propietario', [
+                'propietario_id' => $user->propietario_id,
+                'licencia_id' => $licencia->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Suscripción cancelada correctamente'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error cancelar mi suscripción: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cancelar la suscripción'
+            ], 500);
+        }
+    }
+
+    private function getPayPalAccessToken(): string
+    {
+        $response = Http::withBasicAuth(
+            config('services.paypal.client_id'),
+            config('services.paypal.secret')
+        )->asForm()->post(config('services.paypal.base_url') . '/v1/oauth2/token', [
+            'grant_type' => 'client_credentials',
+        ]);
+
+        if (!$response->successful()) {
+            throw new \Exception('Error al obtener token de PayPal: ' . $response->body());
+        }
+
+        return $response->json()['access_token'];
     }
 }

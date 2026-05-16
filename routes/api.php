@@ -128,6 +128,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ========== MI LICENCIA ==========
     Route::get('/mi-licencia', [LicenciaPagoController::class, 'miLicencia']);
+    Route::post('/mi-licencia/cancelar', [LicenciaPagoController::class, 'cancelarMiSuscripcion']);
 
     // ========== COMPRA DE LICENCIAS ==========
     Route::prefix('licencias')->group(function () {
