@@ -7,6 +7,7 @@ use App\Models\Propietario;
 use App\Models\Restaurante;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use App\Models\User;
 
 class PlataformaController extends Controller
