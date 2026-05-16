@@ -1520,8 +1520,11 @@ class ProductoController extends Controller
      */
     private function obtenerTotalNominaMensual($restauranteId)
     {
-        return User::where('restaurante_activo', $restauranteId)
-            ->sum('salario_base');
+        return DB::table('restaurante_user')
+            ->join('users', 'restaurante_user.user_id', '=', 'users.id')
+            ->where('restaurante_user.restaurante_id', $restauranteId)
+            ->whereNull('users.deleted_at')
+            ->sum('users.salario_base');
     }
 
     /**
