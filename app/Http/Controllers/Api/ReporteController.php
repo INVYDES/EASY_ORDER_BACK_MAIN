@@ -579,7 +579,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             }
 
             if ($soloInsumos) {
-                $costoTotalGeneral += $costoInsumos * $pv->cantidad_total;
+                $costoTotalGeneral += round($costoInsumos, 2) * $pv->cantidad_total;
                 continue;
             }
 
@@ -591,9 +591,8 @@ public function recomendacionPaquete(Request $request): JsonResponse
 
             $costoBase = $costoInsumos + $costoMO;
             
-            // 3. Indirectos (5%)
-            $costoIndirectos = $costoBase * 0.05;
-            $costoUnitarioIntegral = $costoBase + $costoIndirectos;
+            // 3. Indirectos (5%) y redondeo integral para coincidir con la lista
+            $costoUnitarioIntegral = round($costoBase * 1.05, 2);
 
             $costoTotalGeneral += $costoUnitarioIntegral * $pv->cantidad_total;
         }
@@ -835,29 +834,27 @@ if ($cajaHoy) {
                 ->whereNull('users.deleted_at')
                 ->sum('users.salario_base');
 
+            $costoProducto = 0;
             foreach ($detallesCostos as $dc) {
                 $p = Producto::with('ingredientes')->find($dc->producto_id);
                 if ($p) {
                     $costoI = $p->ingredientes->reduce(fn($c, $ing) =>
                         $c + (($ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
                     
-                    $dc->usó_costo_manual = false;
                     if ($costoI <= 0) {
                         $costoI = (float) ($p->costo ?? 0);
-                        $dc->usó_costo_manual = true;
                     }
 
                     $costoMO = ($totalNomina > 0 && $p->minutos_produccion > 0) ? (($totalNomina / 14400) * 1.36 * $p->minutos_produccion) : 0;
                     
-                    $dc->precio_venta = (float) $p->precio;
-                    $dc->costo_insumos_unitario = round($costoI, 2);
-                    $dc->costo_mo_unitario = round($costoMO, 2);
-                    $dc->costo_integral_unitario = round(($costoI + $costoMO) * 1.05, 2);
-                    $dc->utilidad_unitaria = round($dc->precio_venta - $dc->costo_integral_unitario, 2);
-                    $dc->subtotal_costo = round($dc->costo_integral_unitario * $dc->cantidad, 2);
-                    $dc->subtotal_utilidad = round($dc->utilidad_unitaria * $dc->cantidad, 2);
+                    $costoIntegralUnitario = round(($costoI + $costoMO) * 1.05, 2);
+                    $dc->subtotal_costo = round($costoIntegralUnitario * $dc->cantidad, 2);
+                    $costoProducto += $dc->subtotal_costo;
                 }
             }
+
+            $utilidadBruta = $ventasDia - $costoProducto;
+            $utilidadNeta  = $utilidadBruta - $retirosCaja;
 
             return response()->json([
                 'success' => true,
@@ -873,9 +870,7 @@ if ($cajaHoy) {
                     'margen_bruto_pct'   => $ventasDia > 0 ? round(($utilidadBruta / $ventasDia) * 100, 2) : 0,
                     'margen_neto_pct'    => $ventasDia > 0 ? round(($utilidadNeta  / $ventasDia) * 100, 2) : 0,
                     'ordenes_en_proceso' => $ordenesEnProceso,
-                    'hora_calculo'       => now()->format('H:i:s'),
-                    'nomina_total_detectada' => $totalNomina,
-                    'desglose_costos' => $detallesCostos
+                    'hora_calculo'       => now()->format('H:i:s')
                 ],
             ]);
 
