@@ -819,12 +819,13 @@ if ($cajaHoy) {
             // DEBUG: Desglose para entender por qué la utilidad no cuadra
             $detallesCostos = DB::table('orden_detalles')
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
                 ->where('ordenes.estado', 'CERRADA')
                 ->whereDate('ordenes.created_at', $fecha)
                 ->where('orden_detalles.cancelado', false)
-                ->select('producto_id', 'producto', DB::raw('SUM(cantidad) as cantidad'))
-                ->groupBy('producto_id', 'producto')
+                ->select('orden_detalles.producto_id', 'productos.nombre as producto', DB::raw('SUM(orden_detalles.cantidad) as cantidad'))
+                ->groupBy('orden_detalles.producto_id', 'productos.nombre')
                 ->get();
 
             $totalNomina = DB::table('restaurante_user')
