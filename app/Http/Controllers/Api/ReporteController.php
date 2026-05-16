@@ -531,7 +531,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
         $query = DB::table('orden_detalles')
             ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
             ->where('ordenes.restaurante_id', $restauranteId)
-            ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA']);
+            ->where('ordenes.estado', 'CERRADA'); // Solo lo cobrado
 
         if ($fechaInicio) {
             $query->where('ordenes.created_at', '>=', $fechaInicio . ' 00:00:00');
@@ -554,7 +554,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             ->get()
             ->keyBy('id');
 
-        $costoTotal = 0;
+        $costoTotalGeneral = 0;
 
         foreach ($productosVendidos as $pv) {
             $producto = $productos->get($pv->producto_id);
@@ -570,11 +570,11 @@ public function recomendacionPaquete(Request $request): JsonResponse
             }
 
             if ($soloInsumos) {
-                $costoTotal += $costoInsumos * $pv->cantidad_total;
+                $costoTotalGeneral += $costoInsumos * $pv->cantidad_total;
                 continue;
             }
 
-            // 2. Mano de Obra Teórica
+            // 2. Mano de Obra (Misma lógica que ProductoController)
             $minProd = (float) ($producto->minutos_produccion ?? 0);
             $costoMO = $totalNominaMensual > 0 && $minProd > 0
                 ? ($totalNominaMensual / 14400) * 1.36 * $minProd
@@ -583,12 +583,13 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $costoBase = $costoInsumos + $costoMO;
             
             // 3. Indirectos (5%)
-            $costoUnitario = $costoBase + ($costoBase * 0.05);
+            $costoIndirectos = $costoBase * 0.05;
+            $costoUnitarioIntegral = $costoBase + $costoIndirectos;
 
-            $costoTotal += $costoUnitario * $pv->cantidad_total;
+            $costoTotalGeneral += $costoUnitarioIntegral * $pv->cantidad_total;
         }
 
-        return (float) $costoTotal;
+        return (float) $costoTotalGeneral;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
