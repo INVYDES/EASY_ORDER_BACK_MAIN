@@ -50,7 +50,7 @@ class ReporteController extends Controller
             $fechaFin    = $fFinStr . ' 23:59:59';
 
             $base = fn () => Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereBetween('created_at', [$fechaInicio, $fechaFin])
                 ->when($request->filled('user_id'), function ($q) use ($request) {
                     $q->where('usuario_id', $request->user_id);
@@ -526,7 +526,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
     // COSTO REAL DETALLADO POR PRODUCTO (insumos + MO + indirectos)
     // ─────────────────────────────────────────────────────────────────────────
 
-    private function calcularCostoRealProductos($restauranteId, $fechaInicio = null, $fechaFin = null): float
+    private function calcularCostoRealProductos($restauranteId, $fechaInicio = null, $fechaFin = null, bool $soloInsumos = false): float
     {
         $query = DB::table('orden_detalles')
             ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
@@ -560,21 +560,35 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $producto = $productos->get($pv->producto_id);
             if (!$producto) continue;
 
+            // 1. Costo de Insumos (desde receta)
             $costoInsumos = $producto->ingredientes->reduce(fn($c, $ing) =>
                 $c + ($ing->costo_unitario * ($ing->pivot->cantidad ?? 0)), 0);
 
+            // Fallback al costo manual si no hay ingredientes
+            if ($costoInsumos <= 0) {
+                $costoInsumos = (float) ($producto->costo ?? 0);
+            }
+
+            if ($soloInsumos) {
+                $costoTotal += $costoInsumos * $pv->cantidad_total;
+                continue;
+            }
+
+            // 2. Mano de Obra Teórica
             $minProd = (float) ($producto->minutos_produccion ?? 0);
             $costoMO = $totalNominaMensual > 0 && $minProd > 0
                 ? ($totalNominaMensual / 14400) * 1.36 * $minProd
                 : 0;
 
             $costoBase = $costoInsumos + $costoMO;
+            
+            // 3. Indirectos (5%)
             $costoUnitario = $costoBase + ($costoBase * 0.05);
 
             $costoTotal += $costoUnitario * $pv->cantidad_total;
         }
 
-        return $costoTotal;
+        return (float) $costoTotal;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -754,16 +768,16 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $fecha = $request->get('fecha', today()->format('Y-m-d'));
 
             $ventasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereDate('created_at', $fecha)
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
             $costoProducto = $this->calcularCostoRealProductos(
-                $restauranteActivo->id, $fecha, $fecha
+                $restauranteActivo->id, $fecha, $fecha, true
             );
 
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereDate('created_at', $fecha)
                 ->sum('propina');
 
@@ -1435,7 +1449,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
+                ->where('ordenes.estado', 'CERRADA')
                 ->whereBetween('ordenes.created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
 
@@ -1493,7 +1507,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
+                ->where('ordenes.estado', 'CERRADA')
                 ->whereBetween('ordenes.created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->select(
                     'productos.id',
