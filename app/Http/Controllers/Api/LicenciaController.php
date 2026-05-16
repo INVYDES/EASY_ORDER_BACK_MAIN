@@ -29,8 +29,13 @@ public function disponibles(Request $request)
         // Verificar si el usuario está autenticado
         $isAuthenticated = auth('sanctum')->check();
         
-        $query = Licencia::where('activo', 1)
-            ->where('tipo', '!=', 'EMPRESA');
+        $query = Licencia::where('tipo', '!=', 'EMPRESA');
+        
+        // Intentar obtener las activas primero
+        $licenciasExistentes = (clone $query)->where('activo', 1)->count();
+        if ($licenciasExistentes > 0) {
+            $query->where('activo', 1);
+        }
         
         // Si NO está autenticado, mostrar SOLO la licencia de PRUEBA
         if (!$isAuthenticated) {
