@@ -110,7 +110,6 @@ class ReporteController extends Controller
                     ],
                     'ventas'  => $ventas,
                     'totales' => $totales,
-                    'detalles_costos' => $detallesCostos,
                 ],
             ]);
 
