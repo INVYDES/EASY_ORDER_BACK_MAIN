@@ -847,7 +847,7 @@ if ($cajaHoy) {
                         $dc->usó_costo_manual = true;
                     }
 
-                    $costoMO = ($totalNomina > 0 && $p->tiempo_preparacion > 0) ? (($totalNomina / 14400) * 1.36 * $p->tiempo_preparacion) : 0;
+                    $costoMO = ($totalNomina > 0 && $p->minutos_produccion > 0) ? (($totalNomina / 14400) * 1.36 * $p->minutos_produccion) : 0;
                     $dc->costo_insumos_unitario = round($costoI, 2);
                     $dc->costo_mo_unitario = round($costoMO, 2);
                     $dc->costo_integral_unitario = round(($costoI + $costoMO) * 1.05, 2);
