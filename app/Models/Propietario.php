@@ -77,4 +77,18 @@ class Propietario extends Model
 
         return $restaurantesActuales < $maxRestaurantes;
     }
+
+    /**
+     * Verificar si la licencia activa del propietario tiene un permiso específico
+     */
+    public function licenciaTienePermiso(string $permiso): bool
+    {
+        $licenciaActiva = $this->getLicenciaActiva();
+
+        if (!$licenciaActiva || !$licenciaActiva->licencia) {
+            return false;
+        }
+
+        return $licenciaActiva->licencia->tienePermiso($permiso);
+    }
 }

@@ -82,4 +82,16 @@ class Licencia extends Model
     {
         return $this->hasMany(PropietarioLicencia::class);
     }
+
+    public function permisos()
+    {
+        return $this->hasMany(LicenciaPermiso::class);
+    }
+
+    public function tienePermiso(string $permiso): bool
+    {
+        return $this->permisos()
+            ->whereHas('permission', fn($q) => $q->where('nombre', $permiso))
+            ->exists();
+    }
 }

@@ -54,5 +54,6 @@ class Kernel extends HttpKernel
         // TUS MIDDLEWARES PERSONALIZADOS
         'tenant' => \App\Http\Middleware\CheckTenant::class,
         'permission' => \App\Http\Middleware\CheckPermission::class,
+        'licencia_plan' => \App\Http\Middleware\CheckLicenciaPlan::class,
     ];
 }
