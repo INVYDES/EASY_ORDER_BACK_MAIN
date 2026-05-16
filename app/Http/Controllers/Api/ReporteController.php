@@ -822,7 +822,7 @@ if ($cajaHoy) {
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
                 ->where('ordenes.estado', 'CERRADA')
                 ->whereDate('ordenes.created_at', $fecha)
-                ->where('orden_detalles.cancelado', false)
+                ->whereNull('orden_detalles.deleted_at')
                 ->select('orden_detalles.producto_id', 'productos.nombre as producto', DB::raw('SUM(orden_detalles.cantidad) as cantidad'))
                 ->groupBy('orden_detalles.producto_id', 'productos.nombre')
                 ->get();
