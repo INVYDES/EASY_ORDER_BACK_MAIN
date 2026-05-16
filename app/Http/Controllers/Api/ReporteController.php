@@ -567,7 +567,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
 
             // 1. Costo de Insumos (desde receta)
             $costoInsumos = $producto->ingredientes->reduce(fn($c, $ing) =>
-                $c + ($ing->costo_unitario * ($ing->pivot->cantidad ?? 0)), 0);
+                $c + (($ing->precio_compra ?? $ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
 
             // Fallback al costo manual si no hay ingredientes
             if ($costoInsumos <= 0) {
@@ -836,7 +836,15 @@ if ($cajaHoy) {
             foreach ($detallesCostos as $dc) {
                 $p = Producto::with('ingredientes')->find($dc->producto_id);
                 if ($p) {
-                    $costoI = $p->ingredientes->sum(fn($i) => $i->pivot->cantidad * $i->precio_compra);
+                    $costoI = $p->ingredientes->reduce(fn($c, $ing) =>
+                        $c + (($ing->precio_compra ?? $ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
+                    
+                    $dc->usó_costo_manual = false;
+                    if ($costoI <= 0) {
+                        $costoI = (float) ($p->costo ?? 0);
+                        $dc->usó_costo_manual = true;
+                    }
+
                     $costoMO = ($totalNomina > 0 && $p->tiempo_preparacion > 0) ? (($totalNomina / 14400) * 1.36 * $p->tiempo_preparacion) : 0;
                     $dc->costo_insumos_unitario = round($costoI, 2);
                     $dc->costo_mo_unitario = round($costoMO, 2);
