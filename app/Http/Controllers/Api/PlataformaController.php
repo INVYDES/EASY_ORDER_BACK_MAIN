@@ -168,10 +168,10 @@ class PlataformaController extends Controller
             'restaurante_user' => 'restaurante_id'
         ];
 
-        // 1. Detalles de ordenes (cascada manual)
+        // 1. Detalles de ordenes y tickets de soporte (cascada manual)
         $ordenIds = DB::table('ordenes')->where('restaurante_id', $restauranteId)->pluck('id');
         DB::table('orden_detalles')->whereIn('orden_id', $ordenIds)->delete();
-        DB::table('tickets')->whereIn('orden_id', $ordenIds)->delete();
+        DB::table('tickets')->where('restaurante_id', $restauranteId)->delete();
 
         // 2. Movimientos de caja (cascada manual)
         $cajaIds = DB::table('cajas')->where('restaurante_id', $restauranteId)->pluck('id');
