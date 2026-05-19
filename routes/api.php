@@ -332,7 +332,7 @@ Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('
         Route::post('/',            [OrdenDetalleController::class, 'store'])->middleware('permission:CREAR_ORDENES');
         Route::get('/{detalle}',    [OrdenDetalleController::class, 'show'])->middleware('permission:VER_ORDENES');
         Route::put('/{detalle}',    [OrdenDetalleController::class, 'update'])->middleware('permission:EDITAR_ORDENES');
-        Route::delete('/{detalle}', [OrdenDetalleController::class, 'destroy'])->middleware('permission:ELIMINAR_ORDENES');
+        Route::delete('/{detalle}', [OrdenDetalleController::class, 'destroy'])->middleware('permission:ELIMINAR_ORDENES,EDITAR_ORDENES');
     });
 
     // ========== CLIENTES ==========
@@ -425,6 +425,7 @@ Route::prefix('meseros')->group(function () {
 
     // ========== EMPLEADOS ==========
     Route::prefix('empleados')->middleware('permission:VER_EMPLEADOS')->group(function () {
+        Route::get('/sesiones',                  [EmpleadoController::class, 'getSesiones']);
         Route::get('/',                          [EmpleadoController::class, 'index']);
         Route::post('/',                         [EmpleadoController::class, 'store']);
         Route::get('/{empleado}',                [EmpleadoController::class, 'show']);

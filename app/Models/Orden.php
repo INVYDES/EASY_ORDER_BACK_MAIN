@@ -34,7 +34,8 @@ class Orden extends Model
         'total',
         'propina',
         'estado',
-        'paypal_order_id'
+        'paypal_order_id',
+        'lista_at'
     ];
 
     protected $casts = [
@@ -44,7 +45,8 @@ class Orden extends Model
         'mesa' => 'integer',
         'tiempo_estimado_entrega' => 'integer',
         'created_at' => 'datetime',
-        'updated_at' => 'datetime'
+        'updated_at' => 'datetime',
+        'lista_at' => 'datetime'
     ];
 
     protected $attributes = [
@@ -252,7 +254,22 @@ class Orden extends Model
     public function verificarYActualizarEstadoGlobal()
     {
         $detalles = $this->detalles()->with('producto.categoria')->get();
-        if ($detalles->isEmpty()) return;
+        if ($detalles->isEmpty()) {
+            if (!in_array($this->estado, ['CERRADA', 'CANCELADA', 'PAGADA'])) {
+                $this->update(['estado' => 'CANCELADA']);
+                
+                try {
+                    broadcast(new \App\Events\OrdenActualizada(
+                        $this->load(['usuario:id,name,username', 'detalles.producto.categoria']), 
+                        'estado_cambiado', 
+                        $this->restaurante_id
+                    ));
+                } catch (\Exception $e) {
+                    // ignorar
+                }
+            }
+            return;
+        }
 
         $total = $detalles->count();
         $listos = $detalles->where('estado_preparacion', 'LISTO')->count();
@@ -283,7 +300,11 @@ class Orden extends Model
         }
 
         if ($this->estado !== $nuevoEstado && !in_array($this->estado, ['CERRADA', 'CANCELADA', 'PAGADA'])) {
-            $this->update(['estado' => $nuevoEstado]);
+            $updateData = ['estado' => $nuevoEstado];
+            if ($nuevoEstado === 'LISTA' && !$this->lista_at) {
+                $updateData['lista_at'] = now();
+            }
+            $this->update($updateData);
             
             // Emitir evento si es necesario (el controlador lo debería hacer, pero aseguramos estado correcto)
             try {

@@ -23,6 +23,8 @@ class OrdenDetalle extends Model {
         'nom_comensal',
         'comensal_id',
         'estado_preparacion',
+        'en_preparacion_at',
+        'listo_at',
         'reprocesado',
         'motivo_cancelacion',
         'usuario_cancelo_id'
@@ -34,7 +36,9 @@ class OrdenDetalle extends Model {
         'subtotal' => 'decimal:2',
         'reprocesado' => 'boolean',
         'comensal_id' => 'integer',
-        'usuario_cancelo_id' => 'integer'
+        'usuario_cancelo_id' => 'integer',
+        'en_preparacion_at' => 'datetime',
+        'listo_at' => 'datetime'
     ];
 
     /**

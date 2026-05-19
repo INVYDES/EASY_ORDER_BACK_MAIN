@@ -999,6 +999,7 @@ class ProductoController extends Controller
                         'bajo_stock'      => $producto->stock <= $producto->stock_minimo && $producto->stock_minimo > 0,
                         'agotado'         => $producto->stock <= 0,
                         'sin_receta'      => true,
+                        'minutos_produccion' => (float) $producto->minutos_produccion,
                     ];
                 }
 
@@ -1033,6 +1034,7 @@ class ProductoController extends Controller
                     'bajo_stock'      => $bajoStock,
                     'agotado'         => false,
                     'sin_receta'      => false,
+                    'minutos_produccion' => (float) $producto->minutos_produccion,
                 ];
             })->filter()->values();
 
@@ -1464,7 +1466,8 @@ class ProductoController extends Controller
                             'nombre' => $producto->categoria->nombre,
                         ] : null,
                         'disponible' => true,
-                        'stock_restante' => (int) $producto->stock
+                        'stock_restante' => (int) $producto->stock,
+                        'minutos_produccion' => (float) $producto->minutos_produccion,
                     ];
                 }
 
@@ -1489,7 +1492,8 @@ class ProductoController extends Controller
                         'nombre' => $producto->categoria->nombre,
                     ] : null,
                     'disponible' => true,
-                    'stock_restante' => $stockCalculado
+                    'stock_restante' => $stockCalculado,
+                    'minutos_produccion' => (float) $producto->minutos_produccion,
                 ];
             })->filter()->values();
 

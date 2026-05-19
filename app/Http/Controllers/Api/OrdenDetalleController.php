@@ -253,8 +253,8 @@ class OrdenDetalleController extends Controller
                 'cantidad' => $request->cantidad,
                 'notas'    => $request->notas,
                 'subtotal' => $nuevoSubtotal,
-                'nom_comensal' => $request->comensal ?? $request->nom_comensal,
-                'comensal_id'  => $request->comensal_id,
+                'nom_comensal' => $request->comensal ?? $request->nom_comensal ?? $detalle->nom_comensal,
+                'comensal_id'  => $request->comensal_id ?? $detalle->comensal_id,
             ]);
 
             $orden->total += $nuevoSubtotal;
@@ -305,7 +305,7 @@ class OrdenDetalleController extends Controller
         try {
             $user = $request->user();
 
-            if (!$user->hasPermission('ELIMINAR_ORDENES')) {
+            if (!$user->hasPermission('ELIMINAR_ORDENES') && !$user->hasPermission('EDITAR_ORDENES')) {
                 return response()->json(['success' => false, 'message' => 'No tienes permiso para eliminar detalles'], 403);
             }
 
@@ -355,6 +355,7 @@ class OrdenDetalleController extends Controller
 
             // Recalcular total de la orden
             $orden->recalcularTotal();
+            $orden->verificarYActualizarEstadoGlobal();
 
             DB::commit();
 
@@ -597,7 +598,13 @@ class OrdenDetalleController extends Controller
                     }
                 }
 
-                $detalle->update(['estado_preparacion' => $nuevoEstado]);
+                $updateData = ['estado_preparacion' => $nuevoEstado];
+                if ($nuevoEstado === 'EN_PREPARACION' && !$detalle->en_preparacion_at) {
+                    $updateData['en_preparacion_at'] = now();
+                } elseif ($nuevoEstado === 'LISTO' && !$detalle->listo_at) {
+                    $updateData['listo_at'] = now();
+                }
+                $detalle->update($updateData);
             }
 
             if ($nuevoEstado === 'EN_PREPARACION' && $orden->estado === 'POR_PREPARAR') {

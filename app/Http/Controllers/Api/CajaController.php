@@ -263,20 +263,38 @@ class CajaController extends Controller
             $diferencia       = $request->efectivo_final - $efectivoEsperado;
             $totalVentas      = $this->totalVentas($ventas);
 
-            $caja->update([
+            $updateData = [
                 'fecha_cierre'         => now(),
                 'usuario_cierre_id'    => $user->id,
                 'monto_final'          => $request->efectivo_final,
                 'ventas_efectivo'      => $v['efectivo'],
                 'ventas_tarjeta'       => $v['tarjeta'],
                 'ventas_transferencia' => $v['transferencia'],
-                'ventas_paypal'        => $v['paypal'],
-                'ventas_mercadopago'   => $v['mercadopago'],
                 'total_ordenes'        => $v['total_ordenes'],
                 'diferencia'           => $diferencia,
                 'observaciones_cierre' => $request->observaciones,
                 'estado'               => 'cerrada',
-            ]);
+            ];
+
+            if (\Illuminate\Support\Facades\Schema::hasColumn('cajas', 'ventas_paypal')) {
+                $updateData['ventas_paypal'] = $v['paypal'];
+            }
+            if (\Illuminate\Support\Facades\Schema::hasColumn('cajas', 'ventas_mercadopago')) {
+                $updateData['ventas_mercadopago'] = $v['mercadopago'];
+            }
+
+            $caja->update($updateData);
+
+            // Cerrar automáticamente cualquier otra caja vieja que haya quedado huérfana y abierta para este restaurante
+            Caja::where('restaurante_id', $restauranteActivo->id)
+                ->whereNull('fecha_cierre')
+                ->where('id', '!=', $caja->id)
+                ->update([
+                    'fecha_cierre'         => now(),
+                    'estado'               => 'cerrada',
+                    'monto_final'          => \Illuminate\Support\Facades\DB::raw('monto_inicial'),
+                    'observaciones_cierre' => 'Cierre automático de caja huérfana o antigua',
+                ]);
 
             DB::commit();
 

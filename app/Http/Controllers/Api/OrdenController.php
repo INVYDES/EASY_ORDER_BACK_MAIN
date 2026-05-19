@@ -556,6 +556,9 @@ class OrdenController extends Controller
 
             $estadoAnterior = $orden->estado;
             $campos = ['estado' => $request->estado];
+            if ($request->estado === 'LISTA') {
+                $campos['lista_at'] = now();
+            }
             if ($request->filled('metodo_pago')) $campos['metodo_pago'] = $request->metodo_pago;
             if ($request->has('propina'))         $campos['propina']     = $request->propina ?? 0;
 
@@ -975,9 +978,16 @@ class OrdenController extends Controller
                 ->where('id', $id)
                 ->firstOrFail();
 
+            $updateData = ['estado_preparacion' => $request->estado_preparacion];
+            if ($request->estado_preparacion === 'EN_PREPARACION') {
+                $updateData['en_preparacion_at'] = now();
+            } elseif ($request->estado_preparacion === 'LISTO') {
+                $updateData['listo_at'] = now();
+            }
+
             OrdenDetalle::whereIn('id', $request->detalles)
                 ->where('orden_id', $orden->id)
-                ->update(['estado_preparacion' => $request->estado_preparacion]);
+                ->update($updateData);
 
             $orden->verificarYActualizarEstadoGlobal();
 
@@ -1147,6 +1157,7 @@ class OrdenController extends Controller
                 'comensal'            => $d->nom_comensal ?? null,
                 'comensal_id'         => $d->comensal_id ?? null,
                 'estado_preparacion'  => $d->estado_preparacion ?? 'PENDIENTE',
+                'minutos_produccion'  => (float) ($d->producto->minutos_produccion ?? 0),
                 'cancelado'           => $d->trashed(),
                 'motivo_cancelacion'  => $d->motivo_cancelacion,
                 'usuario_cancelo'     => $d->usuarioCancelo ? [
