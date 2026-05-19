@@ -402,7 +402,7 @@ class OrdenDetalleController extends Controller
                 $nuevaCantidad = $cantidad - $cantidadCancelar;
                 $detalle->cantidad = $nuevaCantidad;
                 // Recalcular subtotal
-                $precioUnitario = $detalle->precio - ($detalle->descuento ?? 0);
+                $precioUnitario = $detalle->precio_unitario - ($detalle->descuento ?? 0);
                 $detalle->subtotal = $nuevaCantidad * $precioUnitario;
                 $detalle->save();
 
