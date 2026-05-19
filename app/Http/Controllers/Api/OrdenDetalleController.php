@@ -579,7 +579,8 @@ class OrdenDetalleController extends Controller
 
             DB::beginTransaction();
 
-            $detalles = OrdenDetalle::where('orden_id', $orden->id)
+            $detalles = OrdenDetalle::with(['producto.ingredientes'])
+                ->where('orden_id', $orden->id)
                 ->whereHas('producto.categoria', function ($q) use ($estacion) {
                     $q->whereRaw('LOWER(nombre) = ?', [$estacion]);
                 })
@@ -591,6 +592,47 @@ class OrdenDetalleController extends Controller
                     'success' => false,
                     'message' => "No hay productos de la estación: {$estacion}",
                 ], 404);
+            }
+
+            // Procesar ingredientes deseleccionados/excluidos para devolverlos al inventario
+            if ($nuevoEstado === 'EN_PREPARACION' && $request->filled('ingredientes_excluidos')) {
+                foreach ($request->ingredientes_excluidos as $excluido) {
+                    $prodId = $excluido['producto_id'];
+                    $ingId  = $excluido['ingrediente_id'];
+
+                    // Buscar el detalle correspondiente
+                    $detalle = $detalles->firstWhere('producto_id', $prodId);
+                    if ($detalle) {
+                        $producto = $detalle->producto;
+                        if ($producto) {
+                            $ingrediente = $producto->ingredientes->firstWhere('id', $ingId);
+                            if ($ingrediente) {
+                                $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (float) $detalle->cantidad;
+                                $stockAnterior      = $ingrediente->stock_actual;
+                                $stockNuevo         = $stockAnterior + $cantidadARestaurar;
+
+                                // Incrementar stock
+                                \App\Models\Ingrediente::where('id', $ingrediente->id)
+                                    ->increment('stock_actual', $cantidadARestaurar);
+
+                                // Registrar movimiento
+                                \App\Models\IngredienteMovimiento::create([
+                                    'ingrediente_id'      => $ingrediente->id,
+                                    'producto_id'         => $producto->id,
+                                    'orden_id'            => $orden->id,
+                                    'user_id'             => $user->id,
+                                    'tipo'                => \App\Models\IngredienteMovimiento::TIPO_ENTRADA,
+                                    'cantidad_anterior'   => $stockAnterior,
+                                    'cantidad_movimiento' => $cantidadARestaurar,
+                                    'cantidad_nueva'      => $stockNuevo,
+                                    'motivo'              => "Exclusión receta estación {$estacion} - Orden #{$orden->id}",
+                                ]);
+
+                                $producto->recalcularStockDesdeIngredientes();
+                            }
+                        }
+                    }
+                }
             }
 
             foreach ($detalles as $detalle) {
