@@ -435,6 +435,8 @@ class OrdenController extends Controller
                     'estado_preparacion' => 'PENDIENTE',
                 ]);
 
+                \App\Helpers\StockHelper::descontarStock($detalle, $item['cantidad'], $user->id);
+
                 // FIX: categoria ahora disponible porque se cargó con with(['ingredientes','categoria'])
                 $detalles[] = [
                     'id'                  => $detalle->id,
@@ -1072,20 +1074,9 @@ class OrdenController extends Controller
     private function restaurarStockOrden(Orden $orden)
     {
         foreach ($orden->detalles as $detalle) {
-            // Solo restaurar si el producto ya había sido descontado (estaba en preparación o listo)
-            if (in_array($detalle->estado_preparacion, ['EN_PREPARACION', 'LISTO'])) {
-                $producto = $detalle->producto;
-                if ($producto && $producto->ingredientes->isNotEmpty()) {
-                    foreach ($producto->ingredientes as $ingrediente) {
-                        $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (int) $detalle->cantidad;
-                        \App\Models\Ingrediente::where('id', $ingrediente->id)
-                            ->increment('stock_actual', $cantidadARestaurar);
-                    }
-                    $producto->recalcularStockDesdeIngredientes();
-                } elseif ($producto) {
-                    \App\Models\Producto::where('id', $producto->id)
-                        ->increment('stock', $detalle->cantidad);
-                }
+            // Solo restaurar si el producto NO había iniciado preparación (estaba pendiente)
+            if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
+                \App\Helpers\StockHelper::restaurarStock($detalle, $detalle->cantidad, $orden->usuario_id);
             }
         }
     }

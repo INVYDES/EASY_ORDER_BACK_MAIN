@@ -138,6 +138,28 @@ class OrdenDetalleController extends Controller
             DB::beginTransaction();
 
             if ($detalleExistente) {
+                // Verificar stock para la cantidad adicional
+                if ($producto->ingredientes->isNotEmpty()) {
+                    foreach ($producto->ingredientes as $ingrediente) {
+                        $necesario = (float) $ingrediente->pivot->cantidad * $request->cantidad;
+                        if ($ingrediente->stock_actual < $necesario) {
+                            DB::rollBack();
+                            return response()->json([
+                                'success' => false,
+                                'message' => "Stock insuficiente: {$ingrediente->nombre}",
+                            ], 422);
+                        }
+                    }
+                } else {
+                    if ($producto->stock < $request->cantidad) {
+                        DB::rollBack();
+                        return response()->json([
+                            'success' => false,
+                            'message' => "Stock insuficiente: {$producto->nombre}",
+                        ], 422);
+                    }
+                }
+
                 // Actualizar cantidad existente
                 $nuevaCantidad = $detalleExistente->cantidad + $request->cantidad;
                 $nuevoSubtotal = $producto->precio * $nuevaCantidad;
@@ -151,6 +173,8 @@ class OrdenDetalleController extends Controller
 
                 $orden->total += $nuevoSubtotal;
                 $orden->save();
+
+                \App\Helpers\StockHelper::descontarStock($detalleExistente, $request->cantidad, $user->id);
 
                 $detalle = $detalleExistente;
                 $mensaje = "Cantidad actualizada para {$producto->nombre}";
@@ -192,6 +216,8 @@ class OrdenDetalleController extends Controller
 
                 $orden->total += $subtotal;
                 $orden->save();
+
+                \App\Helpers\StockHelper::descontarStock($detalle, $request->cantidad, $user->id);
 
                 $mensaje = 'Producto agregado a la orden';
             }
@@ -245,6 +271,41 @@ class OrdenDetalleController extends Controller
                 ->firstOrFail();
 
             DB::beginTransaction();
+
+            $diferencia = $request->cantidad - $detalle->cantidad;
+            $producto = $detalle->producto;
+
+            if ($diferencia > 0) {
+                // Verificar stock para el incremento
+                if ($producto && $producto->ingredientes->isNotEmpty()) {
+                    foreach ($producto->ingredientes as $ingrediente) {
+                        $necesario = (float) $ingrediente->pivot->cantidad * $diferencia;
+                        if ($ingrediente->stock_actual < $necesario) {
+                            DB::rollBack();
+                            return response()->json([
+                                'success' => false,
+                                'message' => "Stock insuficiente: {$ingrediente->nombre}",
+                            ], 422);
+                        }
+                    }
+                } elseif ($producto) {
+                    if ($producto->stock < $diferencia) {
+                        DB::rollBack();
+                        return response()->json([
+                            'success' => false,
+                            'message' => "Stock insuficiente: {$producto->nombre}",
+                        ], 422);
+                    }
+                }
+
+                // Descontar
+                \App\Helpers\StockHelper::descontarStock($detalle, $diferencia, $user->id);
+            } elseif ($diferencia < 0) {
+                // Si disminuye y no ha iniciado preparación, restauramos el stock
+                if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
+                    \App\Helpers\StockHelper::restaurarStock($detalle, abs($diferencia), $user->id);
+                }
+            }
 
             $orden->total  -= $detalle->subtotal;
             $nuevoSubtotal  = $detalle->precio_unitario * $request->cantidad;
@@ -328,21 +389,9 @@ class OrdenDetalleController extends Controller
             $cantidad       = $detalle->cantidad;
             $motivo         = $request->get('motivo', 'Cancelación sin motivo especificado');
 
-            // 🔄 DEVOLUCIÓN DE STOCK: Solo si ya se había descontado (estaba en preparación, listo o entregado)
-            if (in_array($detalle->estado_preparacion, ['EN_PREPARACION', 'LISTO', 'ENTREGADO'])) {
-                $producto = $detalle->producto;
-                
-                if ($producto && $producto->ingredientes->isNotEmpty()) {
-                    foreach ($producto->ingredientes as $ingrediente) {
-                        $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (float) $detalle->cantidad;
-                        \App\Models\Ingrediente::where('id', $ingrediente->id)
-                            ->increment('stock_actual', $cantidadARestaurar);
-                    }
-                    $producto->recalcularStockDesdeIngredientes();
-                } elseif ($producto) {
-                    \App\Models\Producto::where('id', $producto->id)
-                        ->increment('stock', $detalle->cantidad);
-                }
+            // 🔄 DEVOLUCIÓN DE STOCK: Solo si NO había iniciado preparación (estaba pendiente)
+            if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
+                \App\Helpers\StockHelper::restaurarStock($detalle, $detalle->cantidad, $user->id);
             }
 
             // Registrar motivo y usuario antes de borrar suavemente
@@ -546,57 +595,6 @@ class OrdenDetalleController extends Controller
 
             foreach ($detalles as $detalle) {
                 $estadoAnterior = $detalle->estado_preparacion;
-
-                // Descontar inventario solo al pasar de PENDIENTE → EN_PREPARACION
-                if ($nuevoEstado === 'EN_PREPARACION' && ($estadoAnterior === 'PENDIENTE' || empty($estadoAnterior))) {
-                    $producto = $detalle->producto;
-
-                    if ($producto && $producto->ingredientes->isNotEmpty()) {
-                        foreach ($producto->ingredientes as $ingrediente) {
-                            $cantidadADescontar = (float) $ingrediente->pivot->cantidad * (int) $detalle->cantidad;
-                            $stockAnterior      = $ingrediente->stock_actual;
-                            $stockNuevo         = $stockAnterior - $cantidadADescontar;
-
-                            if ($stockNuevo < 0) {
-                                DB::rollBack();
-                                return response()->json([
-                                    'success' => false,
-                                    'message' => "Stock insuficiente para ingrediente: {$ingrediente->nombre}",
-                                ], 422);
-                            }
-
-                            Ingrediente::where('id', $ingrediente->id)
-                                ->decrement('stock_actual', $cantidadADescontar);
-
-                            IngredienteMovimiento::create([
-                                'ingrediente_id'      => $ingrediente->id,
-                                'producto_id'         => $producto->id,
-                                'orden_id'            => $orden->id,
-                                'user_id'             => $user->id,
-                                'tipo'                => IngredienteMovimiento::TIPO_SALIDA,
-                                'cantidad_anterior'   => $stockAnterior,
-                                'cantidad_movimiento' => $cantidadADescontar,
-                                'cantidad_nueva'      => $stockNuevo,
-                                'motivo'              => "Preparación estación {$estacion} - Orden #{$orden->id}",
-                            ]);
-                        }
-
-                        // Llamada al método del modelo para sincronizar stock
-                        $producto->recalcularStockDesdeIngredientes();
-
-                    } elseif ($producto) {
-                        // Si el producto no tiene ingredientes, descontar de su stock directo
-                        if ($producto->stock < $detalle->cantidad) {
-                            DB::rollBack();
-                            return response()->json([
-                                'success' => false,
-                                'message' => "Stock insuficiente para: {$producto->nombre}",
-                            ], 422);
-                        }
-
-                        $producto->decrement('stock', $detalle->cantidad);
-                    }
-                }
 
                 $updateData = ['estado_preparacion' => $nuevoEstado];
                 if ($nuevoEstado === 'EN_PREPARACION' && !$detalle->en_preparacion_at) {
