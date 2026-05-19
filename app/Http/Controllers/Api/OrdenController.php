@@ -1154,7 +1154,8 @@ class OrdenController extends Controller
                 'usuario_cancelo'     => $d->usuarioCancelo ? [
                     'id'   => $d->usuarioCancelo->id,
                     'name' => $d->usuarioCancelo->name
-                ] : null
+                ] : null,
+                'created_at'          => $d->created_at?->format('Y-m-d H:i:s'),
             ]),
             'created_at'             => $orden->created_at,
             'created_at_formateado'  => $orden->created_at_formateado,

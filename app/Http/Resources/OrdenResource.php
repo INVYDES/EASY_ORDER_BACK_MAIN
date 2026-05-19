@@ -38,6 +38,7 @@ class OrdenResource extends JsonResource
                     'cancelado'     => $d->trashed(),
                     'motivo_cancelacion' => $d->motivo_cancelacion,
                     'minutos_produccion' => (float) ($d->producto->minutos_produccion ?? 0),
+                    'created_at'    => $d->created_at?->format('Y-m-d H:i:s'),
                 ]);
             }),
             'notas'            => $this->notas,
