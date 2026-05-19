@@ -31,7 +31,7 @@ class OrdenController extends Controller
 
             $query = Orden::with([
                     'usuario:id,name,username,email',
-                    'detalles.producto.categoria',
+                    'detalles' => function($q) { $q->withTrashed()->with('producto.categoria'); },
                     'cliente:id,nombre,telefono'
                 ])
                 ->where('restaurante_id', $restauranteActivo->id);
