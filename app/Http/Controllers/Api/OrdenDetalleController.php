@@ -579,12 +579,22 @@ class OrdenDetalleController extends Controller
 
             DB::beginTransaction();
 
-            $detalles = OrdenDetalle::with(['producto.ingredientes'])
+            $query = OrdenDetalle::with(['producto.ingredientes'])
                 ->where('orden_id', $orden->id)
                 ->whereHas('producto.categoria', function ($q) use ($estacion) {
                     $q->whereRaw('LOWER(nombre) = ?', [$estacion]);
-                })
-                ->get();
+                });
+
+            if ($nuevoEstado === 'EN_PREPARACION') {
+                $query->where(function ($q) {
+                    $q->where('estado_preparacion', 'PENDIENTE')
+                      ->orWhereNull('estado_preparacion');
+                });
+            } elseif ($nuevoEstado === 'LISTO') {
+                $query->where('estado_preparacion', 'EN_PREPARACION');
+            }
+
+            $detalles = $query->get();
 
             if ($detalles->isEmpty()) {
                 DB::rollBack();
