@@ -388,19 +388,46 @@ class OrdenDetalleController extends Controller
             $productoNombre = $detalle->producto->nombre ?? 'Producto';
             $cantidad       = $detalle->cantidad;
             $motivo         = $request->get('motivo', 'Cancelación sin motivo especificado');
+            
+            // Cantidad a cancelar (por defecto todo)
+            $cantidadCancelar = (float) $request->get('cantidad_cancelar', $cantidad);
 
-            // 🔄 DEVOLUCIÓN DE STOCK: Solo si NO había iniciado preparación (estaba pendiente)
-            if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
-                \App\Helpers\StockHelper::restaurarStock($detalle, $detalle->cantidad, $user->id);
+            if ($cantidadCancelar < $cantidad && $cantidadCancelar > 0) {
+                // 🔄 DEVOLUCIÓN DE STOCK parcial
+                if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
+                    \App\Helpers\StockHelper::restaurarStock($detalle, $cantidadCancelar, $user->id);
+                }
+
+                // 1. Reducir cantidad del detalle existente
+                $nuevaCantidad = $cantidad - $cantidadCancelar;
+                $detalle->cantidad = $nuevaCantidad;
+                // Recalcular subtotal
+                $precioUnitario = $detalle->precio - ($detalle->descuento ?? 0);
+                $detalle->subtotal = $nuevaCantidad * $precioUnitario;
+                $detalle->save();
+
+                // 2. Crear una fila replicada con la cantidad cancelada
+                $nuevoDetalle = $detalle->replicate();
+                $nuevoDetalle->cantidad = $cantidadCancelar;
+                $nuevoDetalle->subtotal = $cantidadCancelar * $precioUnitario;
+                $nuevoDetalle->motivo_cancelacion = $motivo;
+                $nuevoDetalle->usuario_cancelo_id = $user->id;
+                $nuevoDetalle->save();
+                $nuevoDetalle->delete(); // Borrado suave (soft delete)
+            } else {
+                // 🔄 DEVOLUCIÓN DE STOCK completa
+                if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
+                    \App\Helpers\StockHelper::restaurarStock($detalle, $detalle->cantidad, $user->id);
+                }
+
+                // Registrar motivo y usuario antes de borrar suavemente
+                $detalle->update([
+                    'motivo_cancelacion' => $motivo,
+                    'usuario_cancelo_id' => $user->id
+                ]);
+
+                $detalle->delete(); // Soft delete
             }
-
-            // Registrar motivo y usuario antes de borrar suavemente
-            $detalle->update([
-                'motivo_cancelacion' => $motivo,
-                'usuario_cancelo_id' => $user->id
-            ]);
-
-            $detalle->delete(); // Soft delete
 
             // Recalcular total de la orden
             $orden->recalcularTotal();
