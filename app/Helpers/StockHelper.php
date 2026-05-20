@@ -27,6 +27,7 @@ class StockHelper
         $userId = $userId ?? auth()->id() ?? $detalle->orden->usuario_id ?? 1;
 
         if ($producto->ingredientes->isNotEmpty()) {
+            $ingredientesAfectadosIds = [];
             foreach ($producto->ingredientes as $ingrediente) {
                 $cantidadADescontar = (float) $ingrediente->pivot->cantidad * (float) $cantidad;
                 $stockAnterior      = $ingrediente->stock_actual;
@@ -48,8 +49,20 @@ class StockHelper
                     'cantidad_nueva'      => $stockNuevo,
                     'motivo'              => "Pedido - Orden #{$detalle->orden_id}",
                 ]);
+
+                $ingredientesAfectadosIds[] = $ingrediente->id;
             }
-            $producto->recalcularStockDesdeIngredientes();
+
+            // Recalcular stock de TODOS los productos que compartan los ingredientes afectados
+            if (!empty($ingredientesAfectadosIds)) {
+                $productosARecalcular = Producto::whereHas('ingredientes', function($q) use ($ingredientesAfectadosIds) {
+                    $q->whereIn('ingredientes.id', $ingredientesAfectadosIds);
+                })->get();
+
+                foreach ($productosARecalcular as $prod) {
+                    $prod->recalcularStockDesdeIngredientes();
+                }
+            }
         } else {
             Producto::where('id', $producto->id)
                 ->decrement('stock', $cantidad);
@@ -72,6 +85,7 @@ class StockHelper
         $userId = $userId ?? auth()->id() ?? $detalle->orden->usuario_id ?? 1;
 
         if ($producto->ingredientes->isNotEmpty()) {
+            $ingredientesAfectadosIds = [];
             foreach ($producto->ingredientes as $ingrediente) {
                 $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (float) $cantidad;
                 $stockAnterior      = $ingrediente->stock_actual;
@@ -93,8 +107,20 @@ class StockHelper
                     'cantidad_nueva'      => $stockNuevo,
                     'motivo'              => "Cancelación/Devolución - Orden #{$detalle->orden_id}",
                 ]);
+
+                $ingredientesAfectadosIds[] = $ingrediente->id;
             }
-            $producto->recalcularStockDesdeIngredientes();
+
+            // Recalcular stock de TODOS los productos que compartan los ingredientes afectados
+            if (!empty($ingredientesAfectadosIds)) {
+                $productosARecalcular = Producto::whereHas('ingredientes', function($q) use ($ingredientesAfectadosIds) {
+                    $q->whereIn('ingredientes.id', $ingredientesAfectadosIds);
+                })->get();
+
+                foreach ($productosARecalcular as $prod) {
+                    $prod->recalcularStockDesdeIngredientes();
+                }
+            }
         } else {
             Producto::where('id', $producto->id)
                 ->increment('stock', $cantidad);

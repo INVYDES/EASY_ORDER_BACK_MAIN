@@ -292,7 +292,10 @@ class Orden extends Model
         } 
         // Por defecto
         else {
-            if ($this->estado === 'ABIERTA') {
+            // Si el estado actual ya es ABIERTA y hay productos sin enviar (ABIERTA), se mantiene en ABIERTA.
+            // De lo contrario, no se demota a ABIERTA y pasa a/se mantiene en POR_PREPARAR.
+            $tieneAbiertos = $detalles->where('estado_preparacion', 'ABIERTA')->count() > 0;
+            if ($this->estado === 'ABIERTA' && $tieneAbiertos) {
                 $nuevoEstado = 'ABIERTA';
             } else {
                 $nuevoEstado = 'POR_PREPARAR';

@@ -1166,6 +1166,7 @@ class EmpleadoController extends Controller
                     ->get();
                 
                 $horasTrabajadas = $asistencias->sum('horas_trabajadas');
+                $propinasTotales = $ordenes->sum(fn($o) => (float) ($o->propina ?? 0));
 
                 return [
                     'id' => $empleado->id,
@@ -1177,6 +1178,7 @@ class EmpleadoController extends Controller
                     'ventas_por_hora' => $horasTrabajadas > 0 ? round($ventasTotales / $horasTrabajadas, 2) : 0,
                     'tiempo_servicio_avg' => round($tiempoServicioTotal, 1),
                     'rotacion_mesas' => $ordenesCompletadas, // Simplificado: órdenes atendidas
+                    'propinas' => round($propinasTotales, 2),
                 ];
             });
 

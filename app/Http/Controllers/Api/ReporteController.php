@@ -701,8 +701,11 @@ public function recomendacionPaquete(Request $request): JsonResponse
                     'productos.nombre as producto',
                     'orden_detalles.cantidad',
                     'orden_detalles.subtotal',
+                    'orden_detalles.estado_preparacion',
                     DB::raw('COALESCE(orden_detalles.motivo_cancelacion, "Orden Cancelada") as motivo'),
-                    DB::raw('COALESCE(users.name, "Sistema") as usuario')
+                    DB::raw('COALESCE(users.name, "Sistema") as usuario'),
+                    // ✅ Marcar si es merma real (ya fue preparado) o solo cancelación (stock devuelto)
+                    DB::raw('CASE WHEN orden_detalles.estado_preparacion IN ("EN_PREPARACION", "LISTO", "ENTREGADO") THEN 1 ELSE 0 END as es_merma')
                 );
 
             if ($request->filled('fecha_inicio')) {
@@ -714,10 +717,17 @@ public function recomendacionPaquete(Request $request): JsonResponse
 
             $resultados = $query->orderByDesc(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'))->get();
 
+            // Solo sumar como merma los que realmente se prepararon (stock no devuelto)
+            $totalMermas = round($resultados->where('es_merma', 1)->sum('subtotal'), 2);
+            // Total de cancelaciones simples (stock devuelto, no es pérdida)
+            $totalCancelaciones = round($resultados->where('es_merma', 0)->sum('subtotal'), 2);
+
             return response()->json([
                 'success' => true,
                 'data'    => $resultados,
-                'total_mermas' => round($resultados->sum('subtotal'), 2),
+                'total_mermas' => $totalMermas,
+                'total_cancelaciones_sin_merma' => $totalCancelaciones,
+                'total_general' => round($totalMermas + $totalCancelaciones, 2),
             ]);
 
         } catch (\Exception $e) {

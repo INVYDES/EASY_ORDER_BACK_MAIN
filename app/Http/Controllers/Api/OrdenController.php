@@ -432,7 +432,7 @@ class OrdenController extends Controller
                     'subtotal'           => $subtotal,
                     'notas'              => $item['notas'],
                     'nom_comensal'       => $item['nom_comensal'] ?? ($tipoOrden !== 'local' ? 'Para llevar' : null),
-                    'estado_preparacion' => 'PENDIENTE',
+                    'estado_preparacion' => 'ABIERTA',
                 ]);
 
                 \App\Helpers\StockHelper::descontarStock($detalle, $item['cantidad'], $user->id);
@@ -450,7 +450,7 @@ class OrdenController extends Controller
                     'subtotal_formateado' => '$' . number_format($subtotal, 2),
                     'notas'               => $item['notas'],
                     'nom_comensal'        => $item['nom_comensal'],
-                    'estado_preparacion'  => 'PENDIENTE',
+                    'estado_preparacion'  => 'ABIERTA',
                 ];
 
                 $subtotalNuevo += $subtotal;
@@ -462,12 +462,18 @@ class OrdenController extends Controller
             $costoEnvio            = $tipoOrden === 'delivery' ? ($request->costo_envio ?? $orden->costo_envio ?? 0) : 0;
             $totalConPropinaYEnvio = $totalActual + $propina + $costoEnvio;
 
-            $orden->update([
+            $updateData = [
                 'total'       => $totalConPropinaYEnvio,
                 'costo_envio' => $costoEnvio,
-            ]);
+            ];
 
-            $orden->verificarYActualizarEstadoGlobal();
+            // Si es una orden existente que ya no está ABIERTA, forzar regreso a ABIERTA
+            // para que los nuevos productos aparezcan en la pestaña "Nuevas" del mesero.
+            if (!$esNueva && $orden->estado !== 'ABIERTA') {
+                $updateData['estado'] = 'ABIERTA';
+            }
+
+            $orden->update($updateData);
 
             DB::commit();
 
@@ -549,22 +555,31 @@ class OrdenController extends Controller
                 ->where('id', $id)
                 ->firstOrFail();
 
-            if (!$orden->puedeCambiarEstado($request->estado)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => "No se puede cambiar de {$orden->estado} a {$request->estado}",
-                ], 400);
-            }
-
             $estadoAnterior = $orden->estado;
-            $campos = ['estado' => $request->estado];
-            if ($request->estado === 'LISTA') {
-                $campos['lista_at'] = now();
-            }
-            if ($request->filled('metodo_pago')) $campos['metodo_pago'] = $request->metodo_pago;
-            if ($request->has('propina'))         $campos['propina']     = $request->propina ?? 0;
 
-            $orden->update($campos);
+            if ($request->estado === 'POR_PREPARAR') {
+                // Actualizar todos los detalles ABIERTA de esta orden a PENDIENTE (para mandarlos a estación)
+                $orden->detalles()->where('estado_preparacion', 'ABIERTA')->update(['estado_preparacion' => 'PENDIENTE']);
+                
+                // Recalcular estado global de la orden
+                $orden->verificarYActualizarEstadoGlobal();
+            } else {
+                if (!$orden->puedeCambiarEstado($request->estado)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "No se puede cambiar de {$orden->estado} a {$request->estado}",
+                    ], 400);
+                }
+
+                $campos = ['estado' => $request->estado];
+                if ($request->estado === 'LISTA') {
+                    $campos['lista_at'] = now();
+                }
+                if ($request->filled('metodo_pago')) $campos['metodo_pago'] = $request->metodo_pago;
+                if ($request->has('propina'))         $campos['propina']     = $request->propina ?? 0;
+
+                $orden->update($campos);
+            }
 
             // Si se cancela, restaurar stock
             if ($request->estado === 'CANCELADA') {

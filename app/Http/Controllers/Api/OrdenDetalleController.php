@@ -133,6 +133,7 @@ class OrdenDetalleController extends Controller
 
             $detalleExistente = OrdenDetalle::where('orden_id', $orden->id)
                 ->where('producto_id', $producto->id)
+                ->where('estado_preparacion', 'ABIERTA')
                 ->first();
 
             DB::beginTransaction();
@@ -205,13 +206,14 @@ class OrdenDetalleController extends Controller
                 }
 
                 $detalle = OrdenDetalle::create([
-                    'orden_id'        => $orden->id,
-                    'producto_id'     => $producto->id,
-                    'cantidad'        => $request->cantidad,
-                    'precio_unitario' => $producto->precio,
-                    'subtotal'        => $subtotal,
-                    'nom_comensal'    => $request->comensal ?? $request->nom_comensal,
-                    'comensal_id'     => $request->comensal_id,
+                    'orden_id'           => $orden->id,
+                    'producto_id'        => $producto->id,
+                    'cantidad'           => $request->cantidad,
+                    'precio_unitario'    => $producto->precio,
+                    'subtotal'           => $subtotal,
+                    'nom_comensal'       => $request->comensal ?? $request->nom_comensal,
+                    'comensal_id'        => $request->comensal_id,
+                    'estado_preparacion' => 'ABIERTA',
                 ]);
 
                 $orden->total += $subtotal;
@@ -394,7 +396,7 @@ class OrdenDetalleController extends Controller
 
             if ($cantidadCancelar < $cantidad && $cantidadCancelar > 0) {
                 // 🔄 DEVOLUCIÓN DE STOCK parcial
-                if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
+                if (in_array($detalle->estado_preparacion, ['ABIERTA', 'PENDIENTE']) || empty($detalle->estado_preparacion)) {
                     \App\Helpers\StockHelper::restaurarStock($detalle, $cantidadCancelar, $user->id);
                 }
 
@@ -416,7 +418,7 @@ class OrdenDetalleController extends Controller
                 $nuevoDetalle->delete(); // Borrado suave (soft delete)
             } else {
                 // 🔄 DEVOLUCIÓN DE STOCK completa
-                if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
+                if (in_array($detalle->estado_preparacion, ['ABIERTA', 'PENDIENTE']) || empty($detalle->estado_preparacion)) {
                     \App\Helpers\StockHelper::restaurarStock($detalle, $detalle->cantidad, $user->id);
                 }
 
@@ -665,7 +667,14 @@ class OrdenDetalleController extends Controller
                                     'motivo'              => "Exclusión receta estación {$estacion} - Orden #{$orden->id}",
                                 ]);
 
-                                $producto->recalcularStockDesdeIngredientes();
+                                // Recalcular stock de TODOS los productos que usen este ingrediente devuelto
+                                $productosARecalcular = \App\Models\Producto::whereHas('ingredientes', function($q) use ($ingrediente) {
+                                    $q->where('ingredientes.id', $ingrediente->id);
+                                })->get();
+
+                                foreach ($productosARecalcular as $prod) {
+                                    $prod->recalcularStockDesdeIngredientes();
+                                }
                             }
                         }
                     }
