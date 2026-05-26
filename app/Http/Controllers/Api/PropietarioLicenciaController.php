@@ -283,18 +283,13 @@ class PropietarioLicenciaController extends Controller
                 ->orderBy('created_at', 'desc')
                 ->get()
                 ->map(function($item) {
-                    $diasRestantes = 0;
-                    if ($item->fecha_expiracion) {
-                        $diasRestantes = max(0, Carbon::now()->diffInDays($item->fecha_expiracion, false));
-                    }
-
                     return [
                         'id' => $item->id,
                         'licencia' => $item->licencia,
                         'estado' => $item->estado,
                         'fecha_inicio' => $item->fecha_inicio,
                         'fecha_expiracion' => $item->fecha_expiracion,
-                        'dias_restantes' => $diasRestantes,
+                        'dias_restantes' => $item->dias_restantes,
                         'monto_pagado' => $item->monto_pagado,
                         'metodo_pago' => $item->metodo_pago,
                         'created_at' => $item->created_at

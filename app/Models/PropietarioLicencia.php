@@ -164,7 +164,7 @@ class PropietarioLicencia extends Model
     public function getDiasRestantesAttribute()
     {
         if (!$this->fecha_expiracion) return 0;
-        return max(0, Carbon::now()->diffInDays($this->fecha_expiracion, false));
+        return max(0, Carbon::now()->startOfDay()->diffInDays($this->fecha_expiracion->copy()->startOfDay(), false));
     }
 
     public function getEstadoTextoAttribute()
