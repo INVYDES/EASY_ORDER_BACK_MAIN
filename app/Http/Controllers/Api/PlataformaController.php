@@ -40,8 +40,10 @@ class PlataformaController extends Controller
                         'regimen_fiscal' => $prop->regimen_fiscal,
                         'total_restaurantes' => $prop->restaurantes->count(),
                         'licencia_actual' => $licencia ? [
+                            'id' => $licencia->id,
                             'nombre' => $licencia->licencia->nombre ?? 'N/A',
                             'estado' => $licencia->estado,
+                            'inicio' => $licencia->fecha_inicio,
                             'expira' => $licencia->fecha_expiracion,
                         ] : null,
                         'restaurantes' => $prop->restaurantes->map(function($res) {
