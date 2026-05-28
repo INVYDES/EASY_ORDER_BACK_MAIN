@@ -31,7 +31,7 @@ class OrdenController extends Controller
 
             $query = Orden::with([
                     'usuario:id,name,username,email',
-                    'detalles.producto.categoria',
+                    'detalles' => function($q) { $q->withTrashed()->with('producto.categoria'); },
                     'cliente:id,nombre,telefono'
                 ])
                 ->where('restaurante_id', $restauranteActivo->id);
@@ -435,8 +435,10 @@ class OrdenController extends Controller
                     'subtotal'           => $subtotal,
                     'notas'              => $item['notas'],
                     'nom_comensal'       => $item['nom_comensal'] ?? ($tipoOrden !== 'local' ? 'Para llevar' : null),
-                    'estado_preparacion' => 'PENDIENTE',
+                    'estado_preparacion' => 'ABIERTA',
                 ]);
+
+                \App\Helpers\StockHelper::descontarStock($detalle, $item['cantidad'], $user->id);
 
                 // FIX: categoria ahora disponible porque se cargó con with(['ingredientes','categoria'])
                 $detalles[] = [
@@ -451,7 +453,7 @@ class OrdenController extends Controller
                     'subtotal_formateado' => '$' . number_format($subtotal, 2),
                     'notas'               => $item['notas'],
                     'nom_comensal'        => $item['nom_comensal'],
-                    'estado_preparacion'  => 'PENDIENTE',
+                    'estado_preparacion'  => 'ABIERTA',
                 ];
 
                 $subtotalNuevo += $subtotal;
@@ -463,12 +465,18 @@ class OrdenController extends Controller
             $costoEnvio            = $tipoOrden === 'delivery' ? ($request->costo_envio ?? $orden->costo_envio ?? 0) : 0;
             $totalConPropinaYEnvio = $totalActual + $propina + $costoEnvio;
 
-            $orden->update([
+            $updateData = [
                 'total'       => $totalConPropinaYEnvio,
                 'costo_envio' => $costoEnvio,
-            ]);
+            ];
 
-            $orden->verificarYActualizarEstadoGlobal();
+            // Si es una orden existente que ya no está ABIERTA, forzar regreso a ABIERTA
+            // para que los nuevos productos aparezcan en la pestaña "Nuevas" del mesero.
+            if (!$esNueva && $orden->estado !== 'ABIERTA') {
+                $updateData['estado'] = 'ABIERTA';
+            }
+
+            $orden->update($updateData);
 
             DB::commit();
 
@@ -550,19 +558,31 @@ class OrdenController extends Controller
                 ->where('id', $id)
                 ->firstOrFail();
 
-            if (!$orden->puedeCambiarEstado($request->estado)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => "No se puede cambiar de {$orden->estado} a {$request->estado}",
-                ], 400);
-            }
-
             $estadoAnterior = $orden->estado;
-            $campos = ['estado' => $request->estado];
-            if ($request->filled('metodo_pago')) $campos['metodo_pago'] = $request->metodo_pago;
-            if ($request->has('propina'))         $campos['propina']     = $request->propina ?? 0;
 
-            $orden->update($campos);
+            if ($request->estado === 'POR_PREPARAR') {
+                // Actualizar todos los detalles ABIERTA de esta orden a PENDIENTE (para mandarlos a estación)
+                $orden->detalles()->where('estado_preparacion', 'ABIERTA')->update(['estado_preparacion' => 'PENDIENTE']);
+                
+                // Recalcular estado global de la orden
+                $orden->verificarYActualizarEstadoGlobal();
+            } else {
+                if (!$orden->puedeCambiarEstado($request->estado)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "No se puede cambiar de {$orden->estado} a {$request->estado}",
+                    ], 400);
+                }
+
+                $campos = ['estado' => $request->estado];
+                if ($request->estado === 'LISTA') {
+                    $campos['lista_at'] = now();
+                }
+                if ($request->filled('metodo_pago')) $campos['metodo_pago'] = $request->metodo_pago;
+                if ($request->has('propina'))         $campos['propina']     = $request->propina ?? 0;
+
+                $orden->update($campos);
+            }
 
             // Si se cancela, restaurar stock
             if ($request->estado === 'CANCELADA') {
@@ -978,9 +998,16 @@ class OrdenController extends Controller
                 ->where('id', $id)
                 ->firstOrFail();
 
+            $updateData = ['estado_preparacion' => $request->estado_preparacion];
+            if ($request->estado_preparacion === 'EN_PREPARACION') {
+                $updateData['en_preparacion_at'] = now();
+            } elseif ($request->estado_preparacion === 'LISTO') {
+                $updateData['listo_at'] = now();
+            }
+
             OrdenDetalle::whereIn('id', $request->detalles)
                 ->where('orden_id', $orden->id)
-                ->update(['estado_preparacion' => $request->estado_preparacion]);
+                ->update($updateData);
 
             $orden->verificarYActualizarEstadoGlobal();
 
@@ -1065,20 +1092,9 @@ class OrdenController extends Controller
     private function restaurarStockOrden(Orden $orden)
     {
         foreach ($orden->detalles as $detalle) {
-            // Solo restaurar si el producto ya había sido descontado (estaba en preparación o listo)
-            if (in_array($detalle->estado_preparacion, ['EN_PREPARACION', 'LISTO'])) {
-                $producto = $detalle->producto;
-                if ($producto && $producto->ingredientes->isNotEmpty()) {
-                    foreach ($producto->ingredientes as $ingrediente) {
-                        $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (int) $detalle->cantidad;
-                        \App\Models\Ingrediente::where('id', $ingrediente->id)
-                            ->increment('stock_actual', $cantidadARestaurar);
-                    }
-                    $producto->recalcularStockDesdeIngredientes();
-                } elseif ($producto) {
-                    \App\Models\Producto::where('id', $producto->id)
-                        ->increment('stock', $detalle->cantidad);
-                }
+            // Solo restaurar si el producto NO había iniciado preparación (estaba pendiente)
+            if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
+                \App\Helpers\StockHelper::restaurarStock($detalle, $detalle->cantidad, $orden->usuario_id);
             }
         }
     }
@@ -1150,12 +1166,14 @@ class OrdenController extends Controller
                 'comensal'            => $d->nom_comensal ?? null,
                 'comensal_id'         => $d->comensal_id ?? null,
                 'estado_preparacion'  => $d->estado_preparacion ?? 'PENDIENTE',
+                'minutos_produccion'  => (float) ($d->producto->minutos_produccion ?? 0),
                 'cancelado'           => $d->trashed(),
                 'motivo_cancelacion'  => $d->motivo_cancelacion,
                 'usuario_cancelo'     => $d->usuarioCancelo ? [
                     'id'   => $d->usuarioCancelo->id,
                     'name' => $d->usuarioCancelo->name
-                ] : null
+                ] : null,
+                'created_at'          => $d->created_at?->format('Y-m-d H:i:s'),
             ]),
             'created_at'             => $orden->created_at,
             'created_at_formateado'  => $orden->created_at_formateado,

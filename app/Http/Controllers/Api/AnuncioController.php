@@ -184,6 +184,8 @@ class AnuncioController extends Controller
             'fecha_inicio'    => $a->fecha_inicio?->format('Y-m-d'),
             'fecha_fin'       => $a->fecha_fin?->format('Y-m-d'),
             'orden'           => $a->orden,
+            'producto_id'     => $a->producto_id,
+            'paquete_id'      => $a->paquete_id,
             'producto'        => $a->producto ? [
                 'id'       => $a->producto->id,
                 'nombre'   => $a->producto->nombre,

@@ -254,6 +254,8 @@ class ReporteController extends Controller
         try {
             $restauranteActivo = app('restaurante_activo');
 
+            $realTimeSql = 'TIMESTAMPDIFF(MINUTE, COALESCE(orden_detalles.en_preparacion_at, orden_detalles.created_at), COALESCE(orden_detalles.listo_at, orden_detalles.updated_at))';
+
             $baseQuery = DB::table('orden_detalles')
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
@@ -262,31 +264,36 @@ class ReporteController extends Controller
                     $q->whereIn('orden_detalles.estado_preparacion', ['LISTO', 'ENTREGADO'])
                       ->orWhereIn('ordenes.estado', ['ENTREGADA', 'CERRADA']);
                 })
-                ->whereRaw('TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) > productos.minutos_produccion');
+                ->whereRaw("{$realTimeSql} > productos.minutos_produccion");
 
             $selectFields = [
+                'ordenes.id as orden_id',
                 'productos.id',
                 'productos.nombre',
                 'productos.minutos_produccion as tiempo_estimado',
-                DB::raw('ROUND(AVG(TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at)), 1) as tiempo_real'),
-                DB::raw('ROUND(AVG(TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) - productos.minutos_produccion), 1) as exceso'),
-                DB::raw('COUNT(*) as veces')
+                DB::raw("ROUND({$realTimeSql}, 1) as tiempo_real"),
+                DB::raw("ROUND(({$realTimeSql} - productos.minutos_produccion), 1) as exceso"),
             ];
+
+            $limit = (int) $request->get('limite', 5);
+            if ($limit <= 0 || $limit > 100) {
+                $limit = 5;
+            }
 
             $hoy = (clone $baseQuery)->whereDate('orden_detalles.created_at', today())
                 ->select($selectFields)
-                ->groupBy('productos.id', 'productos.nombre', 'productos.minutos_produccion')
-                ->orderByDesc('veces')->limit(5)->get();
+                ->orderByDesc(DB::raw("({$realTimeSql} - productos.minutos_produccion)"))
+                ->limit($limit)->get();
 
             $semana = (clone $baseQuery)->where('orden_detalles.created_at', '>=', now()->subDays(7))
                 ->select($selectFields)
-                ->groupBy('productos.id', 'productos.nombre', 'productos.minutos_produccion')
-                ->orderByDesc('veces')->limit(5)->get();
+                ->orderByDesc(DB::raw("({$realTimeSql} - productos.minutos_produccion)"))
+                ->limit($limit)->get();
 
             $mes = (clone $baseQuery)->where('orden_detalles.created_at', '>=', now()->subMonths(1))
                 ->select($selectFields)
-                ->groupBy('productos.id', 'productos.nombre', 'productos.minutos_produccion')
-                ->orderByDesc('veces')->limit(5)->get();
+                ->orderByDesc(DB::raw("({$realTimeSql} - productos.minutos_produccion)"))
+                ->limit($limit)->get();
 
             return response()->json([
                 'success' => true,
@@ -732,8 +739,11 @@ public function recomendacionPaquete(Request $request): JsonResponse
                     'productos.nombre as producto',
                     'orden_detalles.cantidad',
                     'orden_detalles.subtotal',
+                    'orden_detalles.estado_preparacion',
                     DB::raw('COALESCE(orden_detalles.motivo_cancelacion, "Orden Cancelada") as motivo'),
-                    DB::raw('COALESCE(users.name, "Sistema") as usuario')
+                    DB::raw('COALESCE(users.name, "Sistema") as usuario'),
+                    // ✅ Marcar si es merma real (ya fue preparado) o solo cancelación (stock devuelto)
+                    DB::raw('CASE WHEN orden_detalles.estado_preparacion IN ("EN_PREPARACION", "LISTO", "ENTREGADO") THEN 1 ELSE 0 END as es_merma')
                 );
 
             if ($request->filled('fecha_inicio')) {
@@ -745,10 +755,17 @@ public function recomendacionPaquete(Request $request): JsonResponse
 
             $resultados = $query->orderByDesc(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'))->get();
 
+            // Solo sumar como merma los que realmente se prepararon (stock no devuelto)
+            $totalMermas = round($resultados->where('es_merma', 1)->sum('subtotal'), 2);
+            // Total de cancelaciones simples (stock devuelto, no es pérdida)
+            $totalCancelaciones = round($resultados->where('es_merma', 0)->sum('subtotal'), 2);
+
             return response()->json([
                 'success' => true,
                 'data'    => $resultados,
-                'total_mermas' => round($resultados->sum('subtotal'), 2),
+                'total_mermas' => $totalMermas,
+                'total_cancelaciones_sin_merma' => $totalCancelaciones,
+                'total_general' => round($totalMermas + $totalCancelaciones, 2),
             ]);
 
         } catch (\Exception $e) {
@@ -935,26 +952,39 @@ if ($cajaHoy) {
     {
         try {
             $restauranteActivo = app('restaurante_activo');
-            $hoy = now()->timezone('America/Mexico_City')->format('Y-m-d');
+            
+            // ✅ Permitir filtros de fecha para el dashboard, con fallback a "hoy"
+            $fInicio = $request->get('fecha_inicio', now()->timezone('America/Mexico_City')->format('Y-m-d'));
+            $fFin    = $request->get('fecha_fin',    now()->timezone('America/Mexico_City')->format('Y-m-d'));
+
+            // Invertir fechas si vienen al revés
+            if ($fInicio > $fFin) {
+                $temp = $fInicio;
+                $fInicio = $fFin;
+                $fFin = $temp;
+            }
+
+            $fechaInicio = $fInicio . ' 00:00:00';
+            $fechaFin    = $fFin . ' 23:59:59';
 
             $queryHoy = Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
-                ->whereDate('created_at', $hoy);
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin]);
 
             $ventasHoy      = (float) ((clone $queryHoy)->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0);
             $ordenesHoy     = (clone $queryHoy)->count();
             $ticketPromedio = $ordenesHoy > 0 ? round($ventasHoy / $ordenesHoy, 2) : 0;
 
             $ordenesPorEstado = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin])
                 ->select('estado', DB::raw('COUNT(*) as total'))
                 ->groupBy('estado')
                 ->get();
 
             $totalOrdenesHoy = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)->count();
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin])->count();
             $canceladasHoy   = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)->where('estado', 'CANCELADA')->count();
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin])->where('estado', 'CANCELADA')->count();
             $tasaCancelacion = $totalOrdenesHoy > 0
                 ? round(($canceladasHoy / $totalOrdenesHoy) * 100, 2) : 0;
 
@@ -973,13 +1003,13 @@ if ($cajaHoy) {
             if (Schema::hasTable('nomina_diaria')) {
                 $manoObraHoy = (float) DB::table('nomina_diaria')
                     ->where('restaurante_id', $restauranteActivo->id)
-                    ->whereDate('fecha', $hoy)
+                    ->whereBetween('fecha', [$fInicio, $fFin])
                     ->sum('total_mano_obra');
             }
 
             // La utilidad bruta usa costo real detallado (insumos + MO + indirectos)
             $costoProductoHoy = $this->calcularCostoRealProductos(
-                $restauranteActivo->id, $hoy, $hoy
+                $restauranteActivo->id, $fInicio, $fFin
             );
 
             $utilidadBrutaHoy = $ventasHoy - $costoProductoHoy;
@@ -1003,7 +1033,7 @@ if ($cajaHoy) {
                 ->get(['id', 'nombre', 'stock', 'stock_minimo']);
 
             $ordenesPorHora = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin])
                 ->select(
                     DB::raw('HOUR(created_at) as hora'),
                     DB::raw('COUNT(*) as total_ordenes'),
@@ -1016,7 +1046,7 @@ if ($cajaHoy) {
             return response()->json([
                 'success' => true,
                 'data'    => [
-                    'fecha'                => $hoy,
+                    'fecha'                => $fInicio === $fFin ? $fInicio : "$fInicio a $fFin",
                     'hora_calculo'         => now()->format('H:i:s'),
                     'ventas_hoy'           => round($ventasHoy, 2),
                     'ordenes_hoy'          => $ordenesHoy,

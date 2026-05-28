@@ -64,6 +64,14 @@ final class AuthController extends Controller
             'en_linea' => true
         ]);
 
+        // Registrar sesión de entrada
+        \App\Models\SesionEmpleado::create([
+            'user_id'         => $user->id,
+            'restaurante_id'  => $user->restaurante_activo,
+            'propietario_id'  => $user->propietario_id,
+            'hora_entrada'    => now(),
+        ]);
+
         $token = $user->createToken('api_token_' . $user->id)->plainTextToken;
 
         return $this->success([
@@ -76,10 +84,10 @@ final class AuthController extends Controller
     {
         [$userId, $propietarioId, $restauranteId] = explode('-', $request->login);
 
+        // Permitimos que los empleados que cerraron sesión (y quedaron en inactivo) puedan volver a entrar
         $user = User::where('id', (int) $userId)
             ->where('propietario_id', (int) $propietarioId)
             ->where('restaurante_activo', (int) $restauranteId)
-            ->where('activo', true)
             ->first();
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
@@ -95,8 +103,19 @@ final class AuthController extends Controller
 
         $user->tokens()->delete();
 
-        // Marcar como en línea
-        $user->update(['en_linea' => true]);
+        // Marcar como activo y en línea
+        $user->update([
+            'activo'   => true,
+            'en_linea' => true
+        ]);
+
+        // Registrar sesión de entrada
+        \App\Models\SesionEmpleado::create([
+            'user_id'         => $user->id,
+            'restaurante_id'  => $user->restaurante_activo,
+            'propietario_id'  => $user->propietario_id,
+            'hora_entrada'    => now(),
+        ]);
 
         $token = $user->createToken('empleado_' . $user->id)->plainTextToken;
 
@@ -113,8 +132,24 @@ final class AuthController extends Controller
     {
         $user = $request->user();
         
-        // Marcar como fuera de línea
-        $user->update(['en_linea' => false]);
+        $esPropietario = $user->hasRole('PROPIETARIO') || $user->hasRole('DUEÑO') || $user->hasRole('SUPER_ADMIN');
+
+        $updateData = ['en_linea' => false];
+        if (!$esPropietario) {
+            // El empleado se pone en inactivo al salir
+            $updateData['activo'] = false;
+        }
+        $user->update($updateData);
+
+        // Registrar hora de salida en la última sesión abierta
+        $ultimaSesion = \App\Models\SesionEmpleado::where('user_id', $user->id)
+            ->whereNull('hora_salida')
+            ->orderBy('hora_entrada', 'desc')
+            ->first();
+
+        if ($ultimaSesion) {
+            $ultimaSesion->update(['hora_salida' => now()]);
+        }
 
         $user->currentAccessToken()->delete();
 

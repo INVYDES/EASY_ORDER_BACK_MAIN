@@ -1150,8 +1150,12 @@ class EmpleadoController extends Controller
                 $ordenesCompletadas = $ordenes->count();
                 $totalItems = $ordenes->sum('total_items');
                 
-                // Tiempo de servicio: desde creación hasta última actualización (ENTREGADA/CERRADA)
+                // Tiempo de servicio: desde que la orden está LISTA hasta que se entrega/cierra (mesa)
                 $tiempos = $ordenes->map(function($o) {
+                    if ($o->lista_at) {
+                        return \Carbon\Carbon::parse($o->lista_at)->diffInMinutes(\Carbon\Carbon::parse($o->updated_at));
+                    }
+                    // Fallback para órdenes viejas o transiciones directas: de creación a entrega
                     return \Carbon\Carbon::parse($o->created_at)->diffInMinutes(\Carbon\Carbon::parse($o->updated_at));
                 });
                 $tiempoServicioTotal = $tiempos->avg() ?: 0;
@@ -1162,6 +1166,7 @@ class EmpleadoController extends Controller
                     ->get();
                 
                 $horasTrabajadas = $asistencias->sum('horas_trabajadas');
+                $propinasTotales = $ordenes->sum(fn($o) => (float) ($o->propina ?? 0));
 
                 return [
                     'id' => $empleado->id,
@@ -1173,6 +1178,7 @@ class EmpleadoController extends Controller
                     'ventas_por_hora' => $horasTrabajadas > 0 ? round($ventasTotales / $horasTrabajadas, 2) : 0,
                     'tiempo_servicio_avg' => round($tiempoServicioTotal, 1),
                     'rotacion_mesas' => $ordenesCompletadas, // Simplificado: órdenes atendidas
+                    'propinas' => round($propinasTotales, 2),
                 ];
             });
 
@@ -1603,7 +1609,7 @@ class EmpleadoController extends Controller
                 ->whereBetween('od.created_at', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
                 ->select(
                     'p.nombre',
-                    DB::raw('AVG(TIMESTAMPDIFF(SECOND, od.created_at, od.updated_at)) / 60 as tiempo_avg_min'),
+                    DB::raw('AVG(TIMESTAMPDIFF(SECOND, COALESCE(od.en_preparacion_at, od.created_at), COALESCE(od.listo_at, od.updated_at))) / 60 as tiempo_avg_min'),
                     DB::raw('COUNT(*) as total_preparados')
                 )
                 ->groupBy('p.id', 'p.nombre')
@@ -1625,7 +1631,7 @@ class EmpleadoController extends Controller
                 ->where('o.restaurante_id', $restauranteId)
                 ->whereIn('od.estado_preparacion', ['LISTO', 'ENTREGADO'])
                 ->whereBetween('od.created_at', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
-                ->select('od.id', 'od.created_at', 'od.updated_at')
+                ->select('od.id', 'od.created_at', 'od.updated_at', 'od.en_preparacion_at', 'od.listo_at')
                 ->get();
 
             $retrasadas = 0;
@@ -1649,7 +1655,9 @@ class EmpleadoController extends Controller
                     }
                 }
 
-                $real = \Carbon\Carbon::parse($od->created_at)->diffInMinutes(\Carbon\Carbon::parse($od->updated_at));
+                $start = $od->en_preparacion_at ?: $od->created_at;
+                $end = $od->listo_at ?: $od->updated_at;
+                $real = \Carbon\Carbon::parse($start)->diffInMinutes(\Carbon\Carbon::parse($end));
                 if ($real > $esperado) {
                     $retrasadas++;
                 }
@@ -1708,7 +1716,7 @@ public function getKpiCocinaRetrasos(Request $request)
 
         // Items retrasados (tiempo_real > tiempo_estimado)
         $itemsRetrasados = (clone $query)
-            ->whereRaw('TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) > productos.minutos_produccion')
+            ->whereRaw('TIMESTAMPDIFF(MINUTE, COALESCE(orden_detalles.en_preparacion_at, orden_detalles.created_at), COALESCE(orden_detalles.listo_at, orden_detalles.updated_at)) > productos.minutos_produccion')
             ->count();
 
         $porcentajeRetrasos = $totalItems > 0 ? round(($itemsRetrasados / $totalItems) * 100, 2) : 0;
@@ -1729,7 +1737,7 @@ public function getKpiCocinaRetrasos(Request $request)
             ->select(
                 DB::raw('COALESCE(categorias.nombre, "Sin categoría") as estacion'),
                 DB::raw('COUNT(*) as total'),
-                DB::raw('SUM(CASE WHEN TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) > productos.minutos_produccion THEN 1 ELSE 0 END) as retrasados')
+                DB::raw('SUM(CASE WHEN TIMESTAMPDIFF(MINUTE, COALESCE(orden_detalles.en_preparacion_at, orden_detalles.created_at), COALESCE(orden_detalles.listo_at, orden_detalles.updated_at)) > productos.minutos_produccion THEN 1 ELSE 0 END) as retrasados')
             )
             ->groupBy('estacion')
             ->get()
@@ -1873,11 +1881,10 @@ public function getKpiCocinaReprocesos(Request $request)
                 ->join('users as u', 'u.id', '=', 'o.cajero_id')
                 ->where('o.restaurante_id', $restauranteId)
                 ->where('o.estado', 'CERRADA')
-                ->whereNotNull('o.cierre_solicitado_at')
                 ->whereBetween('o.created_at', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
                 ->select(
                     'u.name as cajero',
-                    DB::raw('AVG(TIMESTAMPDIFF(SECOND, o.cierre_solicitado_at, o.updated_at)) / 60 as tiempo_avg_min'),
+                    DB::raw('AVG(TIMESTAMPDIFF(SECOND, o.created_at, o.updated_at)) / 60 as tiempo_avg_min'),
                     DB::raw('COUNT(*) as total_cobros')
                 )
                 ->groupBy('o.cajero_id', 'u.name')
@@ -2104,6 +2111,45 @@ public function getKpiCocinaReprocesos(Request $request)
                     ],
                     'ranking_ventas' => $ventasPorMesero,
                 ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * GET /api/empleados/sesiones
+     */
+    public function getSesiones(Request $request)
+    {
+        try {
+            $user = $request->user();
+            $restauranteId = (int) $this->getRestauranteId($user);
+
+            if (empty($restauranteId)) {
+                return response()->json(['success' => false, 'message' => 'No se detectó el ID de la sucursal activa'], 400);
+            }
+
+            $query = \App\Models\SesionEmpleado::where('restaurante_id', $restauranteId)
+                ->with(['user.roles', 'restaurante', 'propietario']);
+
+            if ($request->filled('user_id')) {
+                $query->where('user_id', (int) $request->user_id);
+            }
+
+            if ($request->filled('fecha_desde')) {
+                $query->whereDate('hora_entrada', '>=', $request->fecha_desde);
+            }
+
+            if ($request->filled('fecha_hasta')) {
+                $query->whereDate('hora_entrada', '<=', $request->fecha_hasta);
+            }
+
+            $sesiones = $query->orderBy('hora_entrada', 'desc')->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $sesiones
             ]);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);

@@ -311,6 +311,7 @@ class PaqueteController extends Controller
         $costoInsumosPaquete = 0;
         $costoMOPaquete = 0;
         $costoIndirectosPaquete = 0;
+        $totalMinutosProduccion = 0;
 
         foreach ($paquete->productos as $producto) {
             $c = $this->calcularCostosProducto($producto, $totalNominaMensual);
@@ -319,6 +320,7 @@ class PaqueteController extends Controller
             $costoInsumosPaquete += $c['costoInsumos'] * $cantidad;
             $costoMOPaquete += $c['costoMO'] * $cantidad;
             $costoIndirectosPaquete += $c['costoIndirectos'] * $cantidad;
+            $totalMinutosProduccion += (float) ($producto->minutos_produccion ?? 0) * $cantidad;
         }
 
         $margenValor = $paquete->precio - $costoTotalPaquete;
@@ -332,6 +334,7 @@ class PaqueteController extends Controller
         $data['margen'] = round($margenValor, 2);
         $data['margen_pct'] = $margenPct;
         $data['nomina_mensual_base'] = (float) $totalNominaMensual;
+        $data['minutos_produccion'] = $totalMinutosProduccion;
 
         return $data;
     }
