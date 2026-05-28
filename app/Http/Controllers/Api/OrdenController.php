@@ -55,6 +55,9 @@ class OrdenController extends Controller
             if ($request->filled('fecha_hasta')) {
                 $query->whereDate('created_at', '<=', $request->fecha_hasta);
             }
+            if ($request->filled('updated_at_desde')) {
+                $query->where('updated_at', '>=', $request->updated_at_desde);
+            }
             if ($request->filled('fecha')) {
                 $query->whereDate('created_at', $request->fecha);
             }
