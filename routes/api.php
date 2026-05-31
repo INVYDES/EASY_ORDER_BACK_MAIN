@@ -165,6 +165,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::get('/corte',                    [CajaController::class, 'corte'])->middleware('permission:VER_CAJA');
         Route::get('/historial',                [CajaController::class, 'historial'])->middleware('permission:VER_CAJA');
         Route::get('/historial/{id}',           [CajaController::class, 'show'])->middleware('permission:VER_CAJA');
+        Route::get('/historial/{id}/ordenes',   [CajaController::class, 'ordenes'])->middleware('permission:VER_CAJA');
         Route::post('/paypal/crear',            [CajaController::class, 'crearPagoPayPal'])->middleware('permission:CREAR_ORDENES');
         Route::get('/paypal/capturar',          [CajaController::class, 'capturarPayPal']); // callback
         Route::post('/mercadopago/crear',       [MercadoPagoController::class, 'crearPreferencia'])->middleware('permission:CREAR_ORDENES');

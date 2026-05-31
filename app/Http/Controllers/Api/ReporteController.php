@@ -151,13 +151,16 @@ class ReporteController extends Controller
                     'productos.id',
                     'productos.nombre',
                     'productos.precio',
+                    'productos.costo',
                     DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
                     DB::raw('ROUND(SUM(orden_detalles.cantidad), 2) as total_vendido'),
                     DB::raw('SUM(orden_detalles.subtotal) as total_ventas'),
                     DB::raw('COUNT(DISTINCT ordenes.id) as veces_vendido'),
-                    DB::raw('ROUND(AVG(orden_detalles.precio_unitario), 2) as precio_promedio')
+                    DB::raw('ROUND(AVG(orden_detalles.precio_unitario), 2) as precio_promedio'),
+                    DB::raw('ROUND(productos.precio - COALESCE(productos.costo, 0), 2) as margen'),
+                    DB::raw('CAST(SUM(orden_detalles.cantidad) AS UNSIGNED) as ventas')
                 )
-                ->groupBy('productos.id', 'productos.nombre', 'productos.precio', 'categorias.nombre')
+                ->groupBy('productos.id', 'productos.nombre', 'productos.precio', 'productos.costo', 'categorias.nombre')
                 ->orderByDesc('total_vendido')
                 ->limit($limite)
                 ->get();
@@ -1190,19 +1193,56 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
         ]);
 
         $limite = min(max((int) $request->get('limite', 20), 1), 500);
-        $query  = $this->baseDetallesQuery($restauranteActivo->id, $request);
+        // 1. Obtener el Top 5 de productos más vendidos en el período para excluirlos
+        $top5IdsQuery = DB::table('orden_detalles')
+            ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+            ->where('ordenes.restaurante_id', $restauranteActivo->id)
+            ->where('ordenes.estado', 'CERRADA');
 
-        // Excluir el top 5 más vendidos
-        $top5Ids = (clone $query)
-            ->select('productos.id', DB::raw('SUM(orden_detalles.cantidad) as total_vendido'))
-            ->groupBy('productos.id')
+        if ($request->filled('fecha_inicio')) {
+            $top5IdsQuery->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00');
+        }
+        if ($request->filled('fecha_fin')) {
+            $top5IdsQuery->where('ordenes.created_at', '<=', $request->fecha_fin . ' 23:59:59');
+        }
+
+        $top5Ids = $top5IdsQuery->select('orden_detalles.producto_id', DB::raw('SUM(orden_detalles.cantidad) as total_vendido'))
+            ->groupBy('orden_detalles.producto_id')
             ->orderByDesc('total_vendido')
             ->limit(5)
-            ->pluck('productos.id')
+            ->pluck('orden_detalles.producto_id')
             ->toArray();
 
-        $productos = (clone $query)
+        // 2. Subconsulta para obtener las ventas de cada producto en el período
+        $subQueryVentas = DB::table('orden_detalles')
+            ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+            ->where('ordenes.restaurante_id', $restauranteActivo->id)
+            ->where('ordenes.estado', 'CERRADA')
+            ->select(
+                'orden_detalles.producto_id', 
+                DB::raw('SUM(orden_detalles.cantidad) as total_vendido'), 
+                DB::raw('SUM(orden_detalles.subtotal) as total_ventas')
+            )
+            ->groupBy('orden_detalles.producto_id');
+
+        if ($request->filled('fecha_inicio')) {
+            $subQueryVentas->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00');
+        }
+        if ($request->filled('fecha_fin')) {
+            $subQueryVentas->where('ordenes.created_at', '<=', $request->fecha_fin . ' 23:59:59');
+        }
+
+        // 3. Obtener todos los productos del restaurante y cruzar con la subconsulta de ventas
+        $productos = DB::table('productos')
             ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
+            ->leftJoinSub($subQueryVentas, 'ventas_periodo', function($join) {
+                $join->on('productos.id', '=', 'ventas_periodo.producto_id');
+            })
+            ->where('productos.restaurante_id', $restauranteActivo->id)
+            ->where('productos.activo', '!=', 0)
+            ->when(!empty($top5Ids), function($q) use ($top5Ids) {
+                $q->whereNotIn('productos.id', $top5Ids);
+            })
             ->select(
                 'productos.id',
                 'productos.nombre',
@@ -1210,28 +1250,17 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 'productos.precio',
                 'productos.costo',
                 'productos.minutos_produccion',
-                // Margen real ahora que existe la columna costo
                 DB::raw('ROUND(productos.precio - COALESCE(productos.costo, 0), 2) as utilidad_unitaria'),
                 DB::raw('ROUND(
                     ((productos.precio - COALESCE(productos.costo, 0)) / NULLIF(productos.precio, 0)) * 100
                 , 2) as margen_pct'),
-                DB::raw('CAST(SUM(orden_detalles.cantidad) AS UNSIGNED) as total_vendido'),
-                DB::raw('SUM(orden_detalles.subtotal) as total_ventas'),
-                // Utilidad total generada = (precio - costo) * unidades vendidas
+                DB::raw('ROUND(COALESCE(ventas_periodo.total_vendido, 0), 2) as total_vendido'),
+                DB::raw('COALESCE(ventas_periodo.total_ventas, 0) as total_ventas'),
                 DB::raw('ROUND(
-                    SUM(orden_detalles.cantidad) * (productos.precio - COALESCE(productos.costo, 0))
+                    COALESCE(ventas_periodo.total_vendido, 0) * (productos.precio - COALESCE(productos.costo, 0))
                 , 2) as utilidad_total_generada')
             )
-            ->whereNotIn('productos.id', $top5Ids)
-            ->groupBy(
-                'productos.id',
-                'productos.nombre',
-                'categorias.nombre',
-                'productos.precio',
-                'productos.costo',
-                'productos.minutos_produccion'
-            )
-            ->orderByDesc('margen_pct')   // ordenar por mayor margen real
+            ->orderByDesc('margen_pct')
             ->limit($limite)
             ->get();
 

@@ -50,13 +50,52 @@ class OrdenController extends Controller
                 $query->where('mesa', $request->mesa);
             }
             if ($request->filled('fecha_desde')) {
-                $query->whereDate('created_at', '>=', $request->fecha_desde);
+                try {
+                    $start = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->fecha_desde . ' 00:00:00', 'America/Mexico_City');
+                    $query->where('created_at', '>=', $start);
+                } catch (\Exception $e) {
+                    $query->whereDate('created_at', '>=', $request->fecha_desde);
+                }
             }
             if ($request->filled('fecha_hasta')) {
-                $query->whereDate('created_at', '<=', $request->fecha_hasta);
+                try {
+                    $end = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->fecha_hasta . ' 23:59:59', 'America/Mexico_City');
+                    $query->where('created_at', '<=', $end);
+                } catch (\Exception $e) {
+                    $query->whereDate('created_at', '<=', $request->fecha_hasta);
+                }
             }
             if ($request->filled('fecha')) {
-                $query->whereDate('created_at', $request->fecha);
+                try {
+                    $start = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->fecha . ' 00:00:00', 'America/Mexico_City');
+                    $end = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->fecha . ' 23:59:59', 'America/Mexico_City');
+                    $query->whereBetween('created_at', [$start, $end]);
+                } catch (\Exception $e) {
+                    $query->whereDate('created_at', $request->fecha);
+                }
+            }
+            if ($request->filled('updated_at_desde')) {
+                try {
+                    $date = \Carbon\Carbon::parse($request->updated_at_desde);
+                    // Si el string es interpretado en el futuro (típico desfase UTC en clientes de México), restamos 6 horas
+                    if ($date->isFuture()) {
+                        $date->subHours(6);
+                    }
+                    $query->where('updated_at', '>=', $date);
+                } catch (\Exception $e) {
+                    $query->where('updated_at', '>=', $request->updated_at_desde);
+                }
+            }
+            if ($request->filled('updated_at_hasta')) {
+                try {
+                    $date = \Carbon\Carbon::parse($request->updated_at_hasta);
+                    if ($date->isFuture()) {
+                        $date->subHours(6);
+                    }
+                    $query->where('updated_at', '<=', $date);
+                } catch (\Exception $e) {
+                    $query->where('updated_at', '<=', $request->updated_at_hasta);
+                }
             }
             if ($request->filled('total_min')) {
                 $query->where('total', '>=', $request->total_min);

@@ -730,6 +730,86 @@ class CajaController extends Controller
     }
 
     // ═════════════════════════════════════════════════════════════════════════
+    // ORDENES (órdenes del corte de caja por ID)
+    // ═════════════════════════════════════════════════════════════════════════
+    public function ordenes(Request $request, $id)
+    {
+        try {
+            $user = $request->user();
+            if (!$user->hasPermission('VER_CAJA')) {
+                return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
+            }
+
+            $restauranteActivo = app('restaurante_activo');
+
+            $caja = Caja::where('restaurante_id', $restauranteActivo->id)
+                ->where('id', $id)
+                ->firstOrFail();
+
+            $query = Orden::with([
+                    'usuario:id,name,username,email',
+                    'detalles' => function($q) { $q->withTrashed()->with('producto.categoria'); },
+                    'cliente:id,nombre,telefono'
+                ])
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->where('estado', 'CERRADA')
+                ->where('updated_at', '>=', $caja->fecha_apertura);
+
+            if ($caja->fecha_cierre) {
+                $query->where('updated_at', '<=', $caja->fecha_cierre);
+            }
+
+            $ordenes = $query->orderBy('updated_at', 'desc')->get();
+
+            // Formatear fechas para que el frontend no tenga problemas
+            $formatted = $ordenes->map(function($o) {
+                return [
+                    'id' => $o->id,
+                    'restaurante_id' => $o->restaurante_id,
+                    'mesa' => $o->mesa,
+                    'comensales' => $o->comensales,
+                    'estado' => $o->estado,
+                    'metodo_pago' => $o->metodo_pago,
+                    'referencia' => $o->referencia,
+                    'propina' => (float) $o->propina,
+                    'total' => (float) $o->total,
+                    'created_at' => $o->created_at,
+                    'updated_at' => $o->updated_at,
+                    'folio' => $o->folio ?? '#' . $o->id,
+                    'created_at_formateado' => $o->created_at->format('H:i'),
+                    'usuario' => $o->usuario,
+                    'cliente' => $o->cliente,
+                    'detalles' => $o->detalles->map(function($d) {
+                        return [
+                            'id' => $d->id,
+                            'producto_id' => $d->producto_id,
+                            'cantidad' => (int) $d->cantidad,
+                            'precio_unitario' => (float) $d->precio_unitario,
+                            'subtotal' => (float) $d->subtotal,
+                            'estado' => $d->estado,
+                            'notas' => $d->notas,
+                            'nom_comensal' => $d->nom_comensal ?? 'General',
+                            'producto_nombre' => $d->producto?->nombre ?? 'Producto',
+                            'cancelado' => !empty($d->deleted_at) || $d->estado === 'CANCELADO',
+                            'motivo_cancelacion' => $d->motivo_cancelacion,
+                        ];
+                    }),
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data'    => $formatted
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['success' => false, 'message' => 'Corte de caja no encontrado'], 404);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error al obtener órdenes', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
     // CREAR PAGO CON PAYPAL
     // ═════════════════════════════════════════════════════════════════════════
     public function crearPagoPayPal(Request $request)

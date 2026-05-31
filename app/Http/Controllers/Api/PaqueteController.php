@@ -313,6 +313,7 @@ class PaqueteController extends Controller
         $costoIndirectosPaquete = 0;
         $totalMinutosProduccion = 0;
 
+        $unidadesPosibles = collect();
         foreach ($paquete->productos as $producto) {
             $c = $this->calcularCostosProducto($producto, $totalNominaMensual);
             $cantidad = (float) ($producto->pivot->cantidad ?? 1);
@@ -321,7 +322,15 @@ class PaqueteController extends Controller
             $costoMOPaquete += $c['costoMO'] * $cantidad;
             $costoIndirectosPaquete += $c['costoIndirectos'] * $cantidad;
             $totalMinutosProduccion += (float) ($producto->minutos_produccion ?? 0) * $cantidad;
+
+            // Calcular stock posible para este producto del combo
+            $stockProducto = (float) $producto->stock;
+            if ($cantidad > 0) {
+                $unidadesPosibles->push(floor($stockProducto / $cantidad));
+            }
         }
+
+        $stockPaquete = $paquete->productos->isEmpty() ? 0 : $unidadesPosibles->min();
 
         $margenValor = $paquete->precio - $costoTotalPaquete;
         $margenPct = $paquete->precio > 0 ? round(($margenValor / $paquete->precio) * 100, 2) : 0;
@@ -335,6 +344,8 @@ class PaqueteController extends Controller
         $data['margen_pct'] = $margenPct;
         $data['nomina_mensual_base'] = (float) $totalNominaMensual;
         $data['minutos_produccion'] = $totalMinutosProduccion;
+        $data['stock'] = (float) $stockPaquete;
+        $data['agotado'] = $stockPaquete <= 0;
 
         return $data;
     }

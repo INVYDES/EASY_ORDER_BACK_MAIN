@@ -170,6 +170,7 @@ class IngredienteController extends Controller
             'nombre' => 'sometimes|string|max:100',
             'unidad' => 'sometimes|string|max:30',
             'costo_unitario' => 'sometimes|numeric|min:0',
+            'stock_actual' => 'sometimes|numeric|min:0',
             'stock_minimo' => 'sometimes|numeric|min:0',
             'proveedor' => 'nullable|string|max:150',
             'activo' => 'sometimes|boolean',
@@ -188,9 +189,29 @@ class IngredienteController extends Controller
             $restaurante = app('restaurante_activo');
             $ingrediente = Ingrediente::where('restaurante_id', $restaurante->id)->findOrFail($id);
             
+            $stockActualAnterior = $ingrediente->stock_actual;
+
             $ingrediente->update($request->only([
-                'nombre', 'unidad', 'costo_unitario', 'stock_minimo', 'proveedor', 'activo'
+                'nombre', 'unidad', 'costo_unitario', 'stock_actual', 'stock_minimo', 'proveedor', 'activo'
             ]));
+
+            // Si cambió el stock actual del ingrediente, recalcular stock de todos los productos que usen este ingrediente
+            if ($ingrediente->stock_actual != $stockActualAnterior) {
+                $productoIds = DB::table('ingredientes_de_productos')
+                    ->where('ingrediente_id', $ingrediente->id)
+                    ->pluck('producto_id')
+                    ->toArray();
+
+                $productosARecalcular = \App\Models\Producto::withoutGlobalScope(\App\Scopes\TenantScope::class)->whereIn('id', $productoIds)->get();
+
+                foreach ($productosARecalcular as $prod) {
+                    try {
+                        $prod->recalcularStockDesdeIngredientes();
+                    } catch (\Exception $ex) {
+                        \Illuminate\Support\Facades\Log::error('Error recalculando producto ID ' . $prod->id . ': ' . $ex->getMessage());
+                    }
+                }
+            }
 
             return response()->json([
                 'success' => true,
@@ -241,9 +262,29 @@ class IngredienteController extends Controller
                     break;
                 case 'salida':
                     $ingrediente->stock_actual = max(0, $ingrediente->stock_actual - abs($request->cantidad));
-                    break;
             }
             $ingrediente->save();
+
+            // Recalcular stock de todos los productos que usen este ingrediente
+            $productoIds = DB::table('ingredientes_de_productos')
+                ->where('ingrediente_id', $ingrediente->id)
+                ->pluck('producto_id')
+                ->toArray();
+
+            \Illuminate\Support\Facades\Log::info('--- AJUSTE DE STOCK INGREDIENTE ---');
+            \Illuminate\Support\Facades\Log::info('Ingrediente: ID ' . $ingrediente->id . ' (' . $ingrediente->nombre . ') - Nuevo Stock: ' . $ingrediente->stock_actual);
+            \Illuminate\Support\Facades\Log::info('Productos a recalcular encontrados: ' . json_encode($productoIds));
+
+            $productosARecalcular = \App\Models\Producto::withoutGlobalScope(\App\Scopes\TenantScope::class)->whereIn('id', $productoIds)->get();
+
+            foreach ($productosARecalcular as $prod) {
+                try {
+                    $nuevoStock = $prod->recalcularStockDesdeIngredientes();
+                    \Illuminate\Support\Facades\Log::info('Producto ID ' . $prod->id . ' (' . $prod->nombre . ') recalculado a stock: ' . $nuevoStock . ' (Anterior: ' . $prod->getOriginal('stock') . ')');
+                } catch (\Exception $ex) {
+                    \Illuminate\Support\Facades\Log::error('Error recalculando producto ID ' . $prod->id . ': ' . $ex->getMessage());
+                }
+            }
 
             // Registrar movimiento
             IngredienteMovimiento::create([
@@ -341,7 +382,23 @@ class IngredienteController extends Controller
                 $sync[$item['id']] = ['cantidad' => $item['cantidad']];
             }
             
-            \App\Models\Producto::findOrFail($productoId)->ingredientes()->sync($sync);
+            $producto = \App\Models\Producto::findOrFail($productoId);
+            
+            // Obtener ingredientes asociados antes del cambio
+            $ingredientesAntesIds = $producto->ingredientes()->pluck('ingredientes.id')->toArray();
+
+            $producto->ingredientes()->sync($sync);
+            $producto->recalcularStockDesdeIngredientes();
+
+            // Recalcular stock mínimo de todos los ingredientes afectados (antes y después)
+            $todosAfectadosIds = array_unique(array_merge($ingredientesAntesIds, array_keys($sync)));
+            
+            foreach ($todosAfectadosIds as $ingredienteId) {
+                $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
+                if ($ing) {
+                    $ing->recalcularStockMinimoDesdeProductos();
+                }
+            }
 
             return response()->json([
                 'success' => true,
