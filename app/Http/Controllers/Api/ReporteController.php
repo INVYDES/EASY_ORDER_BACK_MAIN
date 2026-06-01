@@ -50,7 +50,7 @@ class ReporteController extends Controller
             $fechaFin    = $fFinStr . ' 23:59:59';
 
             $base = fn () => Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereBetween('created_at', [$fechaInicio, $fechaFin])
                 ->when($request->filled('user_id'), function ($q) use ($request) {
                     $q->where('usuario_id', $request->user_id);
@@ -151,13 +151,16 @@ class ReporteController extends Controller
                     'productos.id',
                     'productos.nombre',
                     'productos.precio',
+                    'productos.costo',
                     DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
                     DB::raw('ROUND(SUM(orden_detalles.cantidad), 2) as total_vendido'),
                     DB::raw('SUM(orden_detalles.subtotal) as total_ventas'),
                     DB::raw('COUNT(DISTINCT ordenes.id) as veces_vendido'),
-                    DB::raw('ROUND(AVG(orden_detalles.precio_unitario), 2) as precio_promedio')
+                    DB::raw('ROUND(AVG(orden_detalles.precio_unitario), 2) as precio_promedio'),
+                    DB::raw('ROUND(productos.precio - COALESCE(productos.costo, 0), 2) as margen'),
+                    DB::raw('CAST(SUM(orden_detalles.cantidad) AS UNSIGNED) as ventas')
                 )
-                ->groupBy('productos.id', 'productos.nombre', 'productos.precio', 'categorias.nombre')
+                ->groupBy('productos.id', 'productos.nombre', 'productos.precio', 'productos.costo', 'categorias.nombre')
                 ->orderByDesc('total_vendido')
                 ->limit($limite)
                 ->get();
@@ -254,32 +257,55 @@ class ReporteController extends Controller
         try {
             $restauranteActivo = app('restaurante_activo');
 
-            $query = DB::table('orden_detalles')
+            $realTimeSql = 'TIMESTAMPDIFF(MINUTE, COALESCE(orden_detalles.en_preparacion_at, orden_detalles.created_at), COALESCE(orden_detalles.listo_at, orden_detalles.updated_at))';
+
+            $baseQuery = DB::table('orden_detalles')
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
-                ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->whereIn('orden_detalles.estado_preparacion', ['LISTO', 'ENTREGADO'])
-                ->whereRaw('TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) > productos.minutos_produccion')
-                ->select(
-                    'productos.nombre as producto',
-                    'categorias.nombre as estacion',
-                    'productos.minutos_produccion as tiempo_estimado',
-                    DB::raw('TIMESTAMPDIFF(MINUTE, orden_detalles.created_at, orden_detalles.updated_at) as tiempo_real'),
-                    'ordenes.id as orden_id',
-                    'orden_detalles.created_at as fecha'
-                );
+                ->where(function($q) {
+                    $q->whereIn('orden_detalles.estado_preparacion', ['LISTO', 'ENTREGADO'])
+                      ->orWhereIn('ordenes.estado', ['ENTREGADA', 'CERRADA']);
+                })
+                ->whereRaw("{$realTimeSql} > productos.minutos_produccion");
 
-            $hoy    = (clone $query)->whereDate('orden_detalles.created_at', today())->get();
-            $semana = (clone $query)->where('orden_detalles.created_at', '>=', now()->subDays(7))->get();
-            $mes    = (clone $query)->where('orden_detalles.created_at', '>=', now()->subMonths(1))->get();
+            $selectFields = [
+                'ordenes.id as orden_id',
+                'productos.id',
+                'productos.nombre',
+                'productos.minutos_produccion as tiempo_estimado',
+                DB::raw("ROUND({$realTimeSql}, 1) as tiempo_real"),
+                DB::raw("ROUND(({$realTimeSql} - productos.minutos_produccion), 1) as exceso"),
+            ];
+
+            $limit = (int) $request->get('limite', 5);
+            if ($limit <= 0 || $limit > 100) {
+                $limit = 5;
+            }
+
+            $hoy = (clone $baseQuery)->whereDate('orden_detalles.created_at', today())
+                ->select($selectFields)
+                ->orderByDesc(DB::raw("({$realTimeSql} - productos.minutos_produccion)"))
+                ->limit($limit)->get();
+
+            $semana = (clone $baseQuery)->where('orden_detalles.created_at', '>=', now()->subDays(7))
+                ->select($selectFields)
+                ->orderByDesc(DB::raw("({$realTimeSql} - productos.minutos_produccion)"))
+                ->limit($limit)->get();
+
+            $mes = (clone $baseQuery)->where('orden_detalles.created_at', '>=', now()->subMonths(1))
+                ->select($selectFields)
+                ->orderByDesc(DB::raw("({$realTimeSql} - productos.minutos_produccion)"))
+                ->limit($limit)->get();
 
             return response()->json([
                 'success' => true,
                 'data'    => [
                     'hoy'            => $hoy,
-                    'ultimos_7_dias' => $semana,
-                    'ultimo_mes'     => $mes,
+                    'semana'         => $semana,
+                    'mes'            => $mes,
+                    'ultimos_7_dias' => $semana, // Para compatibilidad
+                    'ultimo_mes'     => $mes      // Para compatibilidad
                 ],
             ]);
 
@@ -454,7 +480,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $grupo = $request->get('grupo', 'dia');
 
             $query = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
+                ->where('estado', 'CERRADA');
 
             if ($request->filled('fecha_inicio')) {
                 $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
@@ -510,18 +536,22 @@ public function recomendacionPaquete(Request $request): JsonResponse
     // COSTO REAL DETALLADO POR PRODUCTO (insumos + MO + indirectos)
     // ─────────────────────────────────────────────────────────────────────────
 
-    private function calcularCostoRealProductos($restauranteId, $fechaInicio = null, $fechaFin = null): float
+    private function calcularCostoRealProductos($restauranteId, $fechaInicio = null, $fechaFin = null, bool $soloInsumos = false): float
     {
         $query = DB::table('orden_detalles')
             ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
             ->where('ordenes.restaurante_id', $restauranteId)
-            ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA']);
+            ->where('ordenes.estado', 'CERRADA'); // Solo lo cobrado
 
-        if ($fechaInicio) {
-            $query->where('ordenes.created_at', '>=', $fechaInicio . ' 00:00:00');
-        }
-        if ($fechaFin) {
-            $query->where('ordenes.created_at', '<=', $fechaFin . ' 23:59:59');
+        if ($fechaInicio && $fechaFin && $fechaInicio === $fechaFin) {
+            $query->whereDate('ordenes.created_at', $fechaInicio);
+        } else {
+            if ($fechaInicio) {
+                $query->where('ordenes.created_at', '>=', $fechaInicio . ' 00:00:00');
+            }
+            if ($fechaFin) {
+                $query->where('ordenes.created_at', '<=', $fechaFin . ' 23:59:59');
+            }
         }
 
         $productosVendidos = $query
@@ -531,34 +561,53 @@ public function recomendacionPaquete(Request $request): JsonResponse
 
         if ($productosVendidos->isEmpty()) return 0;
 
-        $totalNominaMensual = User::where('restaurante_activo', $restauranteId)->sum('salario_base');
+        // ✅ Nómina total de TODOS los empleados asignados al restaurante (vía tabla pivote)
+        $totalNominaMensual = DB::table('restaurante_user')
+            ->join('users', 'restaurante_user.user_id', '=', 'users.id')
+            ->where('restaurante_user.restaurante_id', $restauranteId)
+            ->whereNull('users.deleted_at')
+            ->sum('users.salario_base');
 
         $productos = Producto::with('ingredientes')
             ->whereIn('id', $productosVendidos->pluck('producto_id'))
             ->get()
             ->keyBy('id');
 
-        $costoTotal = 0;
+        $costoTotalGeneral = 0;
 
         foreach ($productosVendidos as $pv) {
             $producto = $productos->get($pv->producto_id);
             if (!$producto) continue;
 
+            // 1. Costo de Insumos (desde receta)
             $costoInsumos = $producto->ingredientes->reduce(fn($c, $ing) =>
-                $c + ($ing->costo_unitario * ($ing->pivot->cantidad ?? 0)), 0);
+                $c + (($ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
 
+            // Fallback al costo manual si no hay ingredientes
+            if ($costoInsumos <= 0) {
+                $costoInsumos = (float) ($producto->costo ?? 0);
+            }
+
+            if ($soloInsumos) {
+                $costoTotalGeneral += round($costoInsumos, 2) * $pv->cantidad_total;
+                continue;
+            }
+
+            // 2. Mano de Obra (Misma lógica que ProductoController)
             $minProd = (float) ($producto->minutos_produccion ?? 0);
             $costoMO = $totalNominaMensual > 0 && $minProd > 0
                 ? ($totalNominaMensual / 14400) * 1.36 * $minProd
                 : 0;
 
             $costoBase = $costoInsumos + $costoMO;
-            $costoUnitario = $costoBase + ($costoBase * 0.05);
+            
+            // 3. Indirectos (5%) y redondeo integral para coincidir con la lista
+            $costoUnitarioIntegral = round($costoBase * 1.05, 2);
 
-            $costoTotal += $costoUnitario * $pv->cantidad_total;
+            $costoTotalGeneral += $costoUnitarioIntegral * $pv->cantidad_total;
         }
 
-        return $costoTotal;
+        return (float) $costoTotalGeneral;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -576,7 +625,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             ]);
 
             $queryOrdenes = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
+                ->where('estado', 'CERRADA');
 
             if ($request->filled('fecha_inicio')) {
                 $queryOrdenes->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
@@ -643,30 +692,45 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->leftJoin('users', 'orden_detalles.usuario_cancelo_id', '=', 'users.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->where('ordenes.estado', 'CANCELADA')
+                // ✅ FIX: Incluir tanto platillos borrados individualmente como órdenes canceladas completas
+                ->where(function($q) {
+                    $q->whereNotNull('orden_detalles.motivo_cancelacion')
+                      ->orWhere('ordenes.estado', 'CANCELADA');
+                })
                 ->select(
                     'orden_detalles.id',
-                    'ordenes.created_at as fecha',
+                    // ✅ Usar el momento de la cancelación (deleted_at o updated_at de la orden)
+                    DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at) as fecha'),
                     'productos.nombre as producto',
                     'orden_detalles.cantidad',
-                    DB::raw('orden_detalles.subtotal'),
-                    DB::raw('COALESCE(orden_detalles.motivo_cancelacion, "Sin motivo") as motivo'),
-                    DB::raw('COALESCE(users.name, "Sistema") as usuario')
+                    'orden_detalles.subtotal',
+                    'orden_detalles.estado_preparacion',
+                    DB::raw('COALESCE(orden_detalles.motivo_cancelacion, "Orden Cancelada") as motivo'),
+                    DB::raw('COALESCE(users.name, "Sistema") as usuario'),
+                    // ✅ Marcar si es merma real (ya fue preparado) o solo cancelación (stock devuelto)
+                    DB::raw('CASE WHEN orden_detalles.estado_preparacion IN ("EN_PREPARACION", "LISTO", "ENTREGADO") THEN 1 ELSE 0 END as es_merma')
                 );
 
             if ($request->filled('fecha_inicio')) {
-                $query->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00');
+                $query->where(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'), '>=', $request->fecha_inicio . ' 00:00:00');
             }
             if ($request->filled('fecha_fin')) {
-                $query->where('ordenes.created_at', '<=', $request->fecha_fin . ' 23:59:59');
+                $query->where(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'), '<=', $request->fecha_fin . ' 23:59:59');
             }
 
-            $resultados = $query->orderByDesc('ordenes.created_at')->get();
+            $resultados = $query->orderByDesc(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'))->get();
+
+            // Solo sumar como merma los que realmente se prepararon (stock no devuelto)
+            $totalMermas = round($resultados->where('es_merma', 1)->sum('subtotal'), 2);
+            // Total de cancelaciones simples (stock devuelto, no es pérdida)
+            $totalCancelaciones = round($resultados->where('es_merma', 0)->sum('subtotal'), 2);
 
             return response()->json([
                 'success' => true,
                 'data'    => $resultados,
-                'total_mermas' => round($resultados->sum('subtotal'), 2),
+                'total_mermas' => $totalMermas,
+                'total_cancelaciones_sin_merma' => $totalCancelaciones,
+                'total_general' => round($totalMermas + $totalCancelaciones, 2),
             ]);
 
         } catch (\Exception $e) {
@@ -689,7 +753,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             ]);
 
             $query = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
+                ->where('estado', 'CERRADA');
 
             if ($request->filled('fecha_inicio')) {
                 $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
@@ -733,16 +797,14 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $fecha = $request->get('fecha', today()->format('Y-m-d'));
 
             $ventasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereDate('created_at', $fecha)
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
-            $costoProducto = $this->calcularCostoRealProductos(
-                $restauranteActivo->id, $fecha, $fecha
-            );
+            $costoProducto = (float) $this->calcularCostoRealProductos($restauranteActivo->id, $fecha, false, $fecha);
 
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereDate('created_at', $fecha)
                 ->sum('propina');
 
@@ -774,6 +836,46 @@ if ($cajaHoy) {
             $utilidadBruta = $ventasDia - $costoProducto;
             $utilidadNeta  = $utilidadBruta - $retirosCaja;
 
+            // DEBUG: Desglose para entender por qué la utilidad no cuadra
+            $detallesCostos = DB::table('orden_detalles')
+                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+                ->where('ordenes.restaurante_id', $restauranteActivo->id)
+                ->where('ordenes.estado', 'CERRADA')
+                ->whereDate('ordenes.created_at', $fecha)
+                ->whereNull('orden_detalles.deleted_at')
+                ->select('orden_detalles.producto_id', 'productos.nombre as producto', DB::raw('SUM(orden_detalles.cantidad) as cantidad'))
+                ->groupBy('orden_detalles.producto_id', 'productos.nombre')
+                ->get();
+
+            $totalNomina = DB::table('restaurante_user')
+                ->join('users', 'restaurante_user.user_id', '=', 'users.id')
+                ->where('restaurante_user.restaurante_id', $restauranteActivo->id)
+                ->whereNull('users.deleted_at')
+                ->sum('users.salario_base');
+
+            $costoProducto = 0;
+            foreach ($detallesCostos as $dc) {
+                $p = Producto::with('ingredientes')->find($dc->producto_id);
+                if ($p) {
+                    $costoI = $p->ingredientes->reduce(fn($c, $ing) =>
+                        $c + (($ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
+                    
+                    if ($costoI <= 0) {
+                        $costoI = (float) ($p->costo ?? 0);
+                    }
+
+                    $costoMO = ($totalNomina > 0 && $p->minutos_produccion > 0) ? (($totalNomina / 14400) * 1.36 * $p->minutos_produccion) : 0;
+                    
+                    $costoIntegralUnitario = round(($costoI + $costoMO) * 1.05, 2);
+                    $dc->subtotal_costo = round($costoIntegralUnitario * $dc->cantidad, 2);
+                    $costoProducto += $dc->subtotal_costo;
+                }
+            }
+
+            $utilidadBruta = $ventasDia - $costoProducto;
+            $utilidadNeta  = $utilidadBruta - $retirosCaja;
+
             return response()->json([
                 'success' => true,
                 'data'    => [
@@ -788,7 +890,7 @@ if ($cajaHoy) {
                     'margen_bruto_pct'   => $ventasDia > 0 ? round(($utilidadBruta / $ventasDia) * 100, 2) : 0,
                     'margen_neto_pct'    => $ventasDia > 0 ? round(($utilidadNeta  / $ventasDia) * 100, 2) : 0,
                     'ordenes_en_proceso' => $ordenesEnProceso,
-                    'hora_calculo'       => now()->format('H:i:s'),
+                    'hora_calculo'       => now()->format('H:i:s')
                 ],
             ]);
 
@@ -815,26 +917,39 @@ if ($cajaHoy) {
     {
         try {
             $restauranteActivo = app('restaurante_activo');
-            $hoy = now()->timezone('America/Mexico_City')->format('Y-m-d');
+            
+            // ✅ Permitir filtros de fecha para el dashboard, con fallback a "hoy"
+            $fInicio = $request->get('fecha_inicio', now()->timezone('America/Mexico_City')->format('Y-m-d'));
+            $fFin    = $request->get('fecha_fin',    now()->timezone('America/Mexico_City')->format('Y-m-d'));
+
+            // Invertir fechas si vienen al revés
+            if ($fInicio > $fFin) {
+                $temp = $fInicio;
+                $fInicio = $fFin;
+                $fFin = $temp;
+            }
+
+            $fechaInicio = $fInicio . ' 00:00:00';
+            $fechaFin    = $fFin . ' 23:59:59';
 
             $queryHoy = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
-                ->whereDate('created_at', $hoy);
+                ->where('estado', 'CERRADA')
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin]);
 
             $ventasHoy      = (float) ((clone $queryHoy)->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0);
             $ordenesHoy     = (clone $queryHoy)->count();
             $ticketPromedio = $ordenesHoy > 0 ? round($ventasHoy / $ordenesHoy, 2) : 0;
 
             $ordenesPorEstado = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin])
                 ->select('estado', DB::raw('COUNT(*) as total'))
                 ->groupBy('estado')
                 ->get();
 
             $totalOrdenesHoy = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)->count();
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin])->count();
             $canceladasHoy   = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)->where('estado', 'CANCELADA')->count();
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin])->where('estado', 'CANCELADA')->count();
             $tasaCancelacion = $totalOrdenesHoy > 0
                 ? round(($canceladasHoy / $totalOrdenesHoy) * 100, 2) : 0;
 
@@ -853,13 +968,13 @@ if ($cajaHoy) {
             if (Schema::hasTable('nomina_diaria')) {
                 $manoObraHoy = (float) DB::table('nomina_diaria')
                     ->where('restaurante_id', $restauranteActivo->id)
-                    ->whereDate('fecha', $hoy)
+                    ->whereBetween('fecha', [$fInicio, $fFin])
                     ->sum('total_mano_obra');
             }
 
             // La utilidad bruta usa costo real detallado (insumos + MO + indirectos)
             $costoProductoHoy = $this->calcularCostoRealProductos(
-                $restauranteActivo->id, $hoy, $hoy
+                $restauranteActivo->id, $fInicio, $fFin
             );
 
             $utilidadBrutaHoy = $ventasHoy - $costoProductoHoy;
@@ -883,7 +998,7 @@ if ($cajaHoy) {
                 ->get(['id', 'nombre', 'stock', 'stock_minimo']);
 
             $ordenesPorHora = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy)
+                ->whereBetween('created_at', [$fechaInicio, $fechaFin])
                 ->select(
                     DB::raw('HOUR(created_at) as hora'),
                     DB::raw('COUNT(*) as total_ordenes'),
@@ -896,7 +1011,7 @@ if ($cajaHoy) {
             return response()->json([
                 'success' => true,
                 'data'    => [
-                    'fecha'                => $hoy,
+                    'fecha'                => $fInicio === $fFin ? $fInicio : "$fInicio a $fFin",
                     'hora_calculo'         => now()->format('H:i:s'),
                     'ventas_hoy'           => round($ventasHoy, 2),
                     'ordenes_hoy'          => $ordenesHoy,
@@ -974,7 +1089,7 @@ if ($cajaHoy) {
             $fechaFin    = $request->get('fecha_fin', now()->format('Y-m-d'));
 
             $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum('total');
 
@@ -1078,19 +1193,56 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
         ]);
 
         $limite = min(max((int) $request->get('limite', 20), 1), 500);
-        $query  = $this->baseDetallesQuery($restauranteActivo->id, $request);
+        // 1. Obtener el Top 5 de productos más vendidos en el período para excluirlos
+        $top5IdsQuery = DB::table('orden_detalles')
+            ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+            ->where('ordenes.restaurante_id', $restauranteActivo->id)
+            ->where('ordenes.estado', 'CERRADA');
 
-        // Excluir el top 5 más vendidos
-        $top5Ids = (clone $query)
-            ->select('productos.id', DB::raw('SUM(orden_detalles.cantidad) as total_vendido'))
-            ->groupBy('productos.id')
+        if ($request->filled('fecha_inicio')) {
+            $top5IdsQuery->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00');
+        }
+        if ($request->filled('fecha_fin')) {
+            $top5IdsQuery->where('ordenes.created_at', '<=', $request->fecha_fin . ' 23:59:59');
+        }
+
+        $top5Ids = $top5IdsQuery->select('orden_detalles.producto_id', DB::raw('SUM(orden_detalles.cantidad) as total_vendido'))
+            ->groupBy('orden_detalles.producto_id')
             ->orderByDesc('total_vendido')
             ->limit(5)
-            ->pluck('productos.id')
+            ->pluck('orden_detalles.producto_id')
             ->toArray();
 
-        $productos = (clone $query)
+        // 2. Subconsulta para obtener las ventas de cada producto en el período
+        $subQueryVentas = DB::table('orden_detalles')
+            ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+            ->where('ordenes.restaurante_id', $restauranteActivo->id)
+            ->where('ordenes.estado', 'CERRADA')
+            ->select(
+                'orden_detalles.producto_id', 
+                DB::raw('SUM(orden_detalles.cantidad) as total_vendido'), 
+                DB::raw('SUM(orden_detalles.subtotal) as total_ventas')
+            )
+            ->groupBy('orden_detalles.producto_id');
+
+        if ($request->filled('fecha_inicio')) {
+            $subQueryVentas->where('ordenes.created_at', '>=', $request->fecha_inicio . ' 00:00:00');
+        }
+        if ($request->filled('fecha_fin')) {
+            $subQueryVentas->where('ordenes.created_at', '<=', $request->fecha_fin . ' 23:59:59');
+        }
+
+        // 3. Obtener todos los productos del restaurante y cruzar con la subconsulta de ventas
+        $productos = DB::table('productos')
             ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
+            ->leftJoinSub($subQueryVentas, 'ventas_periodo', function($join) {
+                $join->on('productos.id', '=', 'ventas_periodo.producto_id');
+            })
+            ->where('productos.restaurante_id', $restauranteActivo->id)
+            ->where('productos.activo', '!=', 0)
+            ->when(!empty($top5Ids), function($q) use ($top5Ids) {
+                $q->whereNotIn('productos.id', $top5Ids);
+            })
             ->select(
                 'productos.id',
                 'productos.nombre',
@@ -1098,28 +1250,17 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 'productos.precio',
                 'productos.costo',
                 'productos.minutos_produccion',
-                // Margen real ahora que existe la columna costo
                 DB::raw('ROUND(productos.precio - COALESCE(productos.costo, 0), 2) as utilidad_unitaria'),
                 DB::raw('ROUND(
                     ((productos.precio - COALESCE(productos.costo, 0)) / NULLIF(productos.precio, 0)) * 100
                 , 2) as margen_pct'),
-                DB::raw('CAST(SUM(orden_detalles.cantidad) AS UNSIGNED) as total_vendido'),
-                DB::raw('SUM(orden_detalles.subtotal) as total_ventas'),
-                // Utilidad total generada = (precio - costo) * unidades vendidas
+                DB::raw('ROUND(COALESCE(ventas_periodo.total_vendido, 0), 2) as total_vendido'),
+                DB::raw('COALESCE(ventas_periodo.total_ventas, 0) as total_ventas'),
                 DB::raw('ROUND(
-                    SUM(orden_detalles.cantidad) * (productos.precio - COALESCE(productos.costo, 0))
+                    COALESCE(ventas_periodo.total_vendido, 0) * (productos.precio - COALESCE(productos.costo, 0))
                 , 2) as utilidad_total_generada')
             )
-            ->whereNotIn('productos.id', $top5Ids)
-            ->groupBy(
-                'productos.id',
-                'productos.nombre',
-                'categorias.nombre',
-                'productos.precio',
-                'productos.costo',
-                'productos.minutos_produccion'
-            )
-            ->orderByDesc('margen_pct')   // ordenar por mayor margen real
+            ->orderByDesc('margen_pct')
             ->limit($limite)
             ->get();
 
@@ -1268,7 +1409,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
         switch ($tipo) {
             case 'ventas':
                 return Orden::where('restaurante_id', $restaurante->id)
-                    ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                    ->where('estado', 'CERRADA')
                     ->whereBetween('created_at', [$fInicio, $fFin])
                     ->with('usuario')
                     ->get();
@@ -1400,7 +1541,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             $utilidadObjetivo = (float) $config->utilidad_objetivo;
 
             $ventasMes = (float) Orden::where('restaurante_id', $restauranteActivo->id)
-                ->whereIn('estado', ['CERRADA', 'ENTREGADA'])
+                ->where('estado', 'CERRADA')
                 ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
@@ -1414,7 +1555,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
+                ->where('ordenes.estado', 'CERRADA')
                 ->whereBetween('ordenes.created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
 
@@ -1472,7 +1613,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA'])
+                ->where('ordenes.estado', 'CERRADA')
                 ->whereBetween('ordenes.created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->select(
                     'productos.id',
@@ -1542,7 +1683,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
             ->join('ordenes',   'orden_detalles.orden_id',    '=', 'ordenes.id')
             ->where('ordenes.restaurante_id', $restauranteId)
-            ->whereIn('ordenes.estado', ['CERRADA', 'ENTREGADA']);
+            ->where('ordenes.estado', 'CERRADA');
 
         // Intercambiar fechas si vienen invertidas
         $fInicioStr = $request->fecha_inicio;
@@ -1594,7 +1735,7 @@ public function ventasPorCanalTipo(Request $request): JsonResponse
 
         $query = DB::table('ordenes')
             ->where('restaurante_id', $restauranteId)
-            ->whereIn('estado', ['CERRADA', 'ENTREGADA']);
+            ->where('estado', 'CERRADA');
 
         if ($request->filled('fecha_inicio')) {
             $query->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');

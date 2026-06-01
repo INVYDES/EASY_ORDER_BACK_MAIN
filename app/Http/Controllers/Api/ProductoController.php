@@ -35,7 +35,7 @@ class ProductoController extends Controller
 
             // Parámetros de paginación
             $perPage = $request->get('per_page', 15);
-            $perPage = min($perPage, 50);
+            $perPage = min($perPage, 500);
             $page = $request->get('page', 1);
 
             // Construir query base con relaciones
@@ -410,6 +410,19 @@ class ProductoController extends Controller
                 }
                 if (!empty($ingredientesData)) {
                     $producto->ingredientes()->sync($ingredientesData);
+                    $producto->recalcularStockDesdeIngredientes();
+                    
+                    // Forzar recálculo de stock mínimo de ingredientes asociados usando DB directa
+                    $ingredientesIds = \Illuminate\Support\Facades\DB::table('ingredientes_de_productos')
+                        ->where('producto_id', $producto->id)
+                        ->pluck('ingrediente_id');
+
+                    foreach ($ingredientesIds as $ingredienteId) {
+                        $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
+                        if ($ing) {
+                            $ing->recalcularStockMinimoDesdeProductos();
+                        }
+                    }
                 }
             }
 
@@ -556,6 +569,9 @@ class ProductoController extends Controller
 
             // Sincronizar ingredientes (acepta 'id' o 'ingrediente_id')
             if ($request->has('ingredientes')) {
+                // Obtener ingredientes asociados antes del cambio
+                $ingredientesAntesIds = $producto->ingredientes()->pluck('ingredientes.id')->toArray();
+
                 $ingredientesData = [];
                 foreach ($request->ingredientes as $item) {
                     $ingredienteId = $item['id'] ?? $item['ingrediente_id'] ?? null;
@@ -565,6 +581,30 @@ class ProductoController extends Controller
                     }
                 }
                 $producto->ingredientes()->sync($ingredientesData);
+                $producto->recalcularStockDesdeIngredientes();
+
+                // Recalcular stock mínimo de todos los ingredientes afectados (antes y después) sin recargar relaciones complejas
+                $ingredientesDespuesIds = array_keys($ingredientesData);
+                $todosAfectadosIds = array_unique(array_merge($ingredientesAntesIds, $ingredientesDespuesIds));
+                
+                foreach ($todosAfectadosIds as $ingredienteId) {
+                    $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
+                    if ($ing) {
+                        $ing->recalcularStockMinimoDesdeProductos();
+                    }
+                }
+            } else {
+                // Si no se cambiaron ingredientes, pero el stock mínimo o activo cambió, recalculamos los ingredientes actuales usando DB directa
+                $ingredientesIds = \Illuminate\Support\Facades\DB::table('ingredientes_de_productos')
+                    ->where('producto_id', $producto->id)
+                    ->pluck('ingrediente_id');
+
+                foreach ($ingredientesIds as $ingredienteId) {
+                    $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
+                    if ($ing) {
+                        $ing->recalcularStockMinimoDesdeProductos();
+                    }
+                }
             }
 
             DB::commit();
@@ -641,7 +681,20 @@ class ProductoController extends Controller
                 Storage::disk('public')->delete($producto->imagen);
             }
             
+            // Obtener IDs de ingredientes asociados usando DB directa antes de borrar
+            $ingredientesIds = \Illuminate\Support\Facades\DB::table('ingredientes_de_productos')
+                ->where('producto_id', $producto->id)
+                ->pluck('ingrediente_id');
+
             $producto->delete();
+
+            // Recalcular stock mínimo de todos los ingredientes asociados al producto (ya que el producto fue eliminado)
+            foreach ($ingredientesIds as $ingredienteId) {
+                $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
+                if ($ing) {
+                    $ing->recalcularStockMinimoDesdeProductos();
+                }
+            }
 
             if (method_exists($user, 'logAction')) {
                 $user->logAction(
@@ -999,6 +1052,7 @@ class ProductoController extends Controller
                         'bajo_stock'      => $producto->stock <= $producto->stock_minimo && $producto->stock_minimo > 0,
                         'agotado'         => $producto->stock <= 0,
                         'sin_receta'      => true,
+                        'minutos_produccion' => (float) $producto->minutos_produccion,
                     ];
                 }
 
@@ -1033,6 +1087,7 @@ class ProductoController extends Controller
                     'bajo_stock'      => $bajoStock,
                     'agotado'         => false,
                     'sin_receta'      => false,
+                    'minutos_produccion' => (float) $producto->minutos_produccion,
                 ];
             })->filter()->values();
 
@@ -1448,9 +1503,7 @@ class ProductoController extends Controller
             $data = $productos->map(function ($producto) {
                 
                 if ($producto->ingredientes->isEmpty()) {
-                    if ($producto->stock <= 0) {
-                        return null;
-                    }
+                    $stockRestante = (int) $producto->stock;
                     
                     return [
                         'id' => $producto->id,
@@ -1463,8 +1516,9 @@ class ProductoController extends Controller
                             'id' => $producto->categoria->id,
                             'nombre' => $producto->categoria->nombre,
                         ] : null,
-                        'disponible' => true,
-                        'stock_restante' => (int) $producto->stock
+                        'disponible' => $stockRestante > 0,
+                        'stock_restante' => $stockRestante,
+                        'minutos_produccion' => (float) $producto->minutos_produccion,
                     ];
                 }
 
@@ -1473,8 +1527,8 @@ class ProductoController extends Controller
                     return (int) floor($ing->stock_actual / $ing->pivot->cantidad);
                 })->min();
 
-                if ($stockCalculado <= 0) {
-                    return null;
+                if ($stockCalculado === PHP_INT_MAX || $stockCalculado < 0) {
+                    $stockCalculado = 0;
                 }
 
                 return [
@@ -1488,8 +1542,9 @@ class ProductoController extends Controller
                         'id' => $producto->categoria->id,
                         'nombre' => $producto->categoria->nombre,
                     ] : null,
-                    'disponible' => true,
-                    'stock_restante' => $stockCalculado
+                    'disponible' => $stockCalculado > 0,
+                    'stock_restante' => $stockCalculado,
+                    'minutos_produccion' => (float) $producto->minutos_produccion,
                 ];
             })->filter()->values();
 
@@ -1520,8 +1575,11 @@ class ProductoController extends Controller
      */
     private function obtenerTotalNominaMensual($restauranteId)
     {
-        return User::where('restaurante_activo', $restauranteId)
-            ->sum('salario_base');
+        return DB::table('restaurante_user')
+            ->join('users', 'restaurante_user.user_id', '=', 'users.id')
+            ->where('restaurante_user.restaurante_id', $restauranteId)
+            ->whereNull('users.deleted_at')
+            ->sum('users.salario_base');
     }
 
     /**

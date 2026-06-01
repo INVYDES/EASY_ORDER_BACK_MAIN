@@ -37,7 +37,7 @@ class Anuncio extends Model
         $ahora = now();
         return $this->activo && 
                (!$this->fecha_inicio || $this->fecha_inicio <= $ahora) && 
-               (!$this->fecha_fin || $this->fecha_fin >= $ahora);
+               (!$this->fecha_fin || $this->fecha_fin->endOfDay() >= $ahora);
     }
 
     public function restaurante()
@@ -64,7 +64,7 @@ class Anuncio extends Model
                 $q->whereNull('fecha_inicio')->orWhere('fecha_inicio', '<=', $ahora);
             })
             ->where(function($q) use ($ahora) {
-                $q->whereNull('fecha_fin')->orWhere('fecha_fin', '>=', $ahora);
+                $q->whereNull('fecha_fin')->orWhere('fecha_fin', '>=', $ahora->startOfDay());
             })
             ->orderBy('orden')
             ->orderBy('created_at', 'desc');

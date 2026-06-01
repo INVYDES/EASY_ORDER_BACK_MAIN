@@ -50,8 +50,40 @@ public function movimientos()
      */
     public function productos()
     {
-        return $this->belongsToMany(Producto::class, 'producto_ingrediente')
-            ->withPivot('cantidad');
+        return $this->belongsToMany(Producto::class, 'ingredientes_de_productos')
+            ->withPivot('cantidad')
+            ->withTimestamps();
+    }
+
+    /**
+     * Recalcula el stock mínimo del ingrediente basándose en los stocks mínimos de los productos que lo usan.
+     */
+    public function recalcularStockMinimoDesdeProductos()
+    {
+        // Usamos DB directa para evitar interferencias de scopes o soft-deletes en la relación Eloquent
+        $productosAsociados = \Illuminate\Support\Facades\DB::table('ingredientes_de_productos')
+            ->join('productos', 'ingredientes_de_productos.producto_id', '=', 'productos.id')
+            ->where('ingredientes_de_productos.ingrediente_id', $this->id)
+            ->where('productos.activo', true)
+            ->whereNull('productos.deleted_at')
+            ->select('productos.stock_minimo', 'ingredientes_de_productos.cantidad')
+            ->get();
+
+        $stockMinimoCalculado = 0;
+
+        foreach ($productosAsociados as $prod) {
+            $cantidadReceta = (float) ($prod->cantidad ?? 0);
+            $stockMinimoProducto = (float) ($prod->stock_minimo ?? 0);
+            
+            if ($cantidadReceta > 0 && $stockMinimoProducto > 0) {
+                $stockMinimoCalculado += ($cantidadReceta * $stockMinimoProducto);
+            }
+        }
+
+        $this->stock_minimo = $stockMinimoCalculado;
+        $this->save();
+
+        return $stockMinimoCalculado;
     }
 
     /**

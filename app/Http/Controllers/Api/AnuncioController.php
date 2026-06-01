@@ -184,6 +184,8 @@ class AnuncioController extends Controller
             'fecha_inicio'    => $a->fecha_inicio?->format('Y-m-d'),
             'fecha_fin'       => $a->fecha_fin?->format('Y-m-d'),
             'orden'           => $a->orden,
+            'producto_id'     => $a->producto_id,
+            'paquete_id'      => $a->paquete_id,
             'producto'        => $a->producto ? [
                 'id'       => $a->producto->id,
                 'nombre'   => $a->producto->nombre,
@@ -197,9 +199,7 @@ class AnuncioController extends Controller
                 'imagen'   => $a->paquete->imagen,
             ] : null,
             'precio_promo'    => $a->precio_promo,
-            'vigente'         => $a->activo &&
-                (!$a->fecha_inicio || $a->fecha_inicio->isPast()) &&
-                (!$a->fecha_fin    || $a->fecha_fin->isFuture()),
+            'vigente'         => $a->es_vigente,
             'created_at'      => $a->created_at,
         ];
     }
@@ -293,21 +293,7 @@ class AnuncioController extends Controller
             return response()->json(['success' => false, 'message' => 'Error', 'error' => $e->getMessage()], 500);
         }
     }
-    // En app/Models/Anuncio.php
-public function scopeVigentes($query)
-{
-    $hoy = now()->format('Y-m-d H:i:s');
-    
-    return $query->where('activo', true)
-        ->where(function($q) use ($hoy) {
-            $q->whereNull('fecha_inicio')
-              ->orWhere('fecha_inicio', '<=', $hoy);
-        })
-        ->where(function($q) use ($hoy) {
-            $q->whereNull('fecha_fin')
-              ->orWhere('fecha_fin', '>=', $hoy);
-        });
-}
+
 /**
  * Activar/Desactivar un anuncio
  * PATCH /api/admin/anuncios/{id}/toggle

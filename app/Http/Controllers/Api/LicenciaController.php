@@ -17,9 +17,9 @@ class LicenciaController extends Controller
 {
     public function __construct()
     {
-        // Configurar Mercado Pago si hay token
-        if (env('MERCADOPAGO_ACCESS_TOKEN')) {
-            MercadoPagoConfig::setAccessToken(env('MERCADOPAGO_ACCESS_TOKEN'));
+        // Configurar Mercado Pago si existe la clase y hay token
+        if (class_exists('MercadoPago\MercadoPagoConfig') && env('MERCADOPAGO_ACCESS_TOKEN')) {
+            \MercadoPago\MercadoPagoConfig::setAccessToken(env('MERCADOPAGO_ACCESS_TOKEN'));
         }
     }
    
@@ -29,12 +29,14 @@ public function disponibles(Request $request)
         // Verificar si el usuario está autenticado
         $isAuthenticated = auth('sanctum')->check();
         
-        $query = Licencia::where('activo', 1)
-            ->where('tipo', '!=', 'EMPRESA');
+        $query = Licencia::where('tipo', '!=', 'EMPRESA')
+            ->where('nombre', 'not like', '%Premium%')
+            ->where('tipo', '!=', 'PRUEBA');
         
-        // Si NO está autenticado, mostrar SOLO la licencia de PRUEBA
-        if (!$isAuthenticated) {
-            $query->where('tipo', 'PRUEBA');
+        // Intentar obtener las activas primero
+        $licenciasExistentes = (clone $query)->where('activo', 1)->count();
+        if ($licenciasExistentes > 0) {
+            $query->where('activo', 1);
         }
         
         $licencias = $query->orderBy('precio', 'asc')

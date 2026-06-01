@@ -106,10 +106,7 @@ class LicenciaPagoController extends Controller
                 ]);
             }
 
-            $diasRestantes = 0;
-            if ($licenciaActiva->fecha_expiracion) {
-                $diasRestantes = max(0, Carbon::now()->diffInDays($licenciaActiva->fecha_expiracion, false));
-            }
+            $diasRestantes = $licenciaActiva->dias_restantes;
 
             return response()->json([
                 'success' => true,
@@ -154,9 +151,7 @@ class LicenciaPagoController extends Controller
                     'estado' => $propietarioLicencia->estado,
                     'fecha_inicio' => $propietarioLicencia->fecha_inicio,
                     'fecha_expiracion' => $propietarioLicencia->fecha_expiracion,
-                    'dias_restantes' => $propietarioLicencia->fecha_expiracion 
-                        ? max(0, Carbon::now()->diffInDays($propietarioLicencia->fecha_expiracion, false))
-                        : 0
+                    'dias_restantes' => $propietarioLicencia->dias_restantes
                 ]
             ]);
 

@@ -30,6 +30,7 @@ use App\Http\Controllers\Api\HorarioController;
 use App\Http\Controllers\Api\NominaDetalleController;
 use App\Http\Controllers\Api\PaqueteController;
 use App\Http\Controllers\Api\ChatbotController;
+use App\Http\Controllers\Api\PlataformaController;
 
 /*
 |--------------------------------------------------------------------------
@@ -136,6 +137,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/{licenciaId}/comprar-paypal',      [LicenciaController::class, 'comprarLicenciaPayPal']);
         Route::post('/{licenciaId}/comprar-mercadopago', [LicenciaController::class, 'comprarLicenciaMercadoPago']);
     });
+
+    // ========== PLATAFORMA (SUPER ADMIN) ==========
+    Route::prefix('plataforma')->group(function () {
+        Route::get('/propietarios', [PlataformaController::class, 'index']);
+        Route::get('/stats',         [PlataformaController::class, 'stats']);
+        Route::delete('/propietarios/{id}', [PlataformaController::class, 'destroyPropietario']);
+        Route::delete('/restaurantes/{id}', [PlataformaController::class, 'destroyRestaurante']);
+    });
 });
 
 /*
@@ -157,6 +166,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::get('/corte',                    [CajaController::class, 'corte'])->middleware('permission:VER_CAJA');
         Route::get('/historial',                [CajaController::class, 'historial'])->middleware('permission:VER_CAJA');
         Route::get('/historial/{id}',           [CajaController::class, 'show'])->middleware('permission:VER_CAJA');
+        Route::get('/historial/{id}/ordenes',   [CajaController::class, 'ordenes'])->middleware('permission:VER_CAJA');
         Route::post('/paypal/crear',            [CajaController::class, 'crearPagoPayPal'])->middleware('permission:CREAR_ORDENES');
         Route::get('/paypal/capturar',          [CajaController::class, 'capturarPayPal']); // callback
         Route::post('/mercadopago/crear',       [MercadoPagoController::class, 'crearPreferencia'])->middleware('permission:CREAR_ORDENES');
@@ -324,7 +334,7 @@ Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('
         Route::post('/',            [OrdenDetalleController::class, 'store'])->middleware('permission:CREAR_ORDENES');
         Route::get('/{detalle}',    [OrdenDetalleController::class, 'show'])->middleware('permission:VER_ORDENES');
         Route::put('/{detalle}',    [OrdenDetalleController::class, 'update'])->middleware('permission:EDITAR_ORDENES');
-        Route::delete('/{detalle}', [OrdenDetalleController::class, 'destroy'])->middleware('permission:ELIMINAR_ORDENES');
+        Route::delete('/{detalle}', [OrdenDetalleController::class, 'destroy'])->middleware('permission:ELIMINAR_ORDENES,EDITAR_ORDENES');
     });
 
     // ========== CLIENTES ==========
@@ -417,6 +427,7 @@ Route::prefix('meseros')->group(function () {
 
     // ========== EMPLEADOS ==========
     Route::prefix('empleados')->middleware('permission:VER_EMPLEADOS')->group(function () {
+        Route::get('/sesiones',                  [EmpleadoController::class, 'getSesiones']);
         Route::get('/',                          [EmpleadoController::class, 'index']);
         Route::post('/',                         [EmpleadoController::class, 'store']);
         Route::get('/{empleado}',                [EmpleadoController::class, 'show']);

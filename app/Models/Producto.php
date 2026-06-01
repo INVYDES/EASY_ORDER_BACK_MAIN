@@ -225,7 +225,11 @@ public function ingredienteMovimientos()
      */
     public function recalcularStockDesdeIngredientes()
     {
-        $this->load('ingredientes');
+        // Forzamos la carga de ingredientes omitiendo el scope global de tenant para asegurar
+        // que la consulta interna no sea filtrada si el contexto de restaurante_activo cambia
+        $this->load(['ingredientes' => function($query) {
+            $query->withoutGlobalScope(\App\Scopes\TenantScope::class);
+        }]);
         
         if ($this->ingredientes->isEmpty()) {
             return $this->stock; // Si no tiene receta, mantenemos el stock manual
