@@ -65,6 +65,9 @@ class OrdenController extends Controller
                     $query->whereDate('created_at', '<=', $request->fecha_hasta);
                 }
             }
+            if ($request->filled('updated_at_desde')) {
+                $query->where('updated_at', '>=', $request->updated_at_desde);
+            }
             if ($request->filled('fecha')) {
                 try {
                     $start = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->fecha . ' 00:00:00', 'America/Mexico_City');

@@ -561,11 +561,21 @@ public function recomendacionPaquete(Request $request): JsonResponse
 
         if ($productosVendidos->isEmpty()) return 0;
 
-        // ✅ Nómina total de TODOS los empleados asignados al restaurante (vía tabla pivote)
+        // ✅ Nómina total de TODOS los empleados asignados al restaurante (excluyendo el rol MENU)
         $totalNominaMensual = DB::table('restaurante_user')
             ->join('users', 'restaurante_user.user_id', '=', 'users.id')
             ->where('restaurante_user.restaurante_id', $restauranteId)
             ->whereNull('users.deleted_at')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                  ->from('role_user')
+                  ->join('roles', 'role_user.role_id', '=', 'roles.id')
+                  ->whereColumn('role_user.user_id', 'users.id')
+                  ->where(function($sub) {
+                      $sub->where('roles.id', 7)
+                          ->orWhere('roles.nombre', 'MENU');
+                  });
+            })
             ->sum('users.salario_base');
 
         $productos = Producto::with('ingredientes')
@@ -651,8 +661,36 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 $inversionManoObra = (float) ($qNomina->sum('total_mano_obra') ?? 0);
             }
 
+            if ($inversionManoObra <= 0) {
+                $fechaInicioStr = $request->get('fecha_inicio', now()->format('Y-m-d'));
+                $fechaFinStr    = $request->get('fecha_fin',    now()->format('Y-m-d'));
+
+                $datetime1 = new \DateTime($fechaInicioStr);
+                $datetime2 = new \DateTime($fechaFinStr);
+                $dias = (int) $datetime1->diff($datetime2)->format('%a') + 1;
+                if ($dias < 1) $dias = 1;
+
+                $totalNominaMensual = DB::table('users')
+                    ->where('users.restaurante_id', $restauranteActivo->id)
+                    ->where('users.activo', '!=', 0)
+                    ->whereNotExists(function($q) {
+                        $q->select(DB::raw(1))
+                          ->from('role_user')
+                          ->join('roles', 'role_user.role_id', '=', 'roles.id')
+                          ->whereColumn('role_user.user_id', 'users.id')
+                          ->where(function($sub) {
+                              $sub->where('roles.id', 7)
+                                  ->orWhere('roles.nombre', 'MENU')
+                                  ->orWhere('roles.nombre', 'menu');
+                          });
+                    })
+                    ->sum('users.salario_base');
+
+                $inversionManoObra = ($totalNominaMensual / 30.0) * $dias;
+            }
+
             $utilidadBruta = $totalVentas - $inversionProducto;
-            $utilidadNeta  = $utilidadBruta;
+            $utilidadNeta  = $utilidadBruta - $inversionManoObra;
 
             return response()->json([
                 'success' => true,
@@ -1559,7 +1597,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 ->whereBetween('ordenes.created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
                 ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
 
-            $gastosVariables = round($gastosDirectos + $costoVentas, 2);
+            $gastosVariables = round($costoVentas, 2);
 
             $nominaMes = (float) Nomina::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'PAGADA')
@@ -1571,7 +1609,8 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 (float) $config->gasto_servicios +
                 (float) $config->gasto_software  +
                 (float) $config->gasto_marketing +
-                $nominaMes,
+                $nominaMes +
+                $gastosDirectos,
                 2
             );
 

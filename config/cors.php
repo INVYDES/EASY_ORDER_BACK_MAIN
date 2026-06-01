@@ -19,19 +19,25 @@ return [
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
-        // Desarrollo local
+        // Capacitor / Android (APK)
+        'http://localhost',
+        'capacitor://localhost',
         'http://localhost:5173',
         'http://localhost:3000',
         'http://127.0.0.1:5173',
         'http://localhost:8080',
-        // Producción — con y sin www
+        // Producci�n - con y sin www
         'https://corion.mx',
         'https://www.corion.mx',
         'http://corion.mx',
         'http://www.corion.mx',
     ],
 
-    'allowed_origins_patterns' => ['#^https?://(www\.)?corion\.mx#'],
+    'allowed_origins_patterns' => [
+        '#^https?://(www\.)?corion\.mx#',
+        '#^capacitor://localhost#',
+        '#^http://localhost(:\d+)?$#',
+    ],
 
     'allowed_headers' => ['*'],
 

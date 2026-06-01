@@ -374,6 +374,7 @@ Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('
         Route::post('/exportar',             [ReporteController::class, 'exportar'])->middleware('permission:EXPORTAR_REPORTES');
 Route::get('/ventas-por-canal-tipo', [ReporteController::class, 'ventasPorCanalTipo']);
         // ── ✅ ALIAS para rutas que pide el frontend ──────────────────────────
+        Route::get('/tiempos-rebase',         [ReporteController::class, 'tiemposRebase']);
         // GET /api/reportes/finanzas-dia  →  utilidadDiaAcumulada
         Route::get('/finanzas-dia',           [ReporteController::class, 'finanzasDia']);
 
