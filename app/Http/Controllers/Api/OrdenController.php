@@ -1268,4 +1268,95 @@ class OrdenController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
+
+    // ============================================
+    // PROCESAR PAGO (PayPal / Mercado Pago)
+    // ============================================
+
+    public function procesarPago(Request $request, $ordenId)
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user->hasPermission('CREAR_ORDENES')) {
+                return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
+            }
+
+            $request->validate([
+                'pasarela' => 'required|in:paypal,mercadopago',
+                'total'    => 'required|numeric|min:0.01',
+                'items'    => 'required|array|min:1',
+                'items.*.name'         => 'required|string',
+                'items.*.quantity'     => 'required|numeric|min:1',
+                'items.*.unit_amount'  => 'required|numeric|min:0',
+            ]);
+
+            $restauranteActivo = app('restaurante_activo');
+            $orden = Orden::where('id', $ordenId)
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->firstOrFail();
+
+            if (in_array($orden->estado, ['CERRADA', 'PAGADA', 'CANCELADA'])) {
+                return response()->json(['success' => false, 'message' => 'La orden ya está cerrada o cancelada'], 400);
+            }
+
+            if ($request->pasarela === 'paypal') {
+                $paypalController = new \App\Http\Controllers\Api\PayPalController();
+                $ppRequest = new \Illuminate\Http\Request();
+                $ppRequest->merge([
+                    'total'    => $request->total,
+                    'items'    => $request->items,
+                    'order_id' => $orden->id,
+                ]);
+                $ppResponse = $paypalController->createOrder($ppRequest);
+                $ppData = json_decode($ppResponse->getContent(), true);
+
+                if (!$ppData['success']) {
+                    return response()->json(['success' => false, 'message' => $ppData['message'] ?? 'Error PayPal'], 500);
+                }
+
+                $orden->paypal_order_id = $ppData['order_id'];
+                $orden->save();
+
+                return response()->json([
+                    'success'      => true,
+                    'redirect_url' => $ppData['approval_url'],
+                    'pasarela'     => 'paypal',
+                ]);
+            }
+
+            if ($request->pasarela === 'mercadopago') {
+                $mpController = new \App\Http\Controllers\Api\MercadoPagoController();
+                $mpRequest = new \Illuminate\Http\Request();
+                $mpRequest->merge([
+                    'orden_id' => $orden->id,
+                    'total'    => $request->total,
+                    'items'    => $request->items,
+                ]);
+                $mpResponse = $mpController->crearPreferencia($mpRequest);
+                $mpData = json_decode($mpResponse->getContent(), true);
+
+                if (!$mpData['success']) {
+                    return response()->json(['success' => false, 'message' => $mpData['message'] ?? 'Error Mercado Pago'], 500);
+                }
+
+                $orden->mercadopago_preference_id = $mpData['preference_id'];
+                $orden->save();
+
+                return response()->json([
+                    'success'      => true,
+                    'redirect_url' => $mpData['init_point'],
+                    'pasarela'     => 'mercadopago',
+                ]);
+            }
+
+            return response()->json(['success' => false, 'message' => 'Pasarela no soportada'], 400);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['success' => false, 'message' => 'Orden no encontrada'], 404);
+        } catch (\Exception $e) {
+            \Log::error('Error procesarPago: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Error al procesar el pago'], 500);
+        }
+    }
 }

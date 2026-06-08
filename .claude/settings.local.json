@@ -3,7 +3,8 @@
     "allow": [
       "Bash(dir *)",
       "Bash(php artisan *)",
-      "Bash(composer dump-autoload *)"
+      "Bash(composer dump-autoload *)",
+      "Bash(php *)"
     ]
   }
 }

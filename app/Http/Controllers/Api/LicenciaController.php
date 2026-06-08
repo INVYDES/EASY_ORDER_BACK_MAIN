@@ -696,4 +696,123 @@ public function webhookMercadoPago(Request $request)
     
     return $this->comprarLicenciaPayPal($request, $licenciaId);
 }
+
+// ============================================
+// SIMULACIÓN DE PAGO (solo testing/desarrollo)
+// ============================================
+
+public function simularPago(Request $request, $licenciaId)
+{
+    try {
+        $user       = $request->user();
+        $propietario = $user->propietario;
+
+        if (!$propietario) {
+            return response()->json(['success' => false, 'message' => 'Propietario no encontrado'], 404);
+        }
+
+        $licencia = Licencia::findOrFail($licenciaId);
+
+        if (!$licencia->activo) {
+            return response()->json(['success' => false, 'message' => 'Licencia no disponible'], 400);
+        }
+
+        $licenciaActiva = PropietarioLicencia::where('propietario_id', $propietario->id)
+            ->where('estado', 'ACTIVA')
+            ->where('fecha_expiracion', '>', Carbon::now())
+            ->first();
+
+        if ($licenciaActiva) {
+            return response()->json(['success' => false, 'message' => 'Ya tienes una licencia activa'], 400);
+        }
+
+        $dias      = $licencia->tipo === 'ANUAL' ? 365 : 30;
+        $monto     = $licencia->tipo === 'ANUAL' ? $licencia->precio_anual : $licencia->precio;
+        $pasarela  = $request->input('pasarela', 'simulado');
+
+        $propLicencia = PropietarioLicencia::create([
+            'propietario_id'         => $propietario->id,
+            'licencia_id'            => $licencia->id,
+            'estado'                 => 'ACTIVA',
+            'metodo_pago'            => $pasarela,
+            'monto_pagado'           => $monto,
+            'fecha_inicio'           => Carbon::now(),
+            'fecha_expiracion'       => Carbon::now()->addDays($dias),
+            'ultimo_pago_at'         => Carbon::now(),
+            'proximo_pago_at'        => Carbon::now()->addDays($dias),
+            'auto_renovar'           => false,
+        ]);
+
+        Log::info('Licencia simulada activada', [
+            'propietario_id' => $propietario->id,
+            'licencia_id'    => $licencia->id,
+            'expiracion'     => $propLicencia->fecha_expiracion,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Licencia activada correctamente (simulación)',
+            'data'    => [
+                'id'               => $propLicencia->id,
+                'licencia'         => $licencia->nombre,
+                'tipo'             => $licencia->tipo,
+                'metodo_pago'      => $pasarela,
+                'monto_pagado'     => $monto,
+                'fecha_inicio'     => $propLicencia->fecha_inicio,
+                'fecha_expiracion' => $propLicencia->fecha_expiracion,
+                'dias_restantes'   => $propLicencia->dias_restantes,
+            ],
+        ]);
+
+    } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        return response()->json(['success' => false, 'message' => 'Licencia no encontrada'], 404);
+    } catch (\Exception $e) {
+        Log::error('Error simular pago: ' . $e->getMessage());
+        return response()->json(['success' => false, 'message' => 'Error al simular pago'], 500);
+    }
+}
+
+// ============================================
+// VERIFICAR PAGO MERCADO PAGO
+// ============================================
+
+public function verificarPagoMercadoPago(Request $request, $paymentId)
+{
+    try {
+        $client = new PaymentClient();
+        $payment = $client->get($paymentId);
+
+        if (!$payment) {
+            return response()->json(['success' => false, 'message' => 'Pago no encontrado'], 404);
+        }
+
+        $status = $payment->status;
+        $detail = $payment->status_detail ?? '';
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'id'             => $payment->id,
+                'status'         => $status,
+                'status_detail'  => $detail,
+                'amount'         => $payment->transaction_amount,
+                'payment_method' => $payment->payment_method_id ?? null,
+                'approved'       => $status === 'approved',
+                'external_reference' => $payment->external_reference ?? null,
+            ],
+        ]);
+
+    } catch (\MercadoPago\Exceptions\MPApiException $e) {
+        $response = $e->getApiResponse();
+        \Log::error('MP verificarPago API error', [
+            'status'  => $response->getStatusCode(),
+            'content' => $response->getContent(),
+        ]);
+        return response()->json(['success' => false, 'message' => 'Error al consultar pago en Mercado Pago'], 500);
+
+    } catch (\Exception $e) {
+        \Log::error('Error verificarPagoMP: ' . $e->getMessage());
+        return response()->json(['success' => false, 'message' => 'Error al verificar pago'], 500);
+    }
+}
 }

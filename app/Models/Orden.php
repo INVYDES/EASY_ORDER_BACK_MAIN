@@ -35,6 +35,7 @@ class Orden extends Model
         'propina',
         'estado',
         'paypal_order_id',
+        'mercadopago_preference_id',
         'lista_at'
     ];
 

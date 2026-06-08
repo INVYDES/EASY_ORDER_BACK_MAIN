@@ -230,6 +230,11 @@ class PayPalController extends Controller
         return redirect(env('FRONTEND_URL') . '/licencia-cancelada');
     }
 
+    public function cancelOrder()
+    {
+        return redirect(env('FRONTEND_URL') . '/pago-cancelado');
+    }
+
     // ============================================
     // WEBHOOK PAYPAL — RENOVACIONES Y EVENTOS
     // FIX: Sin esto, las renovaciones mensuales no se registran

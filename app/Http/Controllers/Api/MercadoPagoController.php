@@ -281,6 +281,142 @@ class MercadoPagoController extends Controller
     }
 
     // ============================================
+    // CREAR PREFERENCIA (pago único — para CajaController)
+    // ============================================
+
+    public function crearPreferencia(Request $request)
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user->hasPermission('CREAR_ORDENES')) {
+                return response()->json(['success' => false, 'message' => 'No tienes permiso para crear órdenes'], 403);
+            }
+
+            $request->validate([
+                'orden_id' => 'required|exists:ordenes,id',
+                'total'    => 'required|numeric|min:0.01',
+                'items'    => 'required|array|min:1',
+                'items.*.name' => 'required|string',
+                'items.*.quantity' => 'required|numeric|min:1',
+                'items.*.unit_amount' => 'required|numeric|min:0',
+            ]);
+
+            $preferenceClient = new PreferenceClient();
+
+            $items = collect($request->items)->map(fn($item) => [
+                'id'          => (string) ($item['id'] ?? ''),
+                'title'       => $item['name'],
+                'quantity'    => (int) $item['quantity'],
+                'unit_price'  => (float) $item['unit_amount'],
+                'currency_id' => 'MXN',
+            ])->toArray();
+
+            $preferenceData = [
+                'items'             => $items,
+                'external_reference' => 'ORD-' . $request->orden_id,
+                'back_urls' => [
+                    'success' => env('APP_URL') . '/api/caja/mercadopago/retorno',
+                    'failure' => env('FRONTEND_URL') . '/pago-error',
+                    'pending' => env('FRONTEND_URL') . '/pago-pendiente',
+                ],
+                'auto_return'      => 'approved',
+                'notification_url' => env('APP_URL') . '/api/mercadopago/webhook',
+                'statement_descriptor' => 'Easy Order',
+            ];
+
+            $preference = $preferenceClient->create($preferenceData);
+
+            return response()->json([
+                'success'       => true,
+                'init_point'    => $preference->init_point,
+                'preference_id' => $preference->id,
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
+        } catch (\MercadoPago\Exceptions\MPApiException $e) {
+            $response = $e->getApiResponse();
+            \Log::error('MP crearPreferencia API error', [
+                'status'  => $response->getStatusCode(),
+                'content' => $response->getContent(),
+            ]);
+            return response()->json(['success' => false, 'message' => 'Error al crear preferencia en Mercado Pago'], 500);
+        } catch (\Exception $e) {
+            \Log::error('MP crearPreferencia error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Error al procesar el pago'], 500);
+        }
+    }
+
+    // ============================================
+    // RETORNO PAGO MP (callback desde web después de pago aprobado)
+    // ============================================
+
+    public function retornoPago(Request $request)
+    {
+        $preferenceId = $request->query('preference_id');
+        $paymentId    = $request->query('payment_id');
+        $status       = $request->query('status');
+
+        if ($status !== 'approved' || !$preferenceId) {
+            return redirect()->to(env('FRONTEND_URL') . '/pago-error');
+        }
+
+        try {
+            $orden = \App\Models\Orden::where('mercadopago_preference_id', $preferenceId)->first();
+
+            if (!$orden) {
+                \Log::warning('MP retorno: orden no encontrada', ['preference_id' => $preferenceId]);
+                return redirect()->to(env('FRONTEND_URL') . '/pago-error?motivo=orden_no_encontrada');
+            }
+
+            $restauranteActivo = $orden->restaurante;
+            $caja = \App\Models\Caja::where('restaurante_id', $restauranteActivo->id)
+                ->whereDate('fecha_apertura', now()->format('Y-m-d'))
+                ->whereNull('fecha_cierre')
+                ->first();
+
+            if (!$caja) {
+                return redirect()->to(env('FRONTEND_URL') . '/pago-error?motivo=caja_cerrada');
+            }
+
+            DB::beginTransaction();
+
+            $orden->estado      = 'CERRADA';
+            $orden->metodo_pago = 'mercadopago';
+            $orden->save();
+
+            \App\Models\CajaMovimientos::create([
+                'caja_id'     => $caja->id,
+                'usuario_id'  => $orden->usuario_id,
+                'tipo'        => 'ingreso',
+                'monto'       => $orden->total,
+                'descripcion' => 'Pago Mercado Pago - Orden #' . $orden->id,
+                'referencia'  => $paymentId,
+            ]);
+
+            DB::commit();
+
+            try {
+                \Illuminate\Support\Facades\Broadcast::event(new \App\Events\CajaActualizada('venta', $restauranteActivo->id, [
+                    'orden_id' => $orden->id,
+                    'monto'    => (float) $orden->total,
+                    'metodo'   => 'mercadopago',
+                ]));
+            } catch (\Exception $be) {
+                \Log::warning('Broadcast pago MP: ' . $be->getMessage());
+            }
+
+            return redirect()->to(env('FRONTEND_URL') . '/pago-exitoso?orden=' . $orden->id);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Error retorno MP: ' . $e->getMessage());
+            return redirect()->to(env('FRONTEND_URL') . '/pago-error?motivo=generic_error');
+        }
+    }
+
+    // ============================================
     // HELPER: VALIDAR FIRMA DEL WEBHOOK
     // ============================================
 

@@ -136,6 +136,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/{licenciaId}/comprar',             [LicenciaController::class, 'comprarLicencia']);
         Route::post('/{licenciaId}/comprar-paypal',      [LicenciaController::class, 'comprarLicenciaPayPal']);
         Route::post('/{licenciaId}/comprar-mercadopago', [LicenciaController::class, 'comprarLicenciaMercadoPago']);
+        Route::post('/{licenciaId}/simular-pago',        [LicenciaController::class, 'simularPago']);
     });
 
     // ========== PLATAFORMA (SUPER ADMIN) ==========
@@ -170,6 +171,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::post('/paypal/crear',            [CajaController::class, 'crearPagoPayPal'])->middleware('permission:CREAR_ORDENES');
         Route::get('/paypal/capturar',          [CajaController::class, 'capturarPayPal']); // callback
         Route::post('/mercadopago/crear',       [MercadoPagoController::class, 'crearPreferencia'])->middleware('permission:CREAR_ORDENES');
+        Route::get('/mercadopago/retorno',      [MercadoPagoController::class, 'retornoPago']);
     });
 
     // ========== RESTAURANTES ==========
@@ -325,6 +327,7 @@ Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('
         Route::post('/{orden}/actualizar-estado-estacion', [OrdenDetalleController::class, 'actualizarEstadoPorEstacion'])->middleware('permission:EDITAR_ORDENES');
         Route::post('/{orden}/cerrar',                     [OrdenController::class, 'cerrar'])->middleware('permission:CERRAR_ORDENES');
         Route::post('/{orden}/dividir',                    [OrdenController::class, 'dividirCuenta'])->middleware('permission:EDITAR_ORDENES');
+        Route::post('/{orden}/pagar',                      [OrdenController::class, 'procesarPago'])->middleware('permission:CREAR_ORDENES');
     });
 
     // ========== DETALLES DE ÓRDENES ==========
