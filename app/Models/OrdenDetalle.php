@@ -27,7 +27,9 @@ class OrdenDetalle extends Model {
         'listo_at',
         'reprocesado',
         'motivo_cancelacion',
-        'usuario_cancelo_id'
+        'usuario_cancelo_id',
+        'recogido_en',
+        'entregado_en'
     ];
 
     protected $casts = [
@@ -38,7 +40,9 @@ class OrdenDetalle extends Model {
         'comensal_id' => 'integer',
         'usuario_cancelo_id' => 'integer',
         'en_preparacion_at' => 'datetime',
-        'listo_at' => 'datetime'
+        'listo_at' => 'datetime',
+        'recogido_en' => 'datetime',
+        'entregado_en' => 'datetime'
     ];
 
     /**

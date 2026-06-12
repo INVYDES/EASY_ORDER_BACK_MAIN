@@ -1,0 +1,1 @@
+@keyframes spin-1b0060a3{0%{transform:rotate(0)}to{transform:rotate(360deg)}}.animate-spin[data-v-1b0060a3]{animation:spin-1b0060a3 1s linear infinite}@keyframes pulse-1b0060a3{0%,to{opacity:1}50%{opacity:.5}}.animate-pulse[data-v-1b0060a3]{animation:pulse-1b0060a3 2s cubic-bezier(.4,0,.6,1) infinite}

@@ -284,6 +284,7 @@ class OrdenController extends Controller
             'costo_envio'             => 'nullable|numeric|min:0',
             'tiempo_estimado_entrega' => 'nullable|integer|min:1|max:180',
             'nombre_cliente'          => 'required_if:tipo_orden,delivery|nullable|string|max:100',
+            'programado_para'         => 'nullable|date',
         ]);
 
         if ($validator->fails()) {
@@ -451,6 +452,7 @@ class OrdenController extends Controller
                     'propina'                 => $request->propina ?? 0,
                     'notas'                   => $request->notas,
                     'estado'                  => 'ABIERTA',
+                    'programado_para'         => $request->programado_para,
                 ]);
                 $esNueva = true;
             }
@@ -700,6 +702,9 @@ class OrdenController extends Controller
                 'pagos.*.comensal'   => 'nullable|string|max:100',
                 'pagos.*.referencia' => 'nullable|string|max:100',
                 'pagos.*.detalles'   => 'nullable|array',
+                'comision_pct'       => 'nullable|numeric|min:0|max:100',
+                'comision_monto'     => 'nullable|numeric|min:0',
+                'neto_depositar'     => 'nullable|numeric|min:0',
             ]);
 
             $restauranteActivo = app('restaurante_activo');
@@ -726,13 +731,17 @@ class OrdenController extends Controller
                         $metodoPago = $p['metodo'] ?? $request->metodo_pago ?? 'efectivo';
 
                         if ($index === 0) {
-                            $orden->update([
-                                'estado'      => 'CERRADA',
-                                'metodo_pago' => $metodoPago,
-                                'propina'     => (float) ($p['propina'] ?? 0),
-                                'total'       => $pTotal,
-                            ]);
-                            $orderIdForLog    = $orden->id;
+                    $updateData = [
+                        'estado'      => 'CERRADA',
+                        'metodo_pago' => $metodoPago,
+                        'propina'     => (float) ($p['propina'] ?? 0),
+                        'total'       => $pTotal,
+                    ];
+                    if ($request->filled('comision_pct')) $updateData['comision_pct'] = $request->comision_pct;
+                    if ($request->filled('comision_monto')) $updateData['comision_monto'] = $request->comision_monto;
+                    if ($request->filled('neto_depositar')) $updateData['neto_depositar'] = $request->neto_depositar;
+                    $orden->update($updateData);
+                    $orderIdForLog    = $orden->id;
                             $ordenesCreadas[] = $orden->id;
                         } else {
                             $nuevaOrden = Orden::create([
@@ -783,13 +792,17 @@ class OrdenController extends Controller
                         }
                     }
                 } else {
-                    $orden->update([
+                    $updateData = [
                         'estado'      => 'CERRADA',
                         'metodo_pago' => $request->metodo_pago,
                         'propina'     => $request->propina ?? 0,
                         'referencia'  => $request->referencia,
                         'total'       => $orden->detalles()->sum('subtotal') + ($request->propina ?? 0),
-                    ]);
+                    ];
+                    if ($request->filled('comision_pct')) $updateData['comision_pct'] = $request->comision_pct;
+                    if ($request->filled('comision_monto')) $updateData['comision_monto'] = $request->comision_monto;
+                    if ($request->filled('neto_depositar')) $updateData['neto_depositar'] = $request->neto_depositar;
+                    $orden->update($updateData);
 
                     if ($caja) {
                         $mPago = $request->metodo_pago ?? 'efectivo';
@@ -1027,6 +1040,8 @@ class OrdenController extends Controller
             'detalles'           => 'required|array|min:1',
             'detalles.*'         => 'exists:orden_detalles,id',
             'estado_preparacion' => 'required|in:PENDIENTE,EN_PREPARACION,LISTO,ENTREGADO',
+            'recogido_en'        => 'nullable|date',
+            'entregado_en'       => 'nullable|date',
         ]);
 
         try {
@@ -1042,6 +1057,12 @@ class OrdenController extends Controller
                 $updateData['en_preparacion_at'] = now();
             } elseif ($request->estado_preparacion === 'LISTO') {
                 $updateData['listo_at'] = now();
+            }
+            if ($request->filled('recogido_en')) {
+                $updateData['recogido_en'] = $request->recogido_en;
+            }
+            if ($request->filled('entregado_en')) {
+                $updateData['entregado_en'] = $request->entregado_en;
             }
 
             OrdenDetalle::whereIn('id', $request->detalles)
@@ -1212,6 +1233,8 @@ class OrdenController extends Controller
                     'id'   => $d->usuarioCancelo->id,
                     'name' => $d->usuarioCancelo->name
                 ] : null,
+                'recogido_en'         => $d->recogido_en?->format('Y-m-d H:i:s'),
+                'entregado_en'        => $d->entregado_en?->format('Y-m-d H:i:s'),
                 'created_at'          => $d->created_at?->format('Y-m-d H:i:s'),
             ]),
             'created_at'             => $orden->created_at,
@@ -1219,6 +1242,10 @@ class OrdenController extends Controller
             'created_at_humano'      => $orden->created_at_humano,
             'updated_at'             => $orden->updated_at,
             'updated_at_formateado'  => $orden->updated_at?->format('d/m/Y H:i'),
+            'comision_pct'           => (float) ($orden->comision_pct ?? 0),
+            'comision_monto'         => (float) ($orden->comision_monto ?? 0),
+            'neto_depositar'         => (float) ($orden->neto_depositar ?? 0),
+            'programado_para'        => $orden->programado_para?->format('Y-m-d H:i:s'),
         ];
     }
     /**

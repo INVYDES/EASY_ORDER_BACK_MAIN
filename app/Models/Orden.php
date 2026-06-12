@@ -36,18 +36,26 @@ class Orden extends Model
         'estado',
         'paypal_order_id',
         'mercadopago_preference_id',
-        'lista_at'
+        'lista_at',
+        'comision_pct',
+        'comision_monto',
+        'neto_depositar',
+        'programado_para'
     ];
 
     protected $casts = [
         'total' => 'decimal:2',
         'propina' => 'decimal:2',
         'costo_envio' => 'decimal:2',
+        'comision_pct' => 'decimal:2',
+        'comision_monto' => 'decimal:2',
+        'neto_depositar' => 'decimal:2',
         'mesa' => 'integer',
         'tiempo_estimado_entrega' => 'integer',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
-        'lista_at' => 'datetime'
+        'lista_at' => 'datetime',
+        'programado_para' => 'datetime'
     ];
 
     protected $attributes = [

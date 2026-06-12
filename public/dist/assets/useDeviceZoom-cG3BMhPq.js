@@ -1,0 +1,1 @@
+import{a as t,P as i,r}from"./vendor-BjxK0L_c.js";function u(){const e=r(1);function n(){const o=window.innerWidth;o>=768&&o<=1366?e.value=1.2:e.value=1}return t(()=>{n(),window.addEventListener("resize",n)}),i(()=>{window.removeEventListener("resize",n)}),{zoom:e}}export{u};

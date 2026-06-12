@@ -31,6 +31,7 @@ use App\Http\Controllers\Api\NominaDetalleController;
 use App\Http\Controllers\Api\PaqueteController;
 use App\Http\Controllers\Api\ChatbotController;
 use App\Http\Controllers\Api\PlataformaController;
+use App\Http\Controllers\Api\EstacionController;
 
 /*
 |--------------------------------------------------------------------------
@@ -338,6 +339,15 @@ Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('
         Route::get('/{detalle}',    [OrdenDetalleController::class, 'show'])->middleware('permission:VER_ORDENES');
         Route::put('/{detalle}',    [OrdenDetalleController::class, 'update'])->middleware('permission:EDITAR_ORDENES');
         Route::delete('/{detalle}', [OrdenDetalleController::class, 'destroy'])->middleware('permission:ELIMINAR_ORDENES,EDITAR_ORDENES');
+    });
+
+    // ========== ESTACIONES ==========
+    Route::prefix('estaciones')->group(function () {
+        Route::get('/',          [EstacionController::class, 'index'])->middleware('permission:VER_PRODUCTOS');
+        Route::post('/',         [EstacionController::class, 'store'])->middleware('permission:EDITAR_PRODUCTOS');
+        Route::get('/{id}',      [EstacionController::class, 'show'])->middleware('permission:VER_PRODUCTOS');
+        Route::put('/{id}',      [EstacionController::class, 'update'])->middleware('permission:EDITAR_PRODUCTOS');
+        Route::delete('/{id}',   [EstacionController::class, 'destroy'])->middleware('permission:EDITAR_PRODUCTOS');
     });
 
     // ========== CLIENTES ==========
