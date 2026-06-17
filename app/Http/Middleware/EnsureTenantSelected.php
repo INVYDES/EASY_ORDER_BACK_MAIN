@@ -40,6 +40,7 @@ class EnsureTenantSelected
             
             if ($primerId) {
                 $user->update(['restaurante_activo' => $primerId]);
+                $user->restaurante_activo = $primerId;
                 // Invalidar caché de búsqueda inicial para forzar recarga en siguiente petición
                 Cache::forget("user_first_res_{$user->id}");
             } elseif (!$user->hasRole('CLIENTE')) {

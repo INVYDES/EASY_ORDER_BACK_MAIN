@@ -1,0 +1,1 @@
+import{r as u}from"./vendor-BjxK0L_c.js";const s=u([]);function c(){const i=(t,o="info",e=4e3)=>{const a=Date.now();s.value.push({id:a,message:t,type:o}),setTimeout(()=>n(a),e)},n=t=>{const o=s.value.findIndex(e=>e.id===t);o!==-1&&s.value.splice(o,1)};return{toasts:s,showToast:i,removeToast:n}}export{c as u};

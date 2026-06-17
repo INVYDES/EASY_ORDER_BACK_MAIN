@@ -670,9 +670,11 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 $dias = (int) $datetime1->diff($datetime2)->format('%a') + 1;
                 if ($dias < 1) $dias = 1;
 
-                $totalNominaMensual = DB::table('users')
-                    ->where('users.restaurante_id', $restauranteActivo->id)
+                $totalNominaMensual = DB::table('restaurante_user')
+                    ->join('users', 'restaurante_user.user_id', '=', 'users.id')
+                    ->where('restaurante_user.restaurante_id', $restauranteActivo->id)
                     ->where('users.activo', '!=', 0)
+                    ->whereNull('users.deleted_at')
                     ->whereNotExists(function($q) {
                         $q->select(DB::raw(1))
                           ->from('role_user')

@@ -1,0 +1,1 @@
+.animate-spin[data-v-260d26ac]{animation:spin-260d26ac .8s linear infinite}@keyframes spin-260d26ac{to{transform:rotate(360deg)}}.animate-slide-up[data-v-260d26ac]{animation:slideUp-260d26ac .25s cubic-bezier(.16,1,.3,1)}@keyframes slideUp-260d26ac{0%{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
