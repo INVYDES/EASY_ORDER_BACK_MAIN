@@ -32,6 +32,7 @@ use App\Http\Controllers\Api\PaqueteController;
 use App\Http\Controllers\Api\ChatbotController;
 use App\Http\Controllers\Api\PlataformaController;
 use App\Http\Controllers\Api\EstacionController;
+use App\Http\Controllers\Api\InsumosPreparadosController;
 
 /*
 |--------------------------------------------------------------------------
@@ -279,6 +280,16 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::post('/{id}/ajustar-stock',         [IngredienteController::class, 'ajustarStock'])->middleware('permission:EDITAR_PRODUCTOS');
         Route::put('/{id}',                        [IngredienteController::class, 'update'])->middleware('permission:EDITAR_PRODUCTOS');
         Route::delete('/{id}',                     [IngredienteController::class, 'destroy'])->middleware('permission:ELIMINAR_PRODUCTOS');
+    });
+
+    // ========== INSUMOS PREPARADOS ==========
+    Route::prefix('insumos-preparados')->group(function () {
+        Route::get('/',                                [InsumosPreparadosController::class, 'index'])->middleware('permission:VER_PRODUCTOS');
+        Route::post('/',                               [InsumosPreparadosController::class, 'store'])->middleware('permission:CREAR_PRODUCTOS');
+        Route::get('/{id}',                            [InsumosPreparadosController::class, 'show'])->middleware('permission:VER_PRODUCTOS');
+        Route::put('/{id}',                            [InsumosPreparadosController::class, 'update'])->middleware('permission:EDITAR_PRODUCTOS');
+        Route::delete('/{id}',                         [InsumosPreparadosController::class, 'destroy'])->middleware('permission:ELIMINAR_PRODUCTOS');
+        Route::post('/{id}/ajustar-stock',             [InsumosPreparadosController::class, 'ajustarStock'])->middleware('permission:EDITAR_PRODUCTOS');
     });
 
     // ========== CATEGORÍAS ==========
