@@ -20,17 +20,23 @@ class Producto extends Model
         'nombre',
         'descripcion',
         'precio',
+        'precio_pequeno',
+        'precio_mediano',
+        'precio_grande',
         'costo',
         'stock',
         'stock_minimo',
         'minutos_produccion',
         'nomina_diaria',
         'activo',
-        'imagen'  // 👈 CAMPO PARA LA IMAGEN
+        'imagen'
     ];
 
     protected $casts = [
         'precio' => 'decimal:2',
+        'precio_pequeno' => 'decimal:2',
+        'precio_mediano' => 'decimal:2',
+        'precio_grande' => 'decimal:2',
         'costo' => 'decimal:2',
         'activo' => 'boolean',
         'stock' => 'decimal:2',
@@ -162,6 +168,14 @@ public function ingredienteMovimientos()
     public function getPrecioFormateadoAttribute(): string
     {
         return '$' . number_format($this->precio, 2);
+    }
+
+    /**
+     * Alias: devuelve precio_pequeno como precio por defecto
+     */
+    public function getPrecioAttribute($value): ?float
+    {
+        return $value ?? $this->precio_pequeno;
     }
 
     /**

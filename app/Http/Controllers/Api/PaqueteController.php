@@ -279,7 +279,7 @@ class PaqueteController extends Controller
             ->sum('salario_base');
     }
 
-    private function calcularCostosProducto($producto, $totalNominaMensual)
+    private function calcularCostosProducto($producto, $totalNominaMensual, $precioBase = null)
     {
         $costoInsumos = $producto->ingredientes->reduce(function($carry, $ing) {
             $cant = $ing->pivot->cantidad ?? 0;
@@ -295,8 +295,9 @@ class PaqueteController extends Controller
         $costoIndirectos = $costoBase * 0.05;
         $costoTotal = $costoBase + $costoIndirectos;
 
-        $margenValor = $producto->precio - $costoTotal;
-        $margenPct = $producto->precio > 0 ? round(($margenValor / $producto->precio) * 100, 2) : 0;
+        $precioBase = $precioBase ?? ($producto->precio_pequeno ?? $producto->precio);
+        $margenValor = $precioBase - $costoTotal;
+        $margenPct = $precioBase > 0 ? round(($margenValor / $precioBase) * 100, 2) : 0;
 
         return compact('costoInsumos', 'costoMO', 'costoIndirectos', 'costoTotal', 'margenValor', 'margenPct');
     }

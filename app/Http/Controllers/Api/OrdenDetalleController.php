@@ -42,19 +42,27 @@ class OrdenDetalleController extends Controller
             $detallesData = $detalles->map(fn($detalle) => [
                 'id'      => $detalle->id,
                 'producto' => $detalle->producto ? [
-                    'id'           => $detalle->producto->id,
-                    'nombre'       => $detalle->producto->nombre,
-                    'descripcion'  => $detalle->producto->descripcion,
-                    'activo'       => $detalle->producto->activo,
-                    'categoria_id' => $detalle->producto->categoria_id,
-                    'categoria'    => $detalle->producto->categoria?->nombre,
+                    'id'             => $detalle->producto->id,
+                    'nombre'         => $detalle->producto->nombre,
+                    'descripcion'    => $detalle->producto->descripcion,
+                    'activo'         => $detalle->producto->activo,
+                    'precio'         => (float) ($detalle->producto->precio_pequeno ?? $detalle->producto->precio),
+                    'precio_pequeno' => (float) ($detalle->producto->precio_pequeno ?? $detalle->producto->precio),
+                    'precio_mediano' => (float) ($detalle->producto->precio_mediano ?? $detalle->producto->precio),
+                    'precio_grande'  => (float) ($detalle->producto->precio_grande ?? $detalle->producto->precio),
+                    'categoria_id'   => $detalle->producto->categoria_id,
+                    'categoria'      => $detalle->producto->categoria?->nombre,
                 ] : [
-                    'id'           => null,
-                    'nombre'       => 'Producto eliminado',
-                    'descripcion'  => null,
-                    'activo'       => false,
-                    'categoria_id' => null,
-                    'categoria'    => null,
+                    'id'             => null,
+                    'nombre'         => 'Producto eliminado',
+                    'descripcion'    => null,
+                    'activo'         => false,
+                    'precio'         => null,
+                    'precio_pequeno' => null,
+                    'precio_mediano' => null,
+                    'precio_grande'  => null,
+                    'categoria_id'   => null,
+                    'categoria'      => null,
                 ],
                 'cantidad'            => $detalle->cantidad,
                 'mesa'                => $orden->mesa,
@@ -163,7 +171,7 @@ class OrdenDetalleController extends Controller
 
                 // Actualizar cantidad existente
                 $nuevaCantidad = $detalleExistente->cantidad + $request->cantidad;
-                $nuevoSubtotal = $producto->precio * $nuevaCantidad;
+                $nuevoSubtotal = $detalleExistente->precio_unitario * $nuevaCantidad;
 
                 $orden->total -= $detalleExistente->subtotal;
 
@@ -182,7 +190,9 @@ class OrdenDetalleController extends Controller
 
             } else {
                 // Producto nuevo en la orden — Verificar stock sin descontar todavía
-                $subtotal = $producto->precio * $request->cantidad;
+                $tamano = $request->tamano ?? 'pequeno';
+                $precioUnitario = $producto->{'precio_' . $tamano} ?? $producto->precio_pequeno ?? $producto->precio;
+                $subtotal = $precioUnitario * $request->cantidad;
 
                 if ($producto->ingredientes->isNotEmpty()) {
                     foreach ($producto->ingredientes as $ingrediente) {
@@ -209,7 +219,7 @@ class OrdenDetalleController extends Controller
                     'orden_id'           => $orden->id,
                     'producto_id'        => $producto->id,
                     'cantidad'           => $request->cantidad,
-                    'precio_unitario'    => $producto->precio,
+                    'precio_unitario'    => $precioUnitario,
                     'subtotal'           => $subtotal,
                     'nom_comensal'       => $request->comensal ?? $request->nom_comensal,
                     'comensal_id'        => $request->comensal_id,
@@ -491,12 +501,15 @@ class OrdenDetalleController extends Controller
                 'data'    => [
                     'id'      => $detalle->id,
                     'producto'=> $detalle->producto ? [
-                        'id'           => $detalle->producto->id,
-                        'nombre'       => $detalle->producto->nombre,
-                        'descripcion'  => $detalle->producto->descripcion,
-                        'precio'       => (float) $detalle->producto->precio,
-                        'categoria_id' => $detalle->producto->categoria_id,
-                        'categoria'    => $detalle->producto->categoria?->nombre ?? null,
+                        'id'             => $detalle->producto->id,
+                        'nombre'         => $detalle->producto->nombre,
+                        'descripcion'    => $detalle->producto->descripcion,
+                        'precio'         => (float) ($detalle->producto->precio_pequeno ?? $detalle->producto->precio),
+                        'precio_pequeno' => (float) ($detalle->producto->precio_pequeno ?? $detalle->producto->precio),
+                        'precio_mediano' => (float) ($detalle->producto->precio_mediano ?? $detalle->producto->precio),
+                        'precio_grande'  => (float) ($detalle->producto->precio_grande ?? $detalle->producto->precio),
+                        'categoria_id'   => $detalle->producto->categoria_id,
+                        'categoria'      => $detalle->producto->categoria?->nombre ?? null,
                     ] : null,
                     'mesa'                => $orden->mesa,
                     'comensal'            => $detalle->nom_comensal,

@@ -56,12 +56,30 @@ class OfertaController extends Controller
             // Enriquecer productos con precio de oferta
             foreach ($ofertas as $oferta) {
                 foreach ($oferta->productos as $producto) {
+                    $precioBase = $producto->precio_pequeno ?? $producto->precio;
                     if ($oferta->tipo === 'descuento' && $oferta->descuento_porcentaje) {
-                        $producto->precio_oferta = $producto->precio * (1 - $oferta->descuento_porcentaje / 100);
+                        $producto->precio_oferta = $precioBase * (1 - $oferta->descuento_porcentaje / 100);
+                        $producto->precio_oferta_pequeno = $producto->precio_oferta;
+                        $producto->precio_oferta_mediano = $producto->precio_mediano
+                            ? $producto->precio_mediano * (1 - $oferta->descuento_porcentaje / 100)
+                            : null;
+                        $producto->precio_oferta_grande = $producto->precio_grande
+                            ? $producto->precio_grande * (1 - $oferta->descuento_porcentaje / 100)
+                            : null;
                     } elseif ($oferta->tipo === 'precio_especial' && $oferta->precio_especial) {
                         $producto->precio_oferta = $oferta->precio_especial;
+                        $producto->precio_oferta_pequeno = $oferta->precio_especial;
+                        $producto->precio_oferta_mediano = $producto->precio_mediano
+                            ? min($oferta->precio_especial, $producto->precio_mediano)
+                            : $oferta->precio_especial;
+                        $producto->precio_oferta_grande = $producto->precio_grande
+                            ? min($oferta->precio_especial, $producto->precio_grande)
+                            : $oferta->precio_especial;
                     } else {
-                        $producto->precio_oferta = $producto->precio;
+                        $producto->precio_oferta = $precioBase;
+                        $producto->precio_oferta_pequeno = $precioBase;
+                        $producto->precio_oferta_mediano = $producto->precio_mediano ?? $precioBase;
+                        $producto->precio_oferta_grande = $producto->precio_grande ?? $precioBase;
                     }
                     $producto->oferta_tipo = $oferta->tipo;
                     $producto->oferta_titulo = $oferta->titulo;

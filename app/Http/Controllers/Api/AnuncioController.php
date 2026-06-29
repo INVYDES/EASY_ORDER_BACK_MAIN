@@ -20,7 +20,7 @@ class AnuncioController extends Controller
                  return response()->json(['success'=>true,'data'=>[]]);
             }
 
-            $anuncios = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
+            $anuncios = Anuncio::with(['producto:id,nombre,precio,precio_pequeno,precio_mediano,precio_grande,imagen', 'paquete:id,nombre,precio,imagen'])
                 ->where('restaurante_id', $restaurante->id)
                 ->orderBy('orden')->orderByDesc('created_at')
                 ->get();
@@ -46,7 +46,7 @@ class AnuncioController extends Controller
 
             $tipo        = $request->get('tipo', 'cliente'); // cliente | interno
 
-            $query = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
+            $query = Anuncio::with(['producto:id,nombre,precio,precio_pequeno,precio_mediano,precio_grande,imagen', 'paquete:id,nombre,precio,imagen'])
                 ->where('restaurante_id', $restaurante->id)
                 ->vigentes();
 
@@ -187,10 +187,13 @@ class AnuncioController extends Controller
             'producto_id'     => $a->producto_id,
             'paquete_id'      => $a->paquete_id,
             'producto'        => $a->producto ? [
-                'id'       => $a->producto->id,
-                'nombre'   => $a->producto->nombre,
-                'precio'   => (float) $a->producto->precio,
-                'imagen'   => $a->producto->imagen,
+                'id'             => $a->producto->id,
+                'nombre'         => $a->producto->nombre,
+                'precio'         => (float) ($a->producto->precio_pequeno ?? $a->producto->precio),
+                'precio_pequeno' => (float) ($a->producto->precio_pequeno ?? $a->producto->precio),
+                'precio_mediano' => (float) ($a->producto->precio_mediano ?? $a->producto->precio),
+                'precio_grande'  => (float) ($a->producto->precio_grande ?? $a->producto->precio),
+                'imagen'         => $a->producto->imagen,
             ] : null,
             'paquete'         => $a->paquete ? [
                 'id'       => $a->paquete->id,
@@ -233,7 +236,7 @@ class AnuncioController extends Controller
         $mostrarCliente = $request->boolean('mostrar_cliente', false);
         $mostrarInterno = $request->boolean('mostrar_interno', false);
 
-        $query = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
+        $query = Anuncio::with(['producto:id,nombre,precio,precio_pequeno,precio_mediano,precio_grande,imagen', 'paquete:id,nombre,precio,imagen'])
             ->where('activo', true);
 
         if ($restauranteId) {
@@ -272,7 +275,7 @@ class AnuncioController extends Controller
             }
 
             $tipo  = $request->get('tipo', 'cliente');
-            $query = Anuncio::with(['producto:id,nombre,precio,imagen', 'paquete:id,nombre,precio,imagen'])
+            $query = Anuncio::with(['producto:id,nombre,precio,precio_pequeno,precio_mediano,precio_grande,imagen', 'paquete:id,nombre,precio,imagen'])
                 ->where('restaurante_id', $restauranteId)
                 ->vigentes();
 

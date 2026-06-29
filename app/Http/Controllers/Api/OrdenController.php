@@ -270,6 +270,7 @@ class OrdenController extends Controller
             'productos.*.producto_id' => 'required_without:productos.*.paquete_id|nullable|exists:productos,id',
             'productos.*.paquete_id'  => 'required_without:productos.*.producto_id|nullable|exists:paquetes,id',
             'productos.*.cantidad'    => 'required|numeric|min:0.1|max:100',
+            'productos.*.tamano'      => 'nullable|in:pequeno,mediano,grande',
             'productos.*.notas'       => 'nullable|string|max:300',
             'productos.*.comensal'    => 'nullable|string|max:100',
             'productos.*.comensal_id' => 'nullable|integer',
@@ -376,6 +377,8 @@ class OrdenController extends Controller
                     continue;
                 }
 
+                $tamano = $item['tamano'] ?? 'pequeno';
+
                 if ($producto->ingredientes->isEmpty()) {
                     if ($producto->stock < $item['cantidad']) {
                         $erroresStock[] = "Stock insuficiente para '{$producto->nombre}'. Disponible: {$producto->stock}";
@@ -386,7 +389,8 @@ class OrdenController extends Controller
                             'notas'        => $item['notas'] ?? null,
                             'nom_comensal' => $item['comensal'] ?? $item['nom_comensal'] ?? null,
                             'comensal_id'  => $item['comensal_id'] ?? null,
-                            'precio'       => $producto->precio,
+                            'tamano'       => $tamano,
+                            'precio'       => $producto->{'precio_' . $tamano} ?? $producto->precio,
                         ];
                     }
                     continue;
@@ -406,7 +410,8 @@ class OrdenController extends Controller
                         'notas'        => $item['notas'] ?? null,
                         'nom_comensal' => $item['comensal'] ?? $item['nom_comensal'] ?? null,
                         'comensal_id'  => $item['comensal_id'] ?? null,
-                        'precio'       => $producto->precio,
+                        'tamano'       => $tamano,
+                        'precio'       => $producto->{'precio_' . $tamano} ?? $producto->precio,
                     ];
                 }
             }
@@ -489,6 +494,7 @@ class OrdenController extends Controller
                     'categoria_id'        => $productoModel->categoria_id,
                     'categoria'           => $productoModel->categoria?->nombre,
                     'cantidad'            => $item['cantidad'],
+                    'tamano'              => $item['tamano'] ?? 'pequeno',
                     'precio_unitario'     => (float) $detalle->precio_unitario,
                     'subtotal'            => (float) $subtotal,
                     'subtotal_formateado' => '$' . number_format($subtotal, 2),

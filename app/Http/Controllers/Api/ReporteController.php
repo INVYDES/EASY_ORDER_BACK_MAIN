@@ -150,17 +150,17 @@ class ReporteController extends Controller
                 ->select(
                     'productos.id',
                     'productos.nombre',
-                    'productos.precio',
+                    DB::raw('COALESCE(productos.precio_pequeno, productos.precio) as precio'),
                     'productos.costo',
                     DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
                     DB::raw('ROUND(SUM(orden_detalles.cantidad), 2) as total_vendido'),
                     DB::raw('SUM(orden_detalles.subtotal) as total_ventas'),
                     DB::raw('COUNT(DISTINCT ordenes.id) as veces_vendido'),
                     DB::raw('ROUND(AVG(orden_detalles.precio_unitario), 2) as precio_promedio'),
-                    DB::raw('ROUND(productos.precio - COALESCE(productos.costo, 0), 2) as margen'),
+                    DB::raw('ROUND(COALESCE(productos.precio_pequeno, productos.precio) - COALESCE(productos.costo, 0), 2) as margen'),
                     DB::raw('CAST(SUM(orden_detalles.cantidad) AS UNSIGNED) as ventas')
                 )
-                ->groupBy('productos.id', 'productos.nombre', 'productos.precio', 'productos.costo', 'categorias.nombre')
+                ->groupBy('productos.id', 'productos.nombre', 'productos.precio_pequeno', 'productos.precio', 'productos.costo', 'categorias.nombre')
                 ->orderByDesc('total_vendido')
                 ->limit($limite)
                 ->get();
@@ -359,11 +359,11 @@ public function recomendacionPaquete(Request $request): JsonResponse
             'productos.id',
             'productos.nombre',
             DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
-            'productos.precio',
+            DB::raw('COALESCE(productos.precio_pequeno, productos.precio) as precio'),
             'productos.costo',
-            DB::raw('ROUND(productos.precio - COALESCE(productos.costo, 0), 2) as utilidad_unitaria'),
+            DB::raw('ROUND(COALESCE(productos.precio_pequeno, productos.precio) - COALESCE(productos.costo, 0), 2) as utilidad_unitaria'),
             DB::raw('ROUND(
-                ((productos.precio - COALESCE(productos.costo, 0)) / NULLIF(productos.precio, 0)) * 100
+                ((COALESCE(productos.precio_pequeno, productos.precio) - COALESCE(productos.costo, 0)) / NULLIF(COALESCE(productos.precio_pequeno, productos.precio), 0)) * 100
             , 2) as margen_pct'),
             DB::raw('SUM(orden_detalles.cantidad) as total_vendido'),
             DB::raw('SUM(orden_detalles.subtotal) as total_ventas'),
@@ -373,6 +373,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             'productos.id',
             'productos.nombre',
             'categorias.nombre',
+            'productos.precio_pequeno',
             'productos.precio',
             'productos.costo',
         ];
@@ -383,7 +384,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasCocina)
             ->whereNotIn('productos.id', $top10Ids)
             ->groupBy($groupByBase)
-            ->orderByDesc(DB::raw('productos.precio - COALESCE(productos.costo, 0)'))
+            ->orderByDesc(DB::raw('COALESCE(productos.precio_pequeno, productos.precio) - COALESCE(productos.costo, 0)'))
             ->first();
 
         // Bebida: más vendida (sin cambio, ya era correcto)
@@ -400,7 +401,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
             ->whereIn(DB::raw('LOWER(COALESCE(categorias.nombre, ""))'), $categoriasPostre)
             ->groupBy($groupByBase)
             ->having('total_vendido', '>', 0)
-            ->orderByDesc(DB::raw('productos.precio - COALESCE(productos.costo, 0)'))
+            ->orderByDesc(DB::raw('COALESCE(productos.precio_pequeno, productos.precio) - COALESCE(productos.costo, 0)'))
             ->orderBy('total_vendido')
             ->first();
 
@@ -1287,17 +1288,17 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 'productos.id',
                 'productos.nombre',
                 DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
-                'productos.precio',
+                DB::raw('COALESCE(productos.precio_pequeno, productos.precio) as precio'),
                 'productos.costo',
                 'productos.minutos_produccion',
-                DB::raw('ROUND(productos.precio - COALESCE(productos.costo, 0), 2) as utilidad_unitaria'),
+                DB::raw('ROUND(COALESCE(productos.precio_pequeno, productos.precio) - COALESCE(productos.costo, 0), 2) as utilidad_unitaria'),
                 DB::raw('ROUND(
-                    ((productos.precio - COALESCE(productos.costo, 0)) / NULLIF(productos.precio, 0)) * 100
+                    ((COALESCE(productos.precio_pequeno, productos.precio) - COALESCE(productos.costo, 0)) / NULLIF(COALESCE(productos.precio_pequeno, productos.precio), 0)) * 100
                 , 2) as margen_pct'),
                 DB::raw('ROUND(COALESCE(ventas_periodo.total_vendido, 0), 2) as total_vendido'),
                 DB::raw('COALESCE(ventas_periodo.total_ventas, 0) as total_ventas'),
                 DB::raw('ROUND(
-                    COALESCE(ventas_periodo.total_vendido, 0) * (productos.precio - COALESCE(productos.costo, 0))
+                    COALESCE(ventas_periodo.total_vendido, 0) * (COALESCE(productos.precio_pequeno, productos.precio) - COALESCE(productos.costo, 0))
                 , 2) as utilidad_total_generada')
             )
             ->orderByDesc('margen_pct')
@@ -1459,11 +1460,11 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                     ->select(
                         'productos.id',
                         'productos.nombre',
-                        'productos.precio',
+                        DB::raw('COALESCE(productos.precio_pequeno, productos.precio) as precio'),
                         DB::raw('SUM(orden_detalles.cantidad) as total_vendido'),
                         DB::raw('SUM(orden_detalles.subtotal) as total_ingresos')
                     )
-                    ->groupBy('productos.id', 'productos.nombre', 'productos.precio')
+                    ->groupBy('productos.id', 'productos.nombre', 'productos.precio_pequeno', 'productos.precio')
                     ->orderByDesc('total_vendido')
                     ->get();
 
@@ -1660,14 +1661,14 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                     'productos.id',
                     'productos.nombre',
                     DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
-                    'productos.precio',
+                    DB::raw('COALESCE(productos.precio_pequeno, productos.precio) as precio'),
                     'productos.costo',
                     DB::raw('SUM(orden_detalles.cantidad) as unidades_vendidas'),
                     DB::raw('SUM(orden_detalles.subtotal) as ingreso_total'),
                     DB::raw('SUM(orden_detalles.subtotal) - SUM(orden_detalles.cantidad * COALESCE(productos.costo, 0)) as utilidad_producto'),
                     DB::raw('ROUND(((SUM(orden_detalles.subtotal) - SUM(orden_detalles.cantidad * COALESCE(productos.costo, 0))) / NULLIF(SUM(orden_detalles.cantidad * COALESCE(productos.costo, 0)), 0)) * 100, 2) as roi_producto')
                 )
-                ->groupBy('productos.id', 'productos.nombre', 'categorias.nombre', 'productos.precio', 'productos.costo')
+                ->groupBy('productos.id', 'productos.nombre', 'categorias.nombre', 'productos.precio_pequeno', 'productos.precio', 'productos.costo')
                 ->orderByDesc('ingreso_total')
                 ->limit(10)
                 ->get();

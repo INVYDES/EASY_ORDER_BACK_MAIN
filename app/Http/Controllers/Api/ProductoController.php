@@ -149,8 +149,11 @@ class ProductoController extends Controller
                     'imagen' => $producto->imagen,
                     'imagen_url' => $producto->imagen_url,
                     
-                    'precio' => (float) $producto->precio,
-                    'precio_formateado' => '$' . number_format($producto->precio, 2),
+                    'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
+                    'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                    'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                     'costo_insumos' => round($c['costoInsumos'], 4),
                     'costo_mo' => round($c['costoMO'], 4),
                     'costo_indirectos' => round($c['costoIndirectos'], 4),
@@ -377,10 +380,13 @@ class ProductoController extends Controller
 
             $data = [
                 'restaurante_id' => $restauranteActivo->id,
-                'categoria_id' => $categoriaId,          // ← siempre tendrá valor
+                'categoria_id' => $categoriaId,
                 'nombre' => $request->nombre,
                 'descripcion' => $request->descripcion,
-                'precio' => $request->precio,
+                'precio' => $request->precio ?? $request->precio_pequeno,
+                'precio_pequeno' => $request->precio_pequeno ?? $request->precio,
+                'precio_mediano' => $request->precio_mediano,
+                'precio_grande' => $request->precio_grande,
                 'stock' => $request->stock ?? 0,
                 'stock_minimo' => $request->stock_minimo ?? 5,
                 'minutos_produccion' => $request->minutos_produccion ?? 0,
@@ -433,7 +439,7 @@ class ProductoController extends Controller
                     'CREAR_PRODUCTO',
                     'productos',
                     $producto->id,
-                    "Producto creado: {$producto->nombre} - Precio: \${$producto->precio} - Stock: {$producto->stock}"
+                    "Producto creado: {$producto->nombre} - Precio pequeno: \${$producto->precio_pequeno} - Mediano: \${$producto->precio_mediano} - Grande: \${$producto->precio_grande} - Stock: {$producto->stock}"
                 );
             }
 
@@ -805,7 +811,7 @@ class ProductoController extends Controller
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('activo', true)
                 ->orderBy('nombre')
-                ->get(['id', 'nombre', 'precio', 'stock', 'stock_minimo', 'categoria_id']);
+                ->get(['id', 'nombre', 'precio', 'precio_pequeno', 'precio_mediano', 'precio_grande', 'stock', 'stock_minimo', 'categoria_id']);
 
             return response()->json([
                 'success' => true,
@@ -825,7 +831,10 @@ class ProductoController extends Controller
                     return [
                         'value' => $producto->id,
                         'label' => $label,
-                        'precio' => (float) $producto->precio,
+                        'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                        'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                         'stock' => (int) $producto->stock,
                         'agotado' => $producto->stock <= 0,
                         'categoria_id' => $producto->categoria_id,
@@ -878,8 +887,11 @@ class ProductoController extends Controller
                         'stock' => (int) $producto->stock,
                         'stock_minimo' => (int) $producto->stock_minimo,
                         'diferencia' => $producto->stock_minimo - $producto->stock,
-                        'precio' => (float) $producto->precio,
-                        'precio_formateado' => '$' . number_format($producto->precio, 2),
+                        'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
+                        'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                        'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                         'imagen_url' => $producto->imagen_url
                     ];
                 })
@@ -1039,7 +1051,11 @@ class ProductoController extends Controller
                         'id'              => $producto->id,
                         'nombre'          => $producto->nombre,
                         'descripcion'     => $producto->descripcion,
-                        'precio'          => (float) $producto->precio,
+                        'precio'          => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio_pequeno'  => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio_mediano'  => (float) ($producto->precio_mediano ?? $producto->precio),
+                        'precio_grande'   => (float) ($producto->precio_grande ?? $producto->precio),
+                        'tamanos_disponibles' => ['pequeno', 'mediano', 'grande'],
                         'imagen_url'      => $producto->imagen_url,
                         'categoria'       => $producto->categoria ? [
                             'id'     => $producto->categoria->id,
@@ -1074,7 +1090,11 @@ class ProductoController extends Controller
                     'id'              => $producto->id,
                     'nombre'          => $producto->nombre,
                     'descripcion'     => $producto->descripcion,
-                    'precio'          => (float) $producto->precio,
+                    'precio'          => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio_pequeno'  => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio_mediano'  => (float) ($producto->precio_mediano ?? $producto->precio),
+                    'precio_grande'   => (float) ($producto->precio_grande ?? $producto->precio),
+                    'tamanos_disponibles' => ['pequeno', 'mediano', 'grande'],
                     'imagen_url'      => $producto->imagen_url,
                     'categoria'       => $producto->categoria ? [
                         'id'     => $producto->categoria->id,
@@ -1312,8 +1332,11 @@ class ProductoController extends Controller
                     'id' => $producto->id,
                     'nombre' => $producto->nombre,
                     'descripcion' => $producto->descripcion,
-                    'precio' => (float) $producto->precio,
-                    'precio_formateado' => '$' . number_format($producto->precio, 2),
+                    'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
+                    'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                    'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                     'imagen_url' => $producto->imagen_url,
                     'categoria' => $producto->categoria ? [
                         'id' => $producto->categoria->id,
@@ -1374,7 +1397,7 @@ class ProductoController extends Controller
                 ->where('fecha_fin', '>=', now())
                 ->get();
 
-            $precioOriginal = (float) $producto->precio;
+            $precioOriginal = (float) ($producto->precio_pequeno ?? $producto->precio);
             $precioFinal = $precioOriginal;
             $descuentoAplicado = null;
 
@@ -1398,6 +1421,9 @@ class ProductoController extends Controller
                     'precio_original_formateado' => '$' . number_format($precioOriginal, 2),
                     'precio_final' => $precioFinal,
                     'precio_final_formateado' => '$' . number_format($precioFinal, 2),
+                    'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                    'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                     'descuento' => $descuentoAplicado,
                     'imagen_url' => $producto->imagen_url,
                     'categoria' => $producto->categoria ? [
@@ -1454,8 +1480,11 @@ class ProductoController extends Controller
                         return [
                             'id' => $producto->id,
                             'nombre' => $producto->nombre,
-                            'precio' => (float) $producto->precio,
-                            'precio_formateado' => '$' . number_format($producto->precio, 2),
+                            'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                            'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
+                            'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                            'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                            'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                             'imagen_url' => $producto->imagen_url,
                             'disponible' => $this->checkDisponibilidadPublica($producto)
                         ];
@@ -1509,8 +1538,12 @@ class ProductoController extends Controller
                         'id' => $producto->id,
                         'nombre' => $producto->nombre,
                         'descripcion' => $producto->descripcion,
-                        'precio' => (float) $producto->precio,
-                        'precio_formateado' => '$' . number_format($producto->precio, 2),
+                        'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
+                        'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                        'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+                        'tamanos_disponibles' => ['pequeno', 'mediano', 'grande'],
                         'imagen_url' => $producto->imagen_url,
                         'categoria' => $producto->categoria ? [
                             'id' => $producto->categoria->id,
@@ -1535,8 +1568,12 @@ class ProductoController extends Controller
                     'id' => $producto->id,
                     'nombre' => $producto->nombre,
                     'descripcion' => $producto->descripcion,
-                    'precio' => (float) $producto->precio,
-                    'precio_formateado' => '$' . number_format($producto->precio, 2),
+                    'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
+                    'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                    'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+                    'tamanos_disponibles' => ['pequeno', 'mediano', 'grande'],
                     'imagen_url' => $producto->imagen_url,
                     'categoria' => $producto->categoria ? [
                         'id' => $producto->categoria->id,
@@ -1585,7 +1622,7 @@ class ProductoController extends Controller
     /**
      * Calcula costos y margen de un producto (insumos + MO + indirectos)
      */
-    private function calcularCostosProducto($producto, $totalNominaMensual)
+    private function calcularCostosProducto($producto, $totalNominaMensual, $precioBase = null)
     {
         $costoInsumos = $producto->ingredientes->reduce(function($carry, $ing) {
             $cant = $ing->pivot->cantidad ?? 0;
@@ -1601,8 +1638,9 @@ class ProductoController extends Controller
         $costoIndirectos = $costoBase * 0.05;
         $costoTotal = $costoBase + $costoIndirectos;
 
-        $margenValor = $producto->precio - $costoTotal;
-        $margenPct = $producto->precio > 0 ? round(($margenValor / $producto->precio) * 100, 2) : 0;
+        $precioBase = $precioBase ?? ($producto->precio_pequeno ?? $producto->precio);
+        $margenValor = $precioBase - $costoTotal;
+        $margenPct = $precioBase > 0 ? round(($margenValor / $precioBase) * 100, 2) : 0;
 
         return compact('costoInsumos', 'costoMO', 'costoIndirectos', 'costoTotal', 'margenValor', 'margenPct');
     }
@@ -1648,8 +1686,12 @@ class ProductoController extends Controller
             'imagen' => $producto->imagen,
             'imagen_url' => $producto->imagen_url,
 
-            'precio' => (float) $producto->precio,
-            'precio_formateado' => '$' . number_format($producto->precio, 2),
+            'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
+            'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
+            'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+            'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+            'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+            'tamanos_disponibles' => ['pequeno', 'mediano', 'grande'],
 
             'costo_insumos' => round($c['costoInsumos'], 4),
             'costo_mo' => round($c['costoMO'], 4),
