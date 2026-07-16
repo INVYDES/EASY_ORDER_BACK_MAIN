@@ -46,8 +46,7 @@ class OrdenDetalleController extends Controller
                     'nombre'         => $detalle->producto->nombre,
                     'descripcion'    => $detalle->producto->descripcion,
                     'activo'         => $detalle->producto->activo,
-                    'precio'         => (float) ($detalle->producto->precio_pequeno ?? $detalle->producto->precio),
-                    'precio_pequeno' => (float) ($detalle->producto->precio_pequeno ?? $detalle->producto->precio),
+                    'precio'         => (float) $detalle->producto->precio,
                     'precio_mediano' => (float) ($detalle->producto->precio_mediano ?? $detalle->producto->precio),
                     'precio_grande'  => (float) ($detalle->producto->precio_grande ?? $detalle->producto->precio),
                     'categoria_id'   => $detalle->producto->categoria_id,
@@ -58,7 +57,6 @@ class OrdenDetalleController extends Controller
                     'descripcion'    => null,
                     'activo'         => false,
                     'precio'         => null,
-                    'precio_pequeno' => null,
                     'precio_mediano' => null,
                     'precio_grande'  => null,
                     'categoria_id'   => null,
@@ -74,6 +72,7 @@ class OrdenDetalleController extends Controller
                 'subtotal_formateado' => '$' . number_format($detalle->subtotal, 2),
                 'created_at'          => $detalle->created_at,
                 'updated_at'          => $detalle->updated_at,
+                'tamano'              => $detalle->tamano,
             ]);
 
             return response()->json([
@@ -191,7 +190,7 @@ class OrdenDetalleController extends Controller
             } else {
                 // Producto nuevo en la orden — Verificar stock sin descontar todavía
                 $tamano = $request->tamano ?? 'pequeno';
-                $precioUnitario = $producto->{'precio_' . $tamano} ?? $producto->precio_pequeno ?? $producto->precio;
+                $precioUnitario = $producto->{'precio_' . $tamano} ?? $producto->precio;
                 $subtotal = $precioUnitario * $request->cantidad;
 
                 if ($producto->ingredientes->isNotEmpty()) {
@@ -504,8 +503,7 @@ class OrdenDetalleController extends Controller
                         'id'             => $detalle->producto->id,
                         'nombre'         => $detalle->producto->nombre,
                         'descripcion'    => $detalle->producto->descripcion,
-                        'precio'         => (float) ($detalle->producto->precio_pequeno ?? $detalle->producto->precio),
-                        'precio_pequeno' => (float) ($detalle->producto->precio_pequeno ?? $detalle->producto->precio),
+                        'precio'         => (float) $detalle->producto->precio,
                         'precio_mediano' => (float) ($detalle->producto->precio_mediano ?? $detalle->producto->precio),
                         'precio_grande'  => (float) ($detalle->producto->precio_grande ?? $detalle->producto->precio),
                         'categoria_id'   => $detalle->producto->categoria_id,
@@ -521,6 +519,7 @@ class OrdenDetalleController extends Controller
                     'subtotal_formateado' => '$' . number_format($detalle->subtotal, 2),
                     'created_at'          => $detalle->created_at,
                     'updated_at'          => $detalle->updated_at,
+                    'tamano'              => $detalle->tamano,
                 ],
             ]);
 

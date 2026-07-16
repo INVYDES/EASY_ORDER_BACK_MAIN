@@ -1,0 +1,45 @@
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - $_SERVICE_NAME
+      - --image=$_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA
+      - --region=$_DEPLOY_REGION
+      - --platform=managed
+      - --allow-unauthenticated
+      - --cpu=2
+      - --memory=1Gi
+      - --min-instances=0
+      - --max-instances=10
+      - --concurrency=80
+      - --timeout=300
+      - --set-cloudsql-instances=$PROJECT_ID:$_DEPLOY_REGION:$_SQL_INSTANCE
+      - --set-secrets=DB_HOST=mysql-host:latest,DB_DATABASE=mysql-database:latest,DB_USERNAME=mysql-username:latest,DB_PASSWORD=mysql-password:latest,APP_KEY=app-key:latest
+      - --update-env-vars=APP_ENV=production,APP_DEBUG=false,APP_NAME=EasyOrder,CACHE_STORE=database,QUEUE_CONNECTION=database,SESSION_DRIVER=database,LOG_CHANNEL=stderr,DB_CONNECTION=mysql
+
+substitutions:
+  _SERVICE_NAME: easy-order-api
+  _DEPLOY_REGION: us-central1
+  _AR_LOCATION: us-central1
+  _AR_REPOSITORY: cloud-run-source-deploy
+  _SQL_INSTANCE: easy-order-mysql
+
+images:
+  - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA

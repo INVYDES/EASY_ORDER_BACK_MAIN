@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\InsumoPreparado;
 use App\Models\InsumoPreparadoMovimiento;
+use App\Models\Producto;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class InsumosPreparadosController extends Controller
 {
@@ -166,9 +168,27 @@ class InsumosPreparadosController extends Controller
             $restaurante = app('restaurante_activo');
             $insumo = InsumoPreparado::where('restaurante_id', $restaurante->id)->findOrFail($id);
 
+            $stockAnterior = $insumo->stock_actual;
             $insumo->update($request->only([
                 'nombre', 'unidad', 'costo_unitario', 'stock_actual', 'stock_minimo', 'vida_util_dias', 'activo'
             ]));
+
+            // Si cambió el stock, recalcular productos que usan este insumo preparado
+            if ($insumo->stock_actual != $stockAnterior) {
+                $productoIds = DB::table('ingredientes_de_productos')
+                    ->where('ingrediente_id', $insumo->id)
+                    ->where('componente_type', 'insumo_preparado')
+                    ->pluck('producto_id')
+                    ->toArray();
+                foreach ($productoIds as $prodId) {
+                    try {
+                        $prod = Producto::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($prodId);
+                        if ($prod) $prod->recalcularStockDesdeIngredientes();
+                    } catch (\Exception $ex) {
+                        \Illuminate\Support\Facades\Log::error('Error recalculando producto ID ' . $prodId . ': ' . $ex->getMessage());
+                    }
+                }
+            }
 
             if ($request->has('receta')) {
                 $sync = [];
@@ -252,6 +272,22 @@ class InsumosPreparadosController extends Controller
                     $insumo->stock_actual = max(0, $insumo->stock_actual - abs($request->cantidad));
             }
             $insumo->save();
+
+            // Recalcular stock de todos los productos que usen este insumo preparado
+            $productoIds = DB::table('ingredientes_de_productos')
+                ->where('ingrediente_id', $insumo->id)
+                ->where('componente_type', 'insumo_preparado')
+                ->pluck('producto_id')
+                ->toArray();
+
+            foreach ($productoIds as $prodId) {
+                try {
+                    $prod = Producto::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($prodId);
+                    if ($prod) $prod->recalcularStockDesdeIngredientes();
+                } catch (\Exception $ex) {
+                    \Illuminate\Support\Facades\Log::error('Error recalculando producto ID ' . $prodId . ': ' . $ex->getMessage());
+                }
+            }
 
             InsumoPreparadoMovimiento::create([
                 'insumo_preparado_id' => $insumo->id,

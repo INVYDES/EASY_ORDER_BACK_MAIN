@@ -295,7 +295,7 @@ class PaqueteController extends Controller
         $costoIndirectos = $costoBase * 0.05;
         $costoTotal = $costoBase + $costoIndirectos;
 
-        $precioBase = $precioBase ?? ($producto->precio_pequeno ?? $producto->precio);
+        $precioBase = $precioBase ?? $producto->precio;
         $margenValor = $precioBase - $costoTotal;
         $margenPct = $precioBase > 0 ? round(($margenValor / $precioBase) * 100, 2) : 0;
 

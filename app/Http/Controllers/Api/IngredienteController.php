@@ -199,6 +199,7 @@ class IngredienteController extends Controller
             if ($ingrediente->stock_actual != $stockActualAnterior) {
                 $productoIds = DB::table('ingredientes_de_productos')
                     ->where('ingrediente_id', $ingrediente->id)
+                    ->where('componente_type', 'ingrediente')
                     ->pluck('producto_id')
                     ->toArray();
 
@@ -268,6 +269,7 @@ class IngredienteController extends Controller
             // Recalcular stock de todos los productos que usen este ingrediente
             $productoIds = DB::table('ingredientes_de_productos')
                 ->where('ingrediente_id', $ingrediente->id)
+                ->where('componente_type', 'ingrediente')
                 ->pluck('producto_id')
                 ->toArray();
 
@@ -357,14 +359,15 @@ class IngredienteController extends Controller
     }
 
     /**
-     * Asignar ingredientes a un producto
+     * Asignar componentes (ingredientes, insumos preparados o productos) a un producto
      */
     public function syncProducto(Request $request, $productoId)
     {
         $request->validate([
-            'ingredientes' => 'required|array',
-            'ingredientes.*.id' => 'required|exists:ingredientes,id',
+            'ingredientes' => 'present|array',
+            'ingredientes.*.id' => 'required|integer',
             'ingredientes.*.cantidad' => 'required|numeric|min:0.001',
+            'ingredientes.*.componente_type' => 'nullable|in:ingrediente,insumo_preparado',
         ]);
 
         try {
@@ -377,44 +380,71 @@ class IngredienteController extends Controller
                 ], 403);
             }
 
-            $sync = [];
-            foreach ($request->ingredientes as $item) {
-                $sync[$item['id']] = ['cantidad' => $item['cantidad']];
-            }
-            
             $producto = \App\Models\Producto::findOrFail($productoId);
-            
-            // Obtener ingredientes asociados antes del cambio
+
+            // Agrupar por tipo de componente
+            $porTipo = [
+                'ingrediente' => [],
+                'insumo_preparado' => [],
+            ];
+
+            foreach ($request->ingredientes as $item) {
+                $id = $item['id'];
+                $cantidad = $item['cantidad'];
+                $tamano = $item['tamano'] ?? 'pequeno';
+                $tipo = $item['componente_type'] ?? 'ingrediente';
+
+                if (!isset($porTipo[$tipo][$id])) {
+                    $porTipo[$tipo][$id] = [
+                        'cantidad' => 0,
+                        'cantidad_pequeno' => 0,
+                        'cantidad_mediano' => 0,
+                        'cantidad_grande' => 0,
+                        'componente_type' => $tipo,
+                    ];
+                }
+
+                if ($tamano === 'pequeno') {
+                    $porTipo[$tipo][$id]['cantidad_pequeno'] = $cantidad;
+                    $porTipo[$tipo][$id]['cantidad'] = $cantidad;
+                } elseif ($tamano === 'mediano') {
+                    $porTipo[$tipo][$id]['cantidad_mediano'] = $cantidad;
+                } elseif ($tamano === 'grande') {
+                    $porTipo[$tipo][$id]['cantidad_grande'] = $cantidad;
+                }
+            }
+
+            // IDs de ingredientes antes del cambio (para recalcular stock mínimo)
             $ingredientesAntesIds = $producto->ingredientes()->pluck('ingredientes.id')->toArray();
 
-            $producto->ingredientes()->sync($sync);
+            // Sincronizar cada tipo por separado
+            $producto->ingredientes()->sync($porTipo['ingrediente']);
+            $producto->insumosPreparados()->sync($porTipo['insumo_preparado']);
+
             $producto->recalcularStockDesdeIngredientes();
 
-            // Recalcular stock mínimo de todos los ingredientes afectados (antes y después)
-            $todosAfectadosIds = array_unique(array_merge($ingredientesAntesIds, array_keys($sync)));
-            
-            foreach ($todosAfectadosIds as $ingredienteId) {
+            // Recalcular stock mínimo de ingredientes afectados
+            $todosIds = array_unique(array_merge($ingredientesAntesIds, array_keys($porTipo['ingrediente'])));
+            foreach ($todosIds as $ingredienteId) {
                 $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
-                if ($ing) {
-                    $ing->recalcularStockMinimoDesdeProductos();
-                }
+                if ($ing) $ing->recalcularStockMinimoDesdeProductos();
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Ingredientes del producto actualizados'
+                'message' => 'Componentes del producto actualizados'
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error al asignar ingredientes',
+                'message' => 'Error al asignar componentes',
                 'error' => $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * Obtener ingredientes de un producto
+     * Obtener componentes (ingredientes, insumos preparados, productos) de un producto
      */
     public function deProducto($productoId)
     {
@@ -428,20 +458,58 @@ class IngredienteController extends Controller
                 ], 403);
             }
 
-            $producto = \App\Models\Producto::with('ingredientes')->findOrFail($productoId);
-            
+            $producto = \App\Models\Producto::with(['ingredientes', 'insumosPreparados'])->findOrFail($productoId);
+
+            $tamano = request()->query('tamano');
+
+            $componentes = $producto->todosLosComponentes;
+
+            $tipoReal = fn($item) => $item instanceof \App\Models\InsumoPreparado ? 'insumo_preparado' : 'ingrediente';
+
+            if ($tamano && in_array($tamano, ['pequeno', 'mediano', 'grande'])) {
+                $columna = $tamano === 'pequeno' ? 'cantidad_pequeno' : ($tamano === 'mediano' ? 'cantidad_mediano' : 'cantidad_grande');
+                $componentes = $componentes->map(fn($i) => [
+                    ...$this->transformCompuesto($i),
+                    'componente_type' => $tipoReal($i),
+                    'cantidad_receta' => (float) ($i->pivot->$columna ?: $i->pivot->cantidad),
+                    'tamano' => $tamano,
+                ]);
+            } else {
+                $tamanosPersonalizados = $producto->tamanos_personalizados;
+                $numTamanos = is_array($tamanosPersonalizados) ? count($tamanosPersonalizados) : 1;
+                $tamanos = ['pequeno', 'mediano', 'grande'];
+                $tamanos = array_slice($tamanos, 0, max($numTamanos, 1));
+
+                $componentes = $componentes->flatMap(function($i) use ($tipoReal, $producto, $tamanos) {
+                    $items = [];
+                    foreach ($tamanos as $idx => $t) {
+                        $col = "cantidad_{$t}";
+                        $cant = (float) ($i->pivot->$col ?: ($t === 'pequeno' ? $i->pivot->cantidad : 0));
+                        if ($cant > 0) {
+                            $tamanoNombre = is_array($producto->tamanos_personalizados)
+                                ? ($producto->tamanos_personalizados[$idx]['nombre'] ?? null)
+                                : null;
+                            $items[] = [
+                                ...$this->transformCompuesto($i),
+                                'componente_type' => $tipoReal($i),
+                                'cantidad_receta' => $cant,
+                                'tamano' => $t,
+                                'tamano_nombre' => $tamanoNombre,
+                            ];
+                        }
+                    }
+                    return $items;
+                });
+            }
+
             return response()->json([
                 'success' => true,
-                'data' => $producto->ingredientes->map(fn($i) => [
-                    ...$this->transform($i),
-                    'cantidad_receta' => (float) $i->pivot->cantidad,
-                    'costo_receta' => round($i->pivot->cantidad * $i->costo_unitario, 4),
-                ]),
+                'data' => $componentes,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error al obtener ingredientes del producto',
+                'message' => 'Error al obtener componentes del producto',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -510,5 +578,27 @@ class IngredienteController extends Controller
             'created_at' => $i->created_at,
             'updated_at' => $i->updated_at,
         ];
+    }
+
+    /**
+     * Transformar cualquier tipo de componente (Ingrediente, InsumoPreparado, Producto)
+     */
+    private function transformCompuesto($i): array
+    {
+        if ($i instanceof \App\Models\InsumoPreparado) {
+            return [
+                'id' => $i->id,
+                'nombre' => $i->nombre,
+                'unidad' => $i->unidad,
+                'costo_unitario' => (float) $i->costo_unitario,
+                'costo_formateado' => '$' . number_format($i->costo_unitario, 4),
+                'stock_actual' => (float) $i->stock_actual,
+                'stock_minimo' => (float) $i->stock_minimo,
+                'bajo_stock' => $i->bajo_stock,
+                'sin_stock' => $i->stock_actual <= 0,
+                'activo' => $i->activo,
+            ];
+        }
+        return $this->transform($i);
     }
 }

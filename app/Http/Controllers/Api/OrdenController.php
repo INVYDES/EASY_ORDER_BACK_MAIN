@@ -396,8 +396,25 @@ class OrdenController extends Controller
                     continue;
                 }
 
-                $maxDisponible = $producto->ingredientes->map(function ($ing) use ($item) {
-                    $necesario = $ing->pivot->cantidad * $item['cantidad'];
+                // Validar que el tamaño pedido tenga receta (ingredientes) definida
+                if ($producto->tiene_tamanos && $producto->ingredientes->isNotEmpty()) {
+                    $columna = "cantidad_{$tamano}";
+                    $tieneReceta = $producto->ingredientes->contains(function ($ing) use ($columna) {
+                        return (float) ($ing->pivot->$columna ?? 0) > 0;
+                    });
+                    if (!$tieneReceta) {
+                        $erroresStock[] = "El producto '{$producto->nombre}' ya no está disponible en tamaño '{$tamano}'";
+                        continue;
+                    }
+                }
+
+                $maxDisponible = $producto->ingredientes->map(function ($ing) use ($item, $producto, $tamano) {
+                    $cantidadPivot = $ing->pivot->cantidad ?? 0;
+                    if ($producto->tiene_tamanos) {
+                        $columna = "cantidad_{$tamano}";
+                        $cantidadPivot = $ing->pivot->$columna ?? $cantidadPivot;
+                    }
+                    $necesario = $cantidadPivot * $item['cantidad'];
                     return $necesario > 0 ? floor($ing->stock_actual / $necesario) : PHP_INT_MAX;
                 })->min();
 
@@ -477,6 +494,7 @@ class OrdenController extends Controller
                     'producto_id'        => $productoModel->id,
                     'paquete_id'         => $paqueteId,
                     'cantidad'           => $item['cantidad'],
+                    'tamano'             => $item['tamano'] ?? 'pequeno',
                     'precio_unitario'    => $precio + ($item['cantidad'] > 0 ? ($paquetePrecio / $item['cantidad']) : 0),
                     'subtotal'           => $subtotal,
                     'notas'              => $item['notas'],
@@ -627,6 +645,7 @@ class OrdenController extends Controller
                 }
                 if ($request->filled('metodo_pago')) $campos['metodo_pago'] = $request->metodo_pago;
                 if ($request->has('propina'))         $campos['propina']     = $request->propina ?? 0;
+
 
                 $orden->update($campos);
             }
@@ -1063,12 +1082,9 @@ class OrdenController extends Controller
                 $updateData['en_preparacion_at'] = now();
             } elseif ($request->estado_preparacion === 'LISTO') {
                 $updateData['listo_at'] = now();
-            }
-            if ($request->filled('recogido_en')) {
-                $updateData['recogido_en'] = $request->recogido_en;
-            }
-            if ($request->filled('entregado_en')) {
-                $updateData['entregado_en'] = $request->entregado_en;
+            } elseif ($request->estado_preparacion === 'ENTREGADO') {
+                $updateData['recogido_en'] = now();
+                $updateData['entregado_en'] = now();
             }
 
             OrdenDetalle::whereIn('id', $request->detalles)
@@ -1241,6 +1257,7 @@ class OrdenController extends Controller
                 ] : null,
                 'recogido_en'         => $d->recogido_en?->format('Y-m-d H:i:s'),
                 'entregado_en'        => $d->entregado_en?->format('Y-m-d H:i:s'),
+                'tamano'              => $d->tamano,
                 'created_at'          => $d->created_at?->format('Y-m-d H:i:s'),
             ]),
             'created_at'             => $orden->created_at,

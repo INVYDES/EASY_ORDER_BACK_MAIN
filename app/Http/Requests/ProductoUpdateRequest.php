@@ -18,7 +18,6 @@ class ProductoUpdateRequest extends FormRequest
             'nombre' => 'sometimes|string|max:150',
             'descripcion' => 'nullable|string|max:1000',
             'precio' => 'nullable|numeric|min:0|max:999999.99',
-            'precio_pequeno' => 'nullable|numeric|min:0|max:999999.99',
             'precio_mediano' => 'nullable|numeric|min:0|max:999999.99',
             'precio_grande' => 'nullable|numeric|min:0|max:999999.99',
             'categoria_id' => 'nullable|exists:categorias,id',
@@ -29,6 +28,7 @@ class ProductoUpdateRequest extends FormRequest
             'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
             'imagen_url' => 'nullable|url|max:500',
             'ingredientes' => 'nullable|array',
+            'ingredientes.*.componente_type' => 'nullable|in:ingrediente,insumo_preparado',
         ];
     }
 }

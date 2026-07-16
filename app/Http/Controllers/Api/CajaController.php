@@ -342,7 +342,7 @@ class CajaController extends Controller
 
             $request->validate([
                 'tipo'        => 'required|in:ingreso,egreso',
-                'monto'       => 'required|numeric|min:0',
+                'monto'       => 'required|numeric|min:0.01',
                 'descripcion' => 'required|string|max:255',
                 'referencia'  => 'nullable|string|max:100',
             ]);
@@ -355,16 +355,50 @@ class CajaController extends Controller
             }
 
             $restauranteActivo = app('restaurante_activo');
+
+            DB::beginTransaction();
+
             $caja = Caja::where('restaurante_id', $restauranteActivo->id)
                 ->whereDate('fecha_apertura', now()->format('Y-m-d'))
                 ->whereNull('fecha_cierre')
+                ->lockForUpdate()
                 ->first();
 
             if (!$caja) {
+                DB::rollBack();
                 return response()->json(['success' => false, 'message' => 'No hay una caja abierta para hoy'], 404);
             }
 
-            DB::beginTransaction();
+            if ($request->tipo === 'egreso') {
+                $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
+                    ->where('updated_at', '>=', $caja->fecha_apertura)
+                    ->where('estado', 'CERRADA')
+                    ->selectRaw($this->ventasSelectRaw())
+                    ->first();
+                $v = $this->formatVentas($ventas);
+
+                $movimientos = CajaMovimientos::where('caja_id', $caja->id)
+                    ->lockForUpdate()
+                    ->get();
+
+                $ingresosManuales = $movimientos->where('tipo', 'ingreso')
+                    ->filter(fn($m) => !str_starts_with($m->descripcion, 'Venta - Orden'))
+                    ->sum('monto');
+                $egresosPrevios = $movimientos->where('tipo', 'egreso')->sum('monto');
+
+                $efectivoDisponible = $caja->monto_inicial
+                    + $v['efectivo'] + $v['propinas_efectivo']
+                    + $ingresosManuales - $egresosPrevios;
+
+                if ($request->monto > $efectivoDisponible) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Fondos insuficientes en caja. Disponible: $' . number_format($efectivoDisponible, 2)
+                    ], 422);
+                }
+            }
+
             $movimiento = CajaMovimientos::create([
                 'caja_id'     => $caja->id,
                 'usuario_id'  => $user->id,
@@ -394,6 +428,7 @@ class CajaController extends Controller
             return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
             DB::rollBack();
+            \Log::error('Error registrarMovimiento: ' . $e->getMessage());
             return response()->json(['success' => false, 'message' => 'Error al registrar movimiento', 'error' => $e->getMessage()], 500);
         }
     }

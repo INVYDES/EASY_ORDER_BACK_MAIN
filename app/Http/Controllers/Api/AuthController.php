@@ -267,27 +267,39 @@ final class AuthController extends Controller
      */
     public function registerEmpleado(Request $request): JsonResponse
     {
-        $request->validate([
+        $rules = [
             'name'           => ['required', 'string', 'max:255'],
             'password'       => ['required', 'confirmed', PasswordRule::min(8)],
             'propietario_id' => ['required', 'integer', 'exists:propietarios,id'],
             'rol_id'         => ['required', 'integer', 'exists:roles,id'],
             'restaurante_id' => ['required', 'integer', 'exists:restaurantes,id'],
-        ]);
+        ];
+
+        if ($request->filled('email')) {
+            $rules['email'] = ['required', 'email', 'max:150', 'unique:users,email'];
+        }
+        if ($request->filled('username')) {
+            $rules['username'] = ['required', 'string', 'max:60', 'unique:users,username'];
+        }
+
+        $request->validate($rules);
 
         $result = DB::transaction(function () use ($request): array {
-            $email = 'emp_' . $request->propietario_id . '_' . Str::random(8) . '@sin-correo.local';
+            $email = $request->input('email') ?: ('emp_' . $request->propietario_id . '_' . Str::random(8) . '@sin-correo.local');
+            $username = $request->input('username') ?: ('tmp_' . Str::random(10));
 
             $user = User::create([
                 'propietario_id'     => $request->propietario_id,
                 'name'               => $request->name,
                 'email'              => $email,
-                'username'           => 'tmp_' . Str::random(10),
+                'username'           => $username,
                 'password'           => Hash::make($request->password),
                 'restaurante_activo' => $request->restaurante_id,
             ]);
 
-            $user->update(['username' => "{$request->propietario_id}{$user->id}"]);
+            if (!$request->filled('username')) {
+                $user->update(['username' => "{$request->propietario_id}{$user->id}"]);
+            }
 
             $user->roles()->attach((int) $request->rol_id);
             $user->restaurantes()->attach((int) $request->restaurante_id);

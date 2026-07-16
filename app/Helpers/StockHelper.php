@@ -29,7 +29,25 @@ class StockHelper
         if ($producto->ingredientes->isNotEmpty()) {
             $ingredientesAfectadosIds = [];
             foreach ($producto->ingredientes as $ingrediente) {
-                $cantidadADescontar = (float) $ingrediente->pivot->cantidad * (float) $cantidad;
+                // Determinar qué cantidad usar dependiendo del tamaño (si el producto tiene tamaños)
+                $cantidadPivot = $ingrediente->pivot->cantidad ?? 0;
+                if ($producto->tiene_tamanos) {
+                    if ($detalle->tamano === 'pequeno') {
+                        $cantidadPivot = $ingrediente->pivot->cantidad_pequeno ?? $cantidadPivot;
+                    } elseif ($detalle->tamano === 'mediano') {
+                        $cantidadPivot = $ingrediente->pivot->cantidad_mediano ?? $cantidadPivot;
+                    } elseif ($detalle->tamano === 'grande') {
+                        $cantidadPivot = $ingrediente->pivot->cantidad_grande ?? $cantidadPivot;
+                    }
+                }
+
+                $cantidadADescontar = (float) $cantidadPivot * (float) $cantidad;
+
+                // Saltar si no hay cantidad real que descontar (ej. tamaño sin receta)
+                if ($cantidadADescontar <= 0) {
+                    continue;
+                }
+
                 $stockAnterior      = $ingrediente->stock_actual;
                 $stockNuevo         = $stockAnterior - $cantidadADescontar;
 
@@ -64,8 +82,18 @@ class StockHelper
                 }
             }
         } else {
-            Producto::where('id', $producto->id)
-                ->decrement('stock', $cantidad);
+            if ($producto->tiene_tamanos) {
+                if ($detalle->tamano === 'pequeno') {
+                    Producto::where('id', $producto->id)->decrement('stock_pequeno', $cantidad);
+                } elseif ($detalle->tamano === 'mediano') {
+                    Producto::where('id', $producto->id)->decrement('stock_mediano', $cantidad);
+                } elseif ($detalle->tamano === 'grande') {
+                    Producto::where('id', $producto->id)->decrement('stock_grande', $cantidad);
+                }
+            } else {
+                Producto::where('id', $producto->id)
+                    ->decrement('stock', $cantidad);
+            }
         }
     }
 
@@ -87,7 +115,25 @@ class StockHelper
         if ($producto->ingredientes->isNotEmpty()) {
             $ingredientesAfectadosIds = [];
             foreach ($producto->ingredientes as $ingrediente) {
-                $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (float) $cantidad;
+                // Determinar qué cantidad usar dependiendo del tamaño (si el producto tiene tamaños)
+                $cantidadPivot = $ingrediente->pivot->cantidad ?? 0;
+                if ($producto->tiene_tamanos) {
+                    if ($detalle->tamano === 'pequeno') {
+                        $cantidadPivot = $ingrediente->pivot->cantidad_pequeno ?? $cantidadPivot;
+                    } elseif ($detalle->tamano === 'mediano') {
+                        $cantidadPivot = $ingrediente->pivot->cantidad_mediano ?? $cantidadPivot;
+                    } elseif ($detalle->tamano === 'grande') {
+                        $cantidadPivot = $ingrediente->pivot->cantidad_grande ?? $cantidadPivot;
+                    }
+                }
+
+                $cantidadARestaurar = (float) $cantidadPivot * (float) $cantidad;
+
+                // Saltar si no hay cantidad real que restaurar (ej. tamaño sin receta)
+                if ($cantidadARestaurar <= 0) {
+                    continue;
+                }
+
                 $stockAnterior      = $ingrediente->stock_actual;
                 $stockNuevo         = $stockAnterior + $cantidadARestaurar;
 
@@ -122,8 +168,18 @@ class StockHelper
                 }
             }
         } else {
-            Producto::where('id', $producto->id)
-                ->increment('stock', $cantidad);
+            if ($producto->tiene_tamanos) {
+                if ($detalle->tamano === 'pequeno') {
+                    Producto::where('id', $producto->id)->increment('stock_pequeno', $cantidad);
+                } elseif ($detalle->tamano === 'mediano') {
+                    Producto::where('id', $producto->id)->increment('stock_mediano', $cantidad);
+                } elseif ($detalle->tamano === 'grande') {
+                    Producto::where('id', $producto->id)->increment('stock_grande', $cantidad);
+                }
+            } else {
+                Producto::where('id', $producto->id)
+                    ->increment('stock', $cantidad);
+            }
         }
     }
 }

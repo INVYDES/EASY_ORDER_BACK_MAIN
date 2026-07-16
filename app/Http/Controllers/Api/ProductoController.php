@@ -39,7 +39,7 @@ class ProductoController extends Controller
             $page = $request->get('page', 1);
 
             // Construir query base con relaciones
-            $query = Producto::with(['categoria', 'ingredientes'])
+            $query = Producto::with(['categoria', 'ingredientes', 'insumosPreparados'])
                 ->where('restaurante_id', $restauranteActivo->id);
 
             // FILTROS
@@ -131,27 +131,31 @@ class ProductoController extends Controller
                     ] : null,
                     'categoria_id' => $producto->categoria_id,
 
-                    'ingredientes' => $producto->ingredientes->map(function($ing) {
+                    'ingredientes' => $producto->todosLosComponentes ? $producto->todosLosComponentes->map(function($ing) {
+                        $tipo = $ing instanceof \App\Models\InsumoPreparado ? 'insumo_preparado' : 'ingrediente';
                         return [
                             'id' => $ing->id,
                             'nombre' => $ing->nombre,
                             'unidad' => $ing->unidad,
+                            'componente_type' => $tipo,
                             'stock_actual' => (float) $ing->stock_actual,
-                            'stock_minimo' => (float) $ing->stock_minimo,
-                            'costo_unitario' => (float) $ing->costo_unitario,
-                            'cantidad_necesaria' => (float) ($ing->pivot->cantidad ?? 0)
+                            'stock_minimo' => (float) ($ing->stock_minimo ?? 0),
+                            'costo_unitario' => (float) ($ing->costo_unitario ?? 0),
+                            'cantidad_necesaria' => (float) ($ing->pivot->cantidad ?? 0),
+                            'cantidad_pequeno' => (float) ($ing->pivot->cantidad_pequeno ?? $ing->pivot->cantidad ?? 0),
+                            'cantidad_mediano' => (float) ($ing->pivot->cantidad_mediano ?? $ing->pivot->cantidad ?? 0),
+                            'cantidad_grande' => (float) ($ing->pivot->cantidad_grande ?? $ing->pivot->cantidad ?? 0)
                         ];
-                    })->toArray(),
+                    })->toArray() : [],
                     
-                    'tiene_ingredientes' => $producto->ingredientes->isNotEmpty(),
+                    'tiene_ingredientes' => $producto->ingredientes->isNotEmpty() || $producto->insumosPreparados->isNotEmpty(),
                     'puede_prepararse' => $this->puedePrepararse($producto),
                     
                     'imagen' => $producto->imagen,
                     'imagen_url' => $producto->imagen_url,
                     
-                    'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
-                    'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
-                    'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio' => (float) $producto->precio,
+                    'precio_formateado' => '$' . number_format($producto->precio, 2),
                     'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
                     'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                     'costo_insumos' => round($c['costoInsumos'], 4),
@@ -163,7 +167,13 @@ class ProductoController extends Controller
                     'minutos_produccion' => (float) $producto->minutos_produccion,
                     'nomina_diaria' => (float) $producto->nomina_diaria,
                     
+                    'tiene_tamanos' => (bool) $producto->tiene_tamanos,
+                    'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
+                    'tamanos_personalizados' => $producto->tamanos_personalizados,
                     'stock' => (int) $producto->stock,
+                    'stock_pequeno' => (int) $producto->stock_pequeno,
+                    'stock_mediano' => (int) $producto->stock_mediano,
+                    'stock_grande' => (int) $producto->stock_grande,
                     'stock_minimo' => (int) $producto->stock_minimo,
                     'bajo_stock' => $bajoStock,
                     'bajo_stock_texto' => $bajoStock ? 'Sí' : 'No',
@@ -262,7 +272,7 @@ class ProductoController extends Controller
 
             $restauranteActivo = app('restaurante_activo');
 
-            $producto = Producto::with(['categoria', 'ingredientes'])
+            $producto = Producto::with(['categoria', 'ingredientes', 'insumosPreparados'])
                 ->withCount(['ordenDetalles as total_ventas'])
                 ->withSum('ordenDetalles', 'cantidad')
                 ->where('restaurante_id', $restauranteActivo->id)
@@ -333,13 +343,19 @@ class ProductoController extends Controller
                 'descripcion' => 'nullable|string|max:1000',
                 'precio' => 'required|numeric|min:0|max:999999.99',
                 'categoria_id' => 'nullable|exists:categorias,id',
-                'stock' => 'nullable|integer|min:0',
-                'stock_minimo' => 'nullable|integer|min:0',
+                'stock' => 'nullable|numeric|min:0',
+                'tiene_tamanos' => 'nullable|boolean',
+                'tamanos_personalizados' => 'nullable',
+                'stock_pequeno' => 'nullable|numeric|min:0',
+                'stock_mediano' => 'nullable|numeric|min:0',
+                'stock_grande' => 'nullable|numeric|min:0',
+                'stock_minimo' => 'nullable|numeric|min:0',
                 'activo' => 'nullable|boolean',
                 'minutos_produccion' => 'nullable|numeric|min:0|max:1440',
                 'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
                 'imagen_url' => 'nullable|url|max:500',
-                'ingredientes' => 'nullable|array'
+                'ingredientes' => 'nullable|array',
+                'ingredientes.*.componente_type' => 'nullable|in:ingrediente,insumo_preparado'
             ]);
 
             if ($validator->fails()) {
@@ -383,11 +399,10 @@ class ProductoController extends Controller
                 'categoria_id' => $categoriaId,
                 'nombre' => $request->nombre,
                 'descripcion' => $request->descripcion,
-                'precio' => $request->precio ?? $request->precio_pequeno,
-                'precio_pequeno' => $request->precio_pequeno ?? $request->precio,
-                'precio_mediano' => $request->precio_mediano,
-                'precio_grande' => $request->precio_grande,
+                'precio' => $request->precio,
                 'stock' => $request->stock ?? 0,
+                'tiene_tamanos' => $request->has('tiene_tamanos') ? $request->tiene_tamanos : false,
+                'tamanos_personalizados' => $this->decodeTamanosPersonalizados($request->tamanos_personalizados),
                 'stock_minimo' => $request->stock_minimo ?? 5,
                 'minutos_produccion' => $request->minutos_produccion ?? 0,
                 'activo' => $request->has('activo') ? $request->activo : true
@@ -404,32 +419,9 @@ class ProductoController extends Controller
 
             $producto = Producto::create($data);
 
-            // Sincronizar ingredientes (acepta 'id' o 'ingrediente_id')
+            // Sincronizar componentes (ingredientes, insumos preparados, productos)
             if ($request->has('ingredientes')) {
-                $ingredientesData = [];
-                foreach ($request->ingredientes as $item) {
-                    $ingredienteId = $item['id'] ?? $item['ingrediente_id'] ?? null;
-                    if ($ingredienteId) {
-                        $cantidad = $item['cantidad'] ?? 1;
-                        $ingredientesData[$ingredienteId] = ['cantidad' => $cantidad];
-                    }
-                }
-                if (!empty($ingredientesData)) {
-                    $producto->ingredientes()->sync($ingredientesData);
-                    $producto->recalcularStockDesdeIngredientes();
-                    
-                    // Forzar recálculo de stock mínimo de ingredientes asociados usando DB directa
-                    $ingredientesIds = \Illuminate\Support\Facades\DB::table('ingredientes_de_productos')
-                        ->where('producto_id', $producto->id)
-                        ->pluck('ingrediente_id');
-
-                    foreach ($ingredientesIds as $ingredienteId) {
-                        $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
-                        if ($ing) {
-                            $ing->recalcularStockMinimoDesdeProductos();
-                        }
-                    }
-                }
+                $this->sincronizarComponentes($producto, $request->ingredientes);
             }
 
             DB::commit();
@@ -439,11 +431,11 @@ class ProductoController extends Controller
                     'CREAR_PRODUCTO',
                     'productos',
                     $producto->id,
-                    "Producto creado: {$producto->nombre} - Precio pequeno: \${$producto->precio_pequeno} - Mediano: \${$producto->precio_mediano} - Grande: \${$producto->precio_grande} - Stock: {$producto->stock}"
+                    "Producto creado: {$producto->nombre} - Precio: \${$producto->precio} - Mediano: \${$producto->precio_mediano} - Grande: \${$producto->precio_grande} - Stock: {$producto->stock}"
                 );
             }
 
-            $producto->load(['categoria', 'ingredientes']);
+            $producto->load(['categoria', 'ingredientes', 'insumosPreparados']);
 
             return response()->json([
                 'success' => true,
@@ -491,14 +483,20 @@ class ProductoController extends Controller
                 'descripcion' => 'nullable|string|max:1000',
                 'precio' => 'sometimes|numeric|min:0|max:999999.99',
                 'categoria_id' => 'nullable|exists:categorias,id',
-                'stock' => 'sometimes|integer|min:0',
-                'stock_minimo' => 'sometimes|integer|min:0',
+                'stock' => 'sometimes|numeric|min:0',
+                'tiene_tamanos' => 'sometimes|boolean',
+                'tamanos_personalizados' => 'nullable',
+                'stock_pequeno' => 'sometimes|numeric|min:0',
+                'stock_mediano' => 'sometimes|numeric|min:0',
+                'stock_grande' => 'sometimes|numeric|min:0',
+                'stock_minimo' => 'sometimes|numeric|min:0',
                 'activo' => 'sometimes|boolean',
                 'minutos_produccion' => 'nullable|numeric|min:0|max:1440',
                 'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
                 'imagen_url' => 'nullable|url|max:500',
                 'eliminar_imagen' => 'nullable|boolean',
-                'ingredientes' => 'nullable|array'
+                'ingredientes' => 'nullable|array',
+                'ingredientes.*.componente_type' => 'nullable|in:ingrediente,insumo_preparado'
             ]);
 
             if ($validator->fails()) {
@@ -525,7 +523,17 @@ class ProductoController extends Controller
 
             DB::beginTransaction();
 
-            $data = $request->except(['imagen', 'imagen_url', 'eliminar_imagen', 'ingredientes']);
+            $camposPermitidos = [
+                'nombre', 'descripcion', 'precio', 'stock',
+                'tiene_tamanos', 'stock_minimo', 'activo',
+                'minutos_produccion', 'costo',
+            ];
+
+            $data = $request->only($camposPermitidos);
+
+            if ($request->has('tamanos_personalizados')) {
+                $data['tamanos_personalizados'] = $this->decodeTamanosPersonalizados($request->tamanos_personalizados);
+            }
 
             // ---------------------------------------------------------------
             // ACTIVIDAD 2: Si se envía categoria_id nulo/vacío, usar "Cocina".
@@ -573,36 +581,14 @@ class ProductoController extends Controller
 
             $producto->update($data);
 
-            // Sincronizar ingredientes (acepta 'id' o 'ingrediente_id')
+            // Sincronizar componentes (ingredientes, insumos preparados, productos)
             if ($request->has('ingredientes')) {
-                // Obtener ingredientes asociados antes del cambio
-                $ingredientesAntesIds = $producto->ingredientes()->pluck('ingredientes.id')->toArray();
-
-                $ingredientesData = [];
-                foreach ($request->ingredientes as $item) {
-                    $ingredienteId = $item['id'] ?? $item['ingrediente_id'] ?? null;
-                    if ($ingredienteId) {
-                        $cantidad = $item['cantidad'] ?? 1;
-                        $ingredientesData[$ingredienteId] = ['cantidad' => $cantidad];
-                    }
-                }
-                $producto->ingredientes()->sync($ingredientesData);
-                $producto->recalcularStockDesdeIngredientes();
-
-                // Recalcular stock mínimo de todos los ingredientes afectados (antes y después) sin recargar relaciones complejas
-                $ingredientesDespuesIds = array_keys($ingredientesData);
-                $todosAfectadosIds = array_unique(array_merge($ingredientesAntesIds, $ingredientesDespuesIds));
-                
-                foreach ($todosAfectadosIds as $ingredienteId) {
-                    $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
-                    if ($ing) {
-                        $ing->recalcularStockMinimoDesdeProductos();
-                    }
-                }
+                $this->sincronizarComponentes($producto, $request->ingredientes);
             } else {
-                // Si no se cambiaron ingredientes, pero el stock mínimo o activo cambió, recalculamos los ingredientes actuales usando DB directa
+                // Recalcular stock mínimo de ingredientes actuales
                 $ingredientesIds = \Illuminate\Support\Facades\DB::table('ingredientes_de_productos')
                     ->where('producto_id', $producto->id)
+                    ->where('componente_type', 'ingrediente')
                     ->pluck('ingrediente_id');
 
                 foreach ($ingredientesIds as $ingredienteId) {
@@ -624,7 +610,7 @@ class ProductoController extends Controller
                 );
             }
 
-            $producto = Producto::with(['categoria', 'ingredientes'])
+            $producto = Producto::with(['categoria', 'ingredientes', 'insumosPreparados'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();
@@ -658,7 +644,7 @@ class ProductoController extends Controller
     {
         try {
             $user = $request->user();
-            
+
             if (!$user->hasPermission('ELIMINAR_PRODUCTOS')) {
                 return response()->json([
                     'success' => false,
@@ -673,28 +659,24 @@ class ProductoController extends Controller
                 ->firstOrFail();
 
             $ventasAsociadas = $producto->ordenDetalles()->count();
-            if ($ventasAsociadas > 0) {
-                return response()->json([
-                    'success' => false,
-                    'message' => "No se puede eliminar el producto porque tiene {$ventasAsociadas} venta(s) asociada(s)",
-                    'sugerencia' => 'Puedes desactivarlo en lugar de eliminarlo'
-                ], 409);
+
+            if ($ventasAsociadas > 0 && $producto->activo) {
+                $producto->update(['activo' => false]);
             }
 
             $nombreProducto = $producto->nombre;
-            
+
             if ($producto->imagen && !filter_var($producto->imagen, FILTER_VALIDATE_URL)) {
                 Storage::disk('public')->delete($producto->imagen);
             }
-            
-            // Obtener IDs de ingredientes asociados usando DB directa antes de borrar
-            $ingredientesIds = \Illuminate\Support\Facades\DB::table('ingredientes_de_productos')
+
+            $ingredientesIds = DB::table('ingredientes_de_productos')
                 ->where('producto_id', $producto->id)
+                ->where('componente_type', 'ingrediente')
                 ->pluck('ingrediente_id');
 
             $producto->delete();
 
-            // Recalcular stock mínimo de todos los ingredientes asociados al producto (ya que el producto fue eliminado)
             foreach ($ingredientesIds as $ingredienteId) {
                 $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
                 if ($ing) {
@@ -707,7 +689,7 @@ class ProductoController extends Controller
                     'ELIMINAR_PRODUCTO',
                     'productos',
                     $id,
-                    "Producto eliminado: {$nombreProducto}"
+                    "Producto eliminado: {$nombreProducto}" . ($ventasAsociadas > 0 ? " (con {$ventasAsociadas} ventas históricas)" : "")
                 );
             }
 
@@ -811,7 +793,7 @@ class ProductoController extends Controller
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('activo', true)
                 ->orderBy('nombre')
-                ->get(['id', 'nombre', 'precio', 'precio_pequeno', 'precio_mediano', 'precio_grande', 'stock', 'stock_minimo', 'categoria_id']);
+                ->get(['id', 'nombre', 'precio', 'precio_mediano', 'precio_grande', 'stock', 'stock_minimo', 'categoria_id']);
 
             return response()->json([
                 'success' => true,
@@ -831,8 +813,7 @@ class ProductoController extends Controller
                     return [
                         'value' => $producto->id,
                         'label' => $label,
-                        'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
-                        'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio' => (float) $producto->precio,
                         'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
                         'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                         'stock' => (int) $producto->stock,
@@ -887,9 +868,8 @@ class ProductoController extends Controller
                         'stock' => (int) $producto->stock,
                         'stock_minimo' => (int) $producto->stock_minimo,
                         'diferencia' => $producto->stock_minimo - $producto->stock,
-                        'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
-                        'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
-                        'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio' => (float) $producto->precio,
+                        'precio_formateado' => '$' . number_format($producto->precio, 2),
                         'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
                         'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                         'imagen_url' => $producto->imagen_url
@@ -1034,15 +1014,16 @@ class ProductoController extends Controller
                 }
             }
 
-            $productos = Producto::with(['categoria', 'ingredientes'])
+            $productos = Producto::with(['categoria', 'ingredientes', 'insumosPreparados'])
                 ->where('restaurante_id', $restaurante->id)
                 ->where('activo', true)
                 ->get();
 
             $data = $productos->map(function ($producto) {
+                $componentes = $producto->todosLosComponentes ?? collect();
                 
                 // Producto SIN receta
-                if ($producto->ingredientes->isEmpty()) {
+                if ($componentes->isEmpty()) {
                     if ($producto->stock <= 0) {
                         return null;
                     }
@@ -1051,11 +1032,10 @@ class ProductoController extends Controller
                         'id'              => $producto->id,
                         'nombre'          => $producto->nombre,
                         'descripcion'     => $producto->descripcion,
-                        'precio'          => (float) ($producto->precio_pequeno ?? $producto->precio),
-                        'precio_pequeno'  => (float) ($producto->precio_pequeno ?? $producto->precio),
+                        'precio'          => (float) $producto->precio,
                         'precio_mediano'  => (float) ($producto->precio_mediano ?? $producto->precio),
                         'precio_grande'   => (float) ($producto->precio_grande ?? $producto->precio),
-                        'tamanos_disponibles' => ['pequeno', 'mediano', 'grande'],
+                        'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                         'imagen_url'      => $producto->imagen_url,
                         'categoria'       => $producto->categoria ? [
                             'id'     => $producto->categoria->id,
@@ -1072,29 +1052,27 @@ class ProductoController extends Controller
                     ];
                 }
 
-                // Producto CON receta
-                $stockCalculado = $producto->ingredientes->map(function ($ing) {
-                    if ($ing->pivot->cantidad <= 0) return PHP_INT_MAX;
-                    return (int) floor($ing->stock_actual / $ing->pivot->cantidad);
+                // Producto CON receta (considera todos los tipos de componentes)
+                $stockCalculado = $componentes->map(function ($comp) {
+                    $cantNecesaria = $comp->pivot->cantidad ?? 0;
+                    if ($cantNecesaria <= 0) return PHP_INT_MAX;
+                    return (int) floor($comp->stock_actual / $cantNecesaria);
                 })->min();
 
                 if ($stockCalculado <= 0) {
                     return null;
                 }
 
-                $bajoStock = $producto->ingredientes->some(function ($ing) {
-                    return $ing->stock_actual <= $ing->stock_minimo;
-                });
+                $bajoStock = $componentes->some(fn($comp) => $comp->stock_actual <= ($comp->stock_minimo ?? 0));
 
                 return [
                     'id'              => $producto->id,
                     'nombre'          => $producto->nombre,
                     'descripcion'     => $producto->descripcion,
-                    'precio'          => (float) ($producto->precio_pequeno ?? $producto->precio),
-                    'precio_pequeno'  => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio'          => (float) $producto->precio,
                     'precio_mediano'  => (float) ($producto->precio_mediano ?? $producto->precio),
                     'precio_grande'   => (float) ($producto->precio_grande ?? $producto->precio),
-                    'tamanos_disponibles' => ['pequeno', 'mediano', 'grande'],
+                    'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                     'imagen_url'      => $producto->imagen_url,
                     'categoria'       => $producto->categoria ? [
                         'id'     => $producto->categoria->id,
@@ -1332,9 +1310,8 @@ class ProductoController extends Controller
                     'id' => $producto->id,
                     'nombre' => $producto->nombre,
                     'descripcion' => $producto->descripcion,
-                    'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
-                    'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
-                    'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
+                    'precio' => (float) $producto->precio,
+                    'precio_formateado' => '$' . number_format($producto->precio, 2),
                     'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
                     'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                     'imagen_url' => $producto->imagen_url,
@@ -1397,7 +1374,7 @@ class ProductoController extends Controller
                 ->where('fecha_fin', '>=', now())
                 ->get();
 
-            $precioOriginal = (float) ($producto->precio_pequeno ?? $producto->precio);
+            $precioOriginal = (float) $producto->precio;
             $precioFinal = $precioOriginal;
             $descuentoAplicado = null;
 
@@ -1421,7 +1398,6 @@ class ProductoController extends Controller
                     'precio_original_formateado' => '$' . number_format($precioOriginal, 2),
                     'precio_final' => $precioFinal,
                     'precio_final_formateado' => '$' . number_format($precioFinal, 2),
-                    'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
                     'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
                     'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                     'descuento' => $descuentoAplicado,
@@ -1480,10 +1456,9 @@ class ProductoController extends Controller
                         return [
                             'id' => $producto->id,
                             'nombre' => $producto->nombre,
-                            'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
-                            'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
-                            'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
-                            'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                    'precio' => (float) $producto->precio,
+                    'precio_formateado' => '$' . number_format($producto->precio, 2),
+                    'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
                             'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
                             'imagen_url' => $producto->imagen_url,
                             'disponible' => $this->checkDisponibilidadPublica($producto)
@@ -1524,26 +1499,26 @@ class ProductoController extends Controller
             }
 
             $productos = Producto::withoutGlobalScope(\App\Scopes\TenantScope::class)
-                ->with(['categoria', 'ingredientes'])
+                ->with(['categoria', 'ingredientes', 'insumosPreparados'])
                 ->where('restaurante_id', $restaurante->id)
                 ->where('activo', true)
                 ->get();
 
             $data = $productos->map(function ($producto) {
+                $componentes = $producto->todosLosComponentes ?? collect();
                 
-                if ($producto->ingredientes->isEmpty()) {
+                if ($componentes->isEmpty()) {
                     $stockRestante = (int) $producto->stock;
                     
                     return [
                         'id' => $producto->id,
                         'nombre' => $producto->nombre,
                         'descripcion' => $producto->descripcion,
-                        'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
-                        'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
-                        'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
-                        'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                            'precio' => (float) $producto->precio,
+                            'precio_formateado' => '$' . number_format($producto->precio, 2),
+                            'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
                         'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
-                        'tamanos_disponibles' => ['pequeno', 'mediano', 'grande'],
+                        'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                         'imagen_url' => $producto->imagen_url,
                         'categoria' => $producto->categoria ? [
                             'id' => $producto->categoria->id,
@@ -1555,25 +1530,24 @@ class ProductoController extends Controller
                     ];
                 }
 
-                $stockCalculado = $producto->ingredientes->map(function ($ing) {
-                    if ($ing->pivot->cantidad <= 0) return PHP_INT_MAX;
-                    return (int) floor($ing->stock_actual / $ing->pivot->cantidad);
+                $stockCalculado = $componentes->map(function ($comp) {
+                    if ($comp->pivot->cantidad <= 0) return PHP_INT_MAX;
+                    return (int) floor($comp->stock_actual / $comp->pivot->cantidad);
                 })->min();
 
                 if ($stockCalculado === PHP_INT_MAX || $stockCalculado < 0) {
                     $stockCalculado = 0;
                 }
 
-                return [
-                    'id' => $producto->id,
-                    'nombre' => $producto->nombre,
-                    'descripcion' => $producto->descripcion,
-                    'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
-                    'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
-                    'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
-                    'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
+                    return [
+                        'id' => $producto->id,
+                        'nombre' => $producto->nombre,
+                        'descripcion' => $producto->descripcion,
+                        'precio' => (float) $producto->precio,
+                        'precio_formateado' => '$' . number_format($producto->precio, 2),
+                        'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
                     'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
-                    'tamanos_disponibles' => ['pequeno', 'mediano', 'grande'],
+                    'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                     'imagen_url' => $producto->imagen_url,
                     'categoria' => $producto->categoria ? [
                         'id' => $producto->categoria->id,
@@ -1624,9 +1598,14 @@ class ProductoController extends Controller
      */
     private function calcularCostosProducto($producto, $totalNominaMensual, $precioBase = null)
     {
-        $costoInsumos = $producto->ingredientes->reduce(function($carry, $ing) {
-            $cant = $ing->pivot->cantidad ?? 0;
-            return $carry + ($ing->costo_unitario * $cant);
+        $todos = collect()
+            ->merge($producto->ingredientes ?? [])
+            ->merge($producto->insumosPreparados ?? []);
+
+        $costoInsumos = $todos->reduce(function($carry, $item) {
+            $cant = $item->pivot->cantidad ?? 0;
+            $costoUnit = $item->costo_unitario ?? 0;
+            return $carry + ($costoUnit * $cant);
         }, 0);
 
         $minProd = (float) ($producto->minutos_produccion ?? 0);
@@ -1638,7 +1617,7 @@ class ProductoController extends Controller
         $costoIndirectos = $costoBase * 0.05;
         $costoTotal = $costoBase + $costoIndirectos;
 
-        $precioBase = $precioBase ?? ($producto->precio_pequeno ?? $producto->precio);
+        $precioBase = $precioBase ?? $producto->precio;
         $margenValor = $precioBase - $costoTotal;
         $margenPct = $precioBase > 0 ? round(($margenValor / $precioBase) * 100, 2) : 0;
 
@@ -1646,10 +1625,93 @@ class ProductoController extends Controller
     }
 
     /**
+     * Sincronizar componentes de un producto soportando múltiples tipos
+     */
+    private function sincronizarComponentes($producto, array $componentes)
+    {
+        $porTipo = ['ingrediente' => [], 'insumo_preparado' => []];
+        
+        foreach ($componentes as $item) {
+            $id = $item['id'] ?? $item['ingrediente_id'] ?? null;
+            if (!$id) continue;
+            
+            $tipo = $item['componente_type'] ?? 'ingrediente';
+            $cantidad = $item['cantidad'] ?? 1;
+            $cantidad_pequeno = $item['cantidad_pequeno'] ?? 0;
+            $cantidad_mediano = $item['cantidad_mediano'] ?? 0;
+            $cantidad_grande = $item['cantidad_grande'] ?? 0;
+            
+            $porTipo[$tipo][$id] = [
+                'cantidad' => $cantidad,
+                'cantidad_pequeno' => $cantidad_pequeno,
+                'cantidad_mediano' => $cantidad_mediano,
+                'cantidad_grande' => $cantidad_grande,
+                'componente_type' => $tipo,
+            ];
+        }
+
+        // Obtener IDs de ingredientes antes del cambio
+        $ingredientesAntesIds = $producto->ingredientes()->pluck('ingredientes.id')->toArray();
+
+        // Sincronizar cada tipo
+        $producto->ingredientes()->sync($porTipo['ingrediente']);
+        $producto->insumosPreparados()->sync($porTipo['insumo_preparado']);
+
+        $producto->recalcularStockDesdeIngredientes();
+
+        // Recalcular stock mínimo de ingredientes afectados
+        $todosIds = array_unique(array_merge($ingredientesAntesIds, array_keys($porTipo['ingrediente'])));
+        foreach ($todosIds as $ingredienteId) {
+            $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
+            if ($ing) $ing->recalcularStockMinimoDesdeProductos();
+        }
+    }
+
+    /**
+     * Calcula los tamaños realmente disponibles de un producto
+     * a partir de tamanos_personalizados o, si no existe, de qué
+     * precios de tamaño tiene definidos.
+     */
+    private function getTamanosDisponibles($producto)
+    {
+        if (!empty($producto->tamanos_personalizados) && is_array($producto->tamanos_personalizados)) {
+            return collect($producto->tamanos_personalizados)
+                ->map(fn($t) => $t['key'] ?? $t['nombre'] ?? null)
+                ->filter()
+                ->values()
+                ->toArray();
+        }
+        $disponibles = [];
+        if ($producto->precio > 0) $disponibles[] = 'pequeno';
+        return $disponibles;
+    }
+
+    private function getPrecioFromTamanos($producto, int $indice): ?float
+    {
+        $tams = $producto->tamanos_personalizados;
+        if (!is_array($tams) || !isset($tams[$indice])) return 0;
+        return (float) ($tams[$indice]['precio'] ?? 0);
+    }
+
+    private function getStockFromTamanos($producto, int $indice): ?float
+    {
+        $tams = $producto->tamanos_personalizados;
+        if (!is_array($tams) || !isset($tams[$indice])) return 0;
+        return (float) ($tams[$indice]['stock'] ?? 0);
+    }
+
+    /**
      * Formatear respuesta de producto con ingredientes
      */
     private function formatProductoResponse($producto)
     {
+        // Asegurar que todos los componentes estén cargados
+        if (!$producto->relationLoaded('ingredientes')) {
+            $producto->load('ingredientes');
+        }
+        if (!$producto->relationLoaded('insumosPreparados')) {
+            $producto->load('insumosPreparados');
+        }
         $bajoStock = $producto->stock <= $producto->stock_minimo;
         $totalNominaMensual = $this->obtenerTotalNominaMensual($producto->restaurante_id);
         $c = $this->calcularCostosProducto($producto, $totalNominaMensual);
@@ -1667,31 +1729,35 @@ class ProductoController extends Controller
             ] : null,
             'categoria_id' => $producto->categoria_id,
 
-            'ingredientes' => $producto->ingredientes->map(function($ing) {
-                return [
-                    'id' => $ing->id,
-                    'nombre' => $ing->nombre,
-                    'unidad' => $ing->unidad,
-                    'stock_actual' => (float) $ing->stock_actual,
-                    'stock_minimo' => (float) $ing->stock_minimo,
-                    'costo_unitario' => (float) $ing->costo_unitario,
-                    'cantidad_necesaria' => (float) ($ing->pivot->cantidad ?? 0)
-                ];
-            })->toArray(),
+                    'ingredientes' => ($producto->todosLosComponentes ?? collect())->map(function($ing) {
+                        $tipo = $ing instanceof \App\Models\InsumoPreparado ? 'insumo_preparado' : 'ingrediente';
+                        return [
+                            'id' => $ing->id,
+                            'nombre' => $ing->nombre,
+                            'unidad' => $ing->unidad,
+                            'componente_type' => $tipo,
+                            'stock_actual' => (float) $ing->stock_actual,
+                            'stock_minimo' => (float) ($ing->stock_minimo ?? 0),
+                            'costo_unitario' => (float) ($ing->costo_unitario ?? 0),
+                            'cantidad_necesaria' => (float) ($ing->pivot->cantidad ?? 0),
+                            'cantidad_pequeno' => (float) ($ing->pivot->cantidad_pequeno ?? $ing->pivot->cantidad ?? 0),
+                            'cantidad_mediano' => (float) ($ing->pivot->cantidad_mediano ?? $ing->pivot->cantidad ?? 0),
+                            'cantidad_grande' => (float) ($ing->pivot->cantidad_grande ?? $ing->pivot->cantidad ?? 0)
+                        ];
+                    })->toArray(),
 
-            'tiene_ingredientes' => $producto->ingredientes->isNotEmpty(),
+            'tiene_ingredientes' => $producto->ingredientes->isNotEmpty() || $producto->insumosPreparados->isNotEmpty(),
             'puede_prepararse' => $this->puedePrepararse($producto),
             'unidades_posibles' => $this->calcularUnidadesPosibles($producto),
 
             'imagen' => $producto->imagen,
             'imagen_url' => $producto->imagen_url,
 
-            'precio' => (float) ($producto->precio_pequeno ?? $producto->precio),
-            'precio_formateado' => '$' . number_format($producto->precio_pequeno ?? $producto->precio, 2),
-            'precio_pequeno' => (float) ($producto->precio_pequeno ?? $producto->precio),
-            'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
-            'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
-            'tamanos_disponibles' => ['pequeno', 'mediano', 'grande'],
+            'precio' => (float) ($this->getPrecioFromTamanos($producto, 0) ?: $producto->precio ?? 0),
+            'precio_formateado' => '$' . number_format($this->getPrecioFromTamanos($producto, 0) ?: $producto->precio ?? 0, 2),
+            'precio_mediano' => (float) $this->getPrecioFromTamanos($producto, 1),
+            'precio_grande'  => (float) $this->getPrecioFromTamanos($producto, 2),
+            'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
 
             'costo_insumos' => round($c['costoInsumos'], 4),
             'costo_mo' => round($c['costoMO'], 4),
@@ -1703,7 +1769,12 @@ class ProductoController extends Controller
             'minutos_produccion' => (float) $producto->minutos_produccion,
             'nomina_mensual_base' => (float) $totalNominaMensual,
 
-            'stock' => (int) $producto->stock,
+            'tiene_tamanos' => (bool) $producto->tiene_tamanos,
+            'tamanos_personalizados' => $producto->tamanos_personalizados,
+            'stock' => (int) ($this->getStockFromTamanos($producto, 0) ?: $producto->stock ?? 0),
+            'stock_pequeno' => (int) ($this->getStockFromTamanos($producto, 0) ?: $producto->stock ?? 0),
+            'stock_mediano' => (int) $this->getStockFromTamanos($producto, 1),
+            'stock_grande' => (int) $this->getStockFromTamanos($producto, 2),
             'stock_minimo' => (int) $producto->stock_minimo,
             'bajo_stock' => $bajoStock,
             'agotado' => $producto->stock <= 0,
@@ -1719,26 +1790,31 @@ class ProductoController extends Controller
 
     private function puedePrepararse($producto)
     {
-        if ($producto->ingredientes->isEmpty()) {
-            return false;
-        }
-        
-        return $producto->ingredientes->every(function($ing) {
-            $cantidadNecesaria = $ing->pivot->cantidad ?? 0;
-            return $cantidadNecesaria > 0 && $ing->stock_actual >= $cantidadNecesaria;
+        $todos = collect()
+            ->merge($producto->ingredientes ?? [])
+            ->merge($producto->insumosPreparados ?? []);
+
+        if ($todos->isEmpty()) return false;
+
+        return $todos->every(function($item) {
+            $cant = $item->pivot->cantidad ?? 0;
+            return $cant > 0 && $item->stock_actual >= $cant;
         });
     }
 
     private function calcularUnidadesPosibles($producto)
     {
-        if ($producto->ingredientes->isEmpty()) {
-            return 0;
-        }
-        
-        return $producto->ingredientes->map(function($ing) {
-            $cantidadNecesaria = $ing->pivot->cantidad ?? 0;
-            if ($cantidadNecesaria <= 0) return PHP_INT_MAX;
-            return floor($ing->stock_actual / $cantidadNecesaria);
+        $todos = collect()
+            ->merge($producto->ingredientes ?? [])
+            ->merge($producto->insumosPreparados ?? []);
+
+        if ($todos->isEmpty()) return 0;
+
+        return $todos->map(function($item) {
+            $stock = $item->stock_actual;
+            $cant = $item->pivot->cantidad ?? 0;
+            if ($cant <= 0) return PHP_INT_MAX;
+            return floor($stock / $cant);
         })->min();
     }
 
@@ -1798,17 +1874,17 @@ class ProductoController extends Controller
 
     private function checkDisponibilidadPublica($producto)
     {
-        if (!$producto->activo) {
-            return false;
-        }
-        
-        if ($producto->ingredientes->isEmpty()) {
-            return $producto->stock > 0;
-        }
-        
-        return $producto->ingredientes->every(function($ing) {
-            $cantidadNecesaria = $ing->pivot->cantidad ?? 0;
-            return $cantidadNecesaria > 0 && $ing->stock_actual >= $cantidadNecesaria;
+        if (!$producto->activo) return false;
+
+        $todos = collect()
+            ->merge($producto->ingredientes ?? [])
+            ->merge($producto->insumosPreparados ?? []);
+
+        if ($todos->isEmpty()) return $producto->stock > 0;
+
+        return $todos->every(function($item) {
+            $cant = $item->pivot->cantidad ?? 0;
+            return $cant > 0 && $item->stock_actual >= $cant;
         });
     }
 
@@ -1819,5 +1895,19 @@ class ProductoController extends Controller
             ->where('fecha_inicio', '<=', now())
             ->where('fecha_fin', '>=', now())
             ->exists();
+    }
+
+    private function decodeTamanosPersonalizados($value)
+    {
+        if (is_null($value)) return null;
+        if (is_array($value)) return $value;
+        $decoded = json_decode($value, true);
+        if (!is_array($decoded)) return null;
+        if (count($decoded) > 3) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'tamanos_personalizados' => 'Un producto puede tener máximo 3 tamaños.',
+            ]);
+        }
+        return $decoded;
     }
 }

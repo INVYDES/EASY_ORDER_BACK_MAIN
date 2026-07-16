@@ -20,11 +20,15 @@ class Producto extends Model
         'nombre',
         'descripcion',
         'precio',
-        'precio_pequeno',
         'precio_mediano',
         'precio_grande',
         'costo',
         'stock',
+        'tiene_tamanos',
+        'tamanos_personalizados',
+        'stock_pequeno',
+        'stock_mediano',
+        'stock_grande',
         'stock_minimo',
         'minutos_produccion',
         'nomina_diaria',
@@ -34,12 +38,16 @@ class Producto extends Model
 
     protected $casts = [
         'precio' => 'decimal:2',
-        'precio_pequeno' => 'decimal:2',
         'precio_mediano' => 'decimal:2',
         'precio_grande' => 'decimal:2',
         'costo' => 'decimal:2',
         'activo' => 'boolean',
+        'tiene_tamanos' => 'boolean',
+        'tamanos_personalizados' => 'array',
         'stock' => 'decimal:2',
+        'stock_pequeno' => 'decimal:2',
+        'stock_mediano' => 'decimal:2',
+        'stock_grande' => 'decimal:2',
         'stock_minimo' => 'decimal:2',
         'created_at' => 'datetime',
         'updated_at' => 'datetime'
@@ -47,6 +55,10 @@ class Producto extends Model
 
     protected $attributes = [
         'stock' => 0,
+        'tiene_tamanos' => false,
+        'stock_pequeno' => 0,
+        'stock_mediano' => 0,
+        'stock_grande' => 0,
         'stock_minimo' => 5,
         'activo' => true
     ];
@@ -71,12 +83,34 @@ class Producto extends Model
 
     public function ingredientes()
     {
-        return $this->belongsToMany(Ingrediente::class, 'ingredientes_de_productos')
-                    ->withPivot('cantidad')
+        return $this->belongsToMany(Ingrediente::class, 'ingredientes_de_productos', 'producto_id', 'ingrediente_id')
+                    ->wherePivot('componente_type', 'ingrediente')
+                    ->withPivot('cantidad', 'cantidad_pequeno', 'cantidad_mediano', 'cantidad_grande', 'componente_type')
                     ->withTimestamps();
     }
 
-public function ingredienteMovimientos()
+    public function insumosPreparados()
+    {
+        return $this->belongsToMany(InsumoPreparado::class, 'ingredientes_de_productos', 'producto_id', 'ingrediente_id')
+                    ->wherePivot('componente_type', 'insumo_preparado')
+                    ->withPivot('cantidad', 'cantidad_pequeno', 'cantidad_mediano', 'cantidad_grande', 'componente_type')
+                    ->withTimestamps();
+    }
+
+    public function getTodosLosComponentesAttribute()
+    {
+        if (!$this->relationLoaded('ingredientes')) {
+            $this->load('ingredientes');
+        }
+        if (!$this->relationLoaded('insumosPreparados')) {
+            $this->load('insumosPreparados');
+        }
+
+        return $this->ingredientes
+            ->concat($this->insumosPreparados);
+    }
+
+    public function ingredienteMovimientos()
 {
     return $this->hasMany(IngredienteMovimiento::class);
 }
@@ -171,14 +205,6 @@ public function ingredienteMovimientos()
     }
 
     /**
-     * Alias: devuelve precio_pequeno como precio por defecto
-     */
-    public function getPrecioAttribute($value): ?float
-    {
-        return $value ?? $this->precio_pequeno;
-    }
-
-    /**
      * ACCESORS PARA IMAGEN - 🖼️ NUEVOS
      */
     public function getImagenUrlAttribute()
@@ -235,33 +261,50 @@ public function ingredienteMovimientos()
     }
 
     /**
-     * Recalcula el stock del producto basándose en el ingrediente más limitante
+     * Recalcula el stock del producto basándose en el componente más limitante.
+     * Soporta ingredientes crudos, insumos preparados y sub-productos.
      */
     public function recalcularStockDesdeIngredientes()
     {
-        // Forzamos la carga de ingredientes omitiendo el scope global de tenant para asegurar
-        // que la consulta interna no sea filtrada si el contexto de restaurante_activo cambia
-        $this->load(['ingredientes' => function($query) {
-            $query->withoutGlobalScope(\App\Scopes\TenantScope::class);
-        }]);
-        
-        if ($this->ingredientes->isEmpty()) {
-            return $this->stock; // Si no tiene receta, mantenemos el stock manual
+        $this->load([
+            'ingredientes' => fn($q) => $q->withoutGlobalScope(\App\Scopes\TenantScope::class),
+            'insumosPreparados' => fn($q) => $q->withoutGlobalScope(\App\Scopes\TenantScope::class),
+        ]);
+
+        $todos = collect()
+            ->merge($this->ingredientes)
+            ->merge($this->insumosPreparados);
+
+        if ($todos->isEmpty()) {
+            return $this->stock;
         }
 
-        $unidadesPosibles = $this->ingredientes->map(function($ing) {
-            $cantidadNecesaria = $ing->pivot->cantidad ?? 0;
-            if ($cantidadNecesaria <= 0) return PHP_INT_MAX;
-            return floor($ing->stock_actual / $cantidadNecesaria);
-        });
+        $getStock = fn($item) => $item->stock_actual;
 
-        $nuevoStock = $unidadesPosibles->min();
-        if ($nuevoStock === PHP_INT_MAX) $nuevoStock = 0;
+        if ($this->tiene_tamanos) {
+            $nuevoStockPeq = $todos->map(fn($c) => $this->calcularUnidades($c, 'cantidad_pequeno', $getStock))->min();
+            $nuevoStockMed = $todos->map(fn($c) => $this->calcularUnidades($c, 'cantidad_mediano', $getStock))->min();
+            $nuevoStockGra = $todos->map(fn($c) => $this->calcularUnidades($c, 'cantidad_grande', $getStock))->min();
 
-        $this->stock = $nuevoStock;
+            $this->stock_pequeno = max(0, (int) ($nuevoStockPeq === PHP_INT_MAX ? 0 : $nuevoStockPeq));
+            $this->stock_mediano = max(0, (int) ($nuevoStockMed === PHP_INT_MAX ? 0 : $nuevoStockMed));
+            $this->stock_grande  = max(0, (int) ($nuevoStockGra === PHP_INT_MAX ? 0 : $nuevoStockGra));
+            $this->stock = $this->stock_pequeno + $this->stock_mediano + $this->stock_grande;
+        } else {
+            $minimo = $todos->map(fn($c) => $this->calcularUnidades($c, 'cantidad', $getStock))->min();
+            $this->stock = max(0, (int) ($minimo === PHP_INT_MAX ? 0 : $minimo));
+        }
+
         $this->save();
+        return $this->stock;
+    }
 
-        return $nuevoStock;
+    private function calcularUnidades($componente, string $columna, \Closure $getStock): int
+    {
+        $cantidad = (float) ($componente->pivot->$columna ?? $componente->pivot->cantidad ?? 0);
+        if ($cantidad <= 0) return PHP_INT_MAX;
+        $stock = $getStock($componente);
+        return (int) floor($stock / $cantidad);
     }
 
     /**

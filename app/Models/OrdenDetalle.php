@@ -17,6 +17,7 @@ class OrdenDetalle extends Model {
         'producto_id',
         'paquete_id',
         'cantidad',
+        'tamano',
         'precio_unitario',  // ✅ NOMBRE CORRECTO
         'subtotal',
         'notas',
