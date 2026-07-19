@@ -12,6 +12,43 @@ use Illuminate\Support\Facades\Log;
 class StockHelper
 {
     /**
+     * Obtiene la cantidad de un ingrediente en el pivot para un tamaño dado.
+     * Mapea 'pequeno'/'mediano'/'grande' a columnas legacy, otros keys usan 'cantidad'.
+     */
+    private static function getCantidadPivot($pivot, string $tamano): float
+    {
+        $map = ['pequeno' => 'cantidad_pequeno', 'mediano' => 'cantidad_mediano', 'grande' => 'cantidad_grande'];
+        $columna = $map[$tamano] ?? null;
+        if ($columna && isset($pivot->$columna) && (float) $pivot->$columna > 0) {
+            return (float) $pivot->$columna;
+        }
+        return (float) ($pivot->cantidad ?? 0);
+    }
+
+    /**
+     * Actualiza el stock de un tamaño específico en el JSON tamanos_personalizados.
+     */
+    private static function actualizarStockTamano(Producto $producto, string $tamano, int $delta): void
+    {
+        $tams = $producto->tamanos_personalizados;
+        if (!is_array($tams)) return;
+
+        $modificado = false;
+        foreach ($tams as &$t) {
+            if (($t['key'] ?? '') === $tamano) {
+                $stockActual = (int) ($t['stock'] ?? 0);
+                $t['stock'] = max(0, $stockActual + $delta);
+                $modificado = true;
+                break;
+            }
+        }
+
+        if ($modificado) {
+            Producto::where('id', $producto->id)->update(['tamanos_personalizados' => json_encode($tams)]);
+        }
+    }
+
+    /**
      * Descuenta el stock/ingredientes correspondientes a un detalle de orden.
      */
     public static function descontarStock(OrdenDetalle $detalle, $cantidad = null, $userId = null)
@@ -19,7 +56,6 @@ class StockHelper
         $cantidad = $cantidad ?? $detalle->cantidad;
         if ($cantidad <= 0) return;
 
-        // Asegurarse de tener la relación cargada
         $detalle->loadMissing('producto.ingredientes');
         $producto = $detalle->producto;
         if (!$producto) return;
@@ -28,34 +64,20 @@ class StockHelper
 
         if ($producto->ingredientes->isNotEmpty()) {
             $ingredientesAfectadosIds = [];
-            foreach ($producto->ingredientes as $ingrediente) {
-                // Determinar qué cantidad usar dependiendo del tamaño (si el producto tiene tamaños)
-                $cantidadPivot = $ingrediente->pivot->cantidad ?? 0;
-                if ($producto->tiene_tamanos) {
-                    if ($detalle->tamano === 'pequeno') {
-                        $cantidadPivot = $ingrediente->pivot->cantidad_pequeno ?? $cantidadPivot;
-                    } elseif ($detalle->tamano === 'mediano') {
-                        $cantidadPivot = $ingrediente->pivot->cantidad_mediano ?? $cantidadPivot;
-                    } elseif ($detalle->tamano === 'grande') {
-                        $cantidadPivot = $ingrediente->pivot->cantidad_grande ?? $cantidadPivot;
-                    }
-                }
+            $tamano = $detalle->tamano;
 
+            foreach ($producto->ingredientes as $ingrediente) {
+                $cantidadPivot = self::getCantidadPivot($ingrediente->pivot, $tamano);
                 $cantidadADescontar = (float) $cantidadPivot * (float) $cantidad;
 
-                // Saltar si no hay cantidad real que descontar (ej. tamaño sin receta)
-                if ($cantidadADescontar <= 0) {
-                    continue;
-                }
+                if ($cantidadADescontar <= 0) continue;
 
-                $stockAnterior      = $ingrediente->stock_actual;
-                $stockNuevo         = $stockAnterior - $cantidadADescontar;
+                $stockAnterior = $ingrediente->stock_actual;
+                $stockNuevo    = $stockAnterior - $cantidadADescontar;
 
-                // Decrementar stock del ingrediente
                 Ingrediente::where('id', $ingrediente->id)
                     ->decrement('stock_actual', $cantidadADescontar);
 
-                // Registrar movimiento
                 IngredienteMovimiento::create([
                     'ingrediente_id'      => $ingrediente->id,
                     'producto_id'         => $producto->id,
@@ -71,7 +93,6 @@ class StockHelper
                 $ingredientesAfectadosIds[] = $ingrediente->id;
             }
 
-            // Recalcular stock de TODOS los productos que compartan los ingredientes afectados
             if (!empty($ingredientesAfectadosIds)) {
                 $productosARecalcular = Producto::whereHas('ingredientes', function($q) use ($ingredientesAfectadosIds) {
                     $q->whereIn('ingredientes.id', $ingredientesAfectadosIds);
@@ -82,14 +103,8 @@ class StockHelper
                 }
             }
         } else {
-            if ($producto->tiene_tamanos) {
-                if ($detalle->tamano === 'pequeno') {
-                    Producto::where('id', $producto->id)->decrement('stock_pequeno', $cantidad);
-                } elseif ($detalle->tamano === 'mediano') {
-                    Producto::where('id', $producto->id)->decrement('stock_mediano', $cantidad);
-                } elseif ($detalle->tamano === 'grande') {
-                    Producto::where('id', $producto->id)->decrement('stock_grande', $cantidad);
-                }
+            if ($producto->tiene_tamanos && $detalle->tamano) {
+                self::actualizarStockTamano($producto, $detalle->tamano, -((int) $cantidad));
             } else {
                 Producto::where('id', $producto->id)
                     ->decrement('stock', $cantidad);
@@ -105,7 +120,6 @@ class StockHelper
         $cantidad = $cantidad ?? $detalle->cantidad;
         if ($cantidad <= 0) return;
 
-        // Asegurarse de tener la relación cargada
         $detalle->loadMissing('producto.ingredientes');
         $producto = $detalle->producto;
         if (!$producto) return;
@@ -114,34 +128,20 @@ class StockHelper
 
         if ($producto->ingredientes->isNotEmpty()) {
             $ingredientesAfectadosIds = [];
-            foreach ($producto->ingredientes as $ingrediente) {
-                // Determinar qué cantidad usar dependiendo del tamaño (si el producto tiene tamaños)
-                $cantidadPivot = $ingrediente->pivot->cantidad ?? 0;
-                if ($producto->tiene_tamanos) {
-                    if ($detalle->tamano === 'pequeno') {
-                        $cantidadPivot = $ingrediente->pivot->cantidad_pequeno ?? $cantidadPivot;
-                    } elseif ($detalle->tamano === 'mediano') {
-                        $cantidadPivot = $ingrediente->pivot->cantidad_mediano ?? $cantidadPivot;
-                    } elseif ($detalle->tamano === 'grande') {
-                        $cantidadPivot = $ingrediente->pivot->cantidad_grande ?? $cantidadPivot;
-                    }
-                }
+            $tamano = $detalle->tamano;
 
+            foreach ($producto->ingredientes as $ingrediente) {
+                $cantidadPivot = self::getCantidadPivot($ingrediente->pivot, $tamano);
                 $cantidadARestaurar = (float) $cantidadPivot * (float) $cantidad;
 
-                // Saltar si no hay cantidad real que restaurar (ej. tamaño sin receta)
-                if ($cantidadARestaurar <= 0) {
-                    continue;
-                }
+                if ($cantidadARestaurar <= 0) continue;
 
-                $stockAnterior      = $ingrediente->stock_actual;
-                $stockNuevo         = $stockAnterior + $cantidadARestaurar;
+                $stockAnterior = $ingrediente->stock_actual;
+                $stockNuevo    = $stockAnterior + $cantidadARestaurar;
 
-                // Incrementar stock del ingrediente
                 Ingrediente::where('id', $ingrediente->id)
                     ->increment('stock_actual', $cantidadARestaurar);
 
-                // Registrar movimiento
                 IngredienteMovimiento::create([
                     'ingrediente_id'      => $ingrediente->id,
                     'producto_id'         => $producto->id,
@@ -157,7 +157,6 @@ class StockHelper
                 $ingredientesAfectadosIds[] = $ingrediente->id;
             }
 
-            // Recalcular stock de TODOS los productos que compartan los ingredientes afectados
             if (!empty($ingredientesAfectadosIds)) {
                 $productosARecalcular = Producto::whereHas('ingredientes', function($q) use ($ingredientesAfectadosIds) {
                     $q->whereIn('ingredientes.id', $ingredientesAfectadosIds);
@@ -168,14 +167,8 @@ class StockHelper
                 }
             }
         } else {
-            if ($producto->tiene_tamanos) {
-                if ($detalle->tamano === 'pequeno') {
-                    Producto::where('id', $producto->id)->increment('stock_pequeno', $cantidad);
-                } elseif ($detalle->tamano === 'mediano') {
-                    Producto::where('id', $producto->id)->increment('stock_mediano', $cantidad);
-                } elseif ($detalle->tamano === 'grande') {
-                    Producto::where('id', $producto->id)->increment('stock_grande', $cantidad);
-                }
+            if ($producto->tiene_tamanos && $detalle->tamano) {
+                self::actualizarStockTamano($producto, $detalle->tamano, (int) $cantidad);
             } else {
                 Producto::where('id', $producto->id)
                     ->increment('stock', $cantidad);

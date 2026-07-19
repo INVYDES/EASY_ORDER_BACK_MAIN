@@ -76,12 +76,12 @@ class ProductoController extends Controller
                 $query->where('stock', '<=', $request->stock_max);
             }
 
-            if ($request->has('bajo_stock') && $request->bajo_stock) {
+            if ($request->has('bajo_stock') && filter_var($request->bajo_stock, FILTER_VALIDATE_BOOLEAN)) {
                 $query->whereColumn('stock', '<=', 'stock_minimo')
                       ->where('stock', '>', 0);
             }
 
-            if ($request->has('sin_stock') && $request->sin_stock) {
+            if ($request->has('sin_stock') && filter_var($request->sin_stock, FILTER_VALIDATE_BOOLEAN)) {
                 $query->where('stock', '<=', 0);
             }
 
@@ -156,8 +156,8 @@ class ProductoController extends Controller
                     
                     'precio' => (float) $producto->precio,
                     'precio_formateado' => '$' . number_format($producto->precio, 2),
-                    'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
-                    'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+                    'precio_mediano' => (float) $producto->precio_mediano,
+                    'precio_grande' => (float) $producto->precio_grande,
                     'costo_insumos' => round($c['costoInsumos'], 4),
                     'costo_mo' => round($c['costoMO'], 4),
                     'costo_indirectos' => round($c['costoIndirectos'], 4),
@@ -171,9 +171,9 @@ class ProductoController extends Controller
                     'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                     'tamanos_personalizados' => $producto->tamanos_personalizados,
                     'stock' => (int) $producto->stock,
-                    'stock_pequeno' => (int) $producto->stock_pequeno,
-                    'stock_mediano' => (int) $producto->stock_mediano,
-                    'stock_grande' => (int) $producto->stock_grande,
+                    'stock_pequeno' => $producto->stock_pequeno,
+                    'stock_mediano' => $producto->stock_mediano,
+                    'stock_grande' => $producto->stock_grande,
                     'stock_minimo' => (int) $producto->stock_minimo,
                     'bajo_stock' => $bajoStock,
                     'bajo_stock_texto' => $bajoStock ? 'Sí' : 'No',
@@ -346,9 +346,6 @@ class ProductoController extends Controller
                 'stock' => 'nullable|numeric|min:0',
                 'tiene_tamanos' => 'nullable|boolean',
                 'tamanos_personalizados' => 'nullable',
-                'stock_pequeno' => 'nullable|numeric|min:0',
-                'stock_mediano' => 'nullable|numeric|min:0',
-                'stock_grande' => 'nullable|numeric|min:0',
                 'stock_minimo' => 'nullable|numeric|min:0',
                 'activo' => 'nullable|boolean',
                 'minutos_produccion' => 'nullable|numeric|min:0|max:1440',
@@ -431,7 +428,7 @@ class ProductoController extends Controller
                     'CREAR_PRODUCTO',
                     'productos',
                     $producto->id,
-                    "Producto creado: {$producto->nombre} - Precio: \${$producto->precio} - Mediano: \${$producto->precio_mediano} - Grande: \${$producto->precio_grande} - Stock: {$producto->stock}"
+                    "Producto creado: {$producto->nombre} - Precio: \${$producto->precio} - Stock: {$producto->stock}"
                 );
             }
 
@@ -486,9 +483,6 @@ class ProductoController extends Controller
                 'stock' => 'sometimes|numeric|min:0',
                 'tiene_tamanos' => 'sometimes|boolean',
                 'tamanos_personalizados' => 'nullable',
-                'stock_pequeno' => 'sometimes|numeric|min:0',
-                'stock_mediano' => 'sometimes|numeric|min:0',
-                'stock_grande' => 'sometimes|numeric|min:0',
                 'stock_minimo' => 'sometimes|numeric|min:0',
                 'activo' => 'sometimes|boolean',
                 'minutos_produccion' => 'nullable|numeric|min:0|max:1440',
@@ -793,7 +787,7 @@ class ProductoController extends Controller
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('activo', true)
                 ->orderBy('nombre')
-                ->get(['id', 'nombre', 'precio', 'precio_mediano', 'precio_grande', 'stock', 'stock_minimo', 'categoria_id']);
+                ->get(['id', 'nombre', 'precio', 'precio_mediano', 'precio_grande', 'tamanos_personalizados', 'tiene_tamanos', 'stock', 'stock_minimo', 'categoria_id']);
 
             return response()->json([
                 'success' => true,
@@ -810,13 +804,16 @@ class ProductoController extends Controller
                         $label = '[' . $producto->categoria->nombre . '] ' . $label;
                     }
                     
+                    $tamanos = $producto->tamanos_personalizados;
                     return [
                         'value' => $producto->id,
                         'label' => $label,
                         'precio' => (float) $producto->precio,
-                        'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
-                        'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+                        'precio_mediano' => (float) $producto->precio_mediano,
+                        'precio_grande' => (float) $producto->precio_grande,
                         'stock' => (int) $producto->stock,
+                        'tiene_tamanos' => (bool) $producto->tiene_tamanos,
+                        'tamanos_personalizados' => is_array($tamanos) ? $tamanos : null,
                         'agotado' => $producto->stock <= 0,
                         'categoria_id' => $producto->categoria_id,
                         'categoria_nombre' => $producto->categoria ? $producto->categoria->nombre : null
@@ -870,8 +867,8 @@ class ProductoController extends Controller
                         'diferencia' => $producto->stock_minimo - $producto->stock,
                         'precio' => (float) $producto->precio,
                         'precio_formateado' => '$' . number_format($producto->precio, 2),
-                        'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
-                        'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+                        'precio_mediano' => (float) $producto->precio_mediano,
+                        'precio_grande' => (float) $producto->precio_grande,
                         'imagen_url' => $producto->imagen_url
                     ];
                 })
@@ -1033,8 +1030,8 @@ class ProductoController extends Controller
                         'nombre'          => $producto->nombre,
                         'descripcion'     => $producto->descripcion,
                         'precio'          => (float) $producto->precio,
-                        'precio_mediano'  => (float) ($producto->precio_mediano ?? $producto->precio),
-                        'precio_grande'   => (float) ($producto->precio_grande ?? $producto->precio),
+                        'precio_mediano'  => (float) $producto->precio_mediano,
+                        'precio_grande'   => (float) $producto->precio_grande,
                         'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                         'imagen_url'      => $producto->imagen_url,
                         'categoria'       => $producto->categoria ? [
@@ -1052,7 +1049,6 @@ class ProductoController extends Controller
                     ];
                 }
 
-                // Producto CON receta (considera todos los tipos de componentes)
                 $stockCalculado = $componentes->map(function ($comp) {
                     $cantNecesaria = $comp->pivot->cantidad ?? 0;
                     if ($cantNecesaria <= 0) return PHP_INT_MAX;
@@ -1070,8 +1066,8 @@ class ProductoController extends Controller
                     'nombre'          => $producto->nombre,
                     'descripcion'     => $producto->descripcion,
                     'precio'          => (float) $producto->precio,
-                    'precio_mediano'  => (float) ($producto->precio_mediano ?? $producto->precio),
-                    'precio_grande'   => (float) ($producto->precio_grande ?? $producto->precio),
+                    'precio_mediano'  => (float) $producto->precio_mediano,
+                    'precio_grande'   => (float) $producto->precio_grande,
                     'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                     'imagen_url'      => $producto->imagen_url,
                     'categoria'       => $producto->categoria ? [
@@ -1312,8 +1308,8 @@ class ProductoController extends Controller
                     'descripcion' => $producto->descripcion,
                     'precio' => (float) $producto->precio,
                     'precio_formateado' => '$' . number_format($producto->precio, 2),
-                    'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
-                    'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+                    'precio_mediano' => (float) $producto->precio_mediano,
+                    'precio_grande' => (float) $producto->precio_grande,
                     'imagen_url' => $producto->imagen_url,
                     'categoria' => $producto->categoria ? [
                         'id' => $producto->categoria->id,
@@ -1398,8 +1394,8 @@ class ProductoController extends Controller
                     'precio_original_formateado' => '$' . number_format($precioOriginal, 2),
                     'precio_final' => $precioFinal,
                     'precio_final_formateado' => '$' . number_format($precioFinal, 2),
-                    'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
-                    'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+                    'precio_mediano' => (float) $producto->precio_mediano,
+                    'precio_grande' => (float) $producto->precio_grande,
                     'descuento' => $descuentoAplicado,
                     'imagen_url' => $producto->imagen_url,
                     'categoria' => $producto->categoria ? [
@@ -1458,8 +1454,8 @@ class ProductoController extends Controller
                             'nombre' => $producto->nombre,
                     'precio' => (float) $producto->precio,
                     'precio_formateado' => '$' . number_format($producto->precio, 2),
-                    'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
-                            'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+                    'precio_mediano' => (float) $producto->precio_mediano,
+                    'precio_grande' => (float) $producto->precio_grande,
                             'imagen_url' => $producto->imagen_url,
                             'disponible' => $this->checkDisponibilidadPublica($producto)
                         ];
@@ -1516,8 +1512,8 @@ class ProductoController extends Controller
                         'descripcion' => $producto->descripcion,
                             'precio' => (float) $producto->precio,
                             'precio_formateado' => '$' . number_format($producto->precio, 2),
-                            'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
-                        'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+                    'precio_mediano' => (float) $producto->precio_mediano,
+                    'precio_grande' => (float) $producto->precio_grande,
                         'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                         'imagen_url' => $producto->imagen_url,
                         'categoria' => $producto->categoria ? [
@@ -1545,8 +1541,8 @@ class ProductoController extends Controller
                         'descripcion' => $producto->descripcion,
                         'precio' => (float) $producto->precio,
                         'precio_formateado' => '$' . number_format($producto->precio, 2),
-                        'precio_mediano' => (float) ($producto->precio_mediano ?? $producto->precio),
-                    'precio_grande' => (float) ($producto->precio_grande ?? $producto->precio),
+                    'precio_mediano' => (float) $producto->precio_mediano,
+                    'precio_grande' => (float) $producto->precio_grande,
                     'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                     'imagen_url' => $producto->imagen_url,
                     'categoria' => $producto->categoria ? [
@@ -1630,24 +1626,42 @@ class ProductoController extends Controller
     private function sincronizarComponentes($producto, array $componentes)
     {
         $porTipo = ['ingrediente' => [], 'insumo_preparado' => []];
-        
+
+        $keysTamanos = $this->getTamanosKeys($producto);
+
         foreach ($componentes as $item) {
             $id = $item['id'] ?? $item['ingrediente_id'] ?? null;
             if (!$id) continue;
-            
+
             $tipo = $item['componente_type'] ?? 'ingrediente';
             $cantidad = $item['cantidad'] ?? 1;
-            $cantidad_pequeno = $item['cantidad_pequeno'] ?? 0;
-            $cantidad_mediano = $item['cantidad_mediano'] ?? 0;
-            $cantidad_grande = $item['cantidad_grande'] ?? 0;
-            
-            $porTipo[$tipo][$id] = [
+
+            $base = [
                 'cantidad' => $cantidad,
-                'cantidad_pequeno' => $cantidad_pequeno,
-                'cantidad_mediano' => $cantidad_mediano,
-                'cantidad_grande' => $cantidad_grande,
                 'componente_type' => $tipo,
             ];
+
+            // Mapear cantidades por tamaño a las columnas legacy (pequeno/mediano/grande)
+            // y al mismo tiempo construir el JSON cantidades_por_tamano si se envía
+            $cantidadesPorTamano = $item['cantidades_por_tamano'] ?? [];
+
+            foreach ($keysTamanos as $key) {
+                $cantKey = "cantidad_{$key}";
+                $valor = $cantidadesPorTamano[$key] ?? $item[$cantKey] ?? null;
+
+                if ($valor !== null) {
+                    // Si es un key legacy, escribir en columna dedicada
+                    if (in_array($key, ['pequeno', 'mediano', 'grande'])) {
+                        $base["cantidad_{$key}"] = (float) $valor;
+                    }
+                    // Si es el primer tamaño (pequeno), también actualizar cantidad base
+                    if ($key === 'pequeno') {
+                        $base['cantidad'] = (float) $valor;
+                    }
+                }
+            }
+
+            $porTipo[$tipo][$id] = $base;
         }
 
         // Obtener IDs de ingredientes antes del cambio
@@ -1668,6 +1682,18 @@ class ProductoController extends Controller
     }
 
     /**
+     * Obtiene las keys de los tamaños personalizados de un producto.
+     */
+    private function getTamanosKeys($producto): array
+    {
+        $tams = $producto->tamanos_personalizados;
+        if (!is_array($tams) || empty($tams)) {
+            return ['pequeno', 'mediano', 'grande'];
+        }
+        return array_values(array_unique(array_filter(array_map(fn($t) => $t['key'] ?? null, $tams))));
+    }
+
+    /**
      * Calcula los tamaños realmente disponibles de un producto
      * a partir de tamanos_personalizados o, si no existe, de qué
      * precios de tamaño tiene definidos.
@@ -1676,28 +1702,25 @@ class ProductoController extends Controller
     {
         if (!empty($producto->tamanos_personalizados) && is_array($producto->tamanos_personalizados)) {
             return collect($producto->tamanos_personalizados)
-                ->map(fn($t) => $t['key'] ?? $t['nombre'] ?? null)
-                ->filter()
+                ->map(fn($t) => [
+                    'key'    => $t['key'] ?? $t['nombre'] ?? null,
+                    'nombre' => $t['nombre'] ?? $t['key'] ?? null,
+                    'precio' => (float) ($t['precio'] ?? 0),
+                    'stock'  => (int) ($t['stock'] ?? $producto->stock ?? 0),
+                ])
+                ->filter(fn($t) => $t['key'] !== null)
                 ->values()
                 ->toArray();
         }
-        $disponibles = [];
-        if ($producto->precio > 0) $disponibles[] = 'pequeno';
-        return $disponibles;
-    }
-
-    private function getPrecioFromTamanos($producto, int $indice): ?float
-    {
-        $tams = $producto->tamanos_personalizados;
-        if (!is_array($tams) || !isset($tams[$indice])) return 0;
-        return (float) ($tams[$indice]['precio'] ?? 0);
-    }
-
-    private function getStockFromTamanos($producto, int $indice): ?float
-    {
-        $tams = $producto->tamanos_personalizados;
-        if (!is_array($tams) || !isset($tams[$indice])) return 0;
-        return (float) ($tams[$indice]['stock'] ?? 0);
+        if ((float) ($producto->precio ?? 0) > 0) {
+            return [[
+                'key'    => 'unico',
+                'nombre' => 'Único',
+                'precio' => (float) $producto->precio,
+                'stock'  => (int) ($producto->stock ?? 0),
+            ]];
+        }
+        return [];
     }
 
     /**
@@ -1753,10 +1776,10 @@ class ProductoController extends Controller
             'imagen' => $producto->imagen,
             'imagen_url' => $producto->imagen_url,
 
-            'precio' => (float) ($this->getPrecioFromTamanos($producto, 0) ?: $producto->precio ?? 0),
-            'precio_formateado' => '$' . number_format($this->getPrecioFromTamanos($producto, 0) ?: $producto->precio ?? 0, 2),
-            'precio_mediano' => (float) $this->getPrecioFromTamanos($producto, 1),
-            'precio_grande'  => (float) $this->getPrecioFromTamanos($producto, 2),
+            'precio' => (float) ($producto->precio ?? 0),
+            'precio_formateado' => '$' . number_format((float) ($producto->precio ?? 0), 2),
+            'precio_mediano' => (float) $producto->precio_mediano,
+            'precio_grande'  => (float) $producto->precio_grande,
             'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
 
             'costo_insumos' => round($c['costoInsumos'], 4),
@@ -1771,10 +1794,10 @@ class ProductoController extends Controller
 
             'tiene_tamanos' => (bool) $producto->tiene_tamanos,
             'tamanos_personalizados' => $producto->tamanos_personalizados,
-            'stock' => (int) ($this->getStockFromTamanos($producto, 0) ?: $producto->stock ?? 0),
-            'stock_pequeno' => (int) ($this->getStockFromTamanos($producto, 0) ?: $producto->stock ?? 0),
-            'stock_mediano' => (int) $this->getStockFromTamanos($producto, 1),
-            'stock_grande' => (int) $this->getStockFromTamanos($producto, 2),
+            'stock' => (int) ($producto->stock ?? 0),
+            'stock_pequeno' => $producto->stock_pequeno,
+            'stock_mediano' => $producto->stock_mediano,
+            'stock_grande' => $producto->stock_grande,
             'stock_minimo' => (int) $producto->stock_minimo,
             'bajo_stock' => $bajoStock,
             'agotado' => $producto->stock <= 0,
@@ -1903,11 +1926,6 @@ class ProductoController extends Controller
         if (is_array($value)) return $value;
         $decoded = json_decode($value, true);
         if (!is_array($decoded)) return null;
-        if (count($decoded) > 3) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
-                'tamanos_personalizados' => 'Un producto puede tener máximo 3 tamaños.',
-            ]);
-        }
         return $decoded;
     }
 }

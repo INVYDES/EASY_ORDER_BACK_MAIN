@@ -382,11 +382,20 @@ class IngredienteController extends Controller
 
             $producto = \App\Models\Producto::findOrFail($productoId);
 
-            // Agrupar por tipo de componente
             $porTipo = [
                 'ingrediente' => [],
                 'insumo_preparado' => [],
             ];
+
+            $keysTamanos = collect($producto->tamanos_personalizados ?? [])
+                ->pluck('key')
+                ->filter()
+                ->values()
+                ->toArray();
+
+            if (empty($keysTamanos)) {
+                $keysTamanos = ['pequeno', 'mediano', 'grande'];
+            }
 
             foreach ($request->ingredientes as $item) {
                 $id = $item['id'];
@@ -395,29 +404,28 @@ class IngredienteController extends Controller
                 $tipo = $item['componente_type'] ?? 'ingrediente';
 
                 if (!isset($porTipo[$tipo][$id])) {
-                    $porTipo[$tipo][$id] = [
+                    $base = [
                         'cantidad' => 0,
-                        'cantidad_pequeno' => 0,
-                        'cantidad_mediano' => 0,
-                        'cantidad_grande' => 0,
                         'componente_type' => $tipo,
                     ];
+                    foreach ($keysTamanos as $k) {
+                        if (in_array($k, ['pequeno', 'mediano', 'grande'])) {
+                            $base["cantidad_{$k}"] = 0;
+                        }
+                    }
+                    $porTipo[$tipo][$id] = $base;
                 }
 
+                if (in_array($tamano, ['pequeno', 'mediano', 'grande'])) {
+                    $porTipo[$tipo][$id]["cantidad_{$tamano}"] = $cantidad;
+                }
                 if ($tamano === 'pequeno') {
-                    $porTipo[$tipo][$id]['cantidad_pequeno'] = $cantidad;
                     $porTipo[$tipo][$id]['cantidad'] = $cantidad;
-                } elseif ($tamano === 'mediano') {
-                    $porTipo[$tipo][$id]['cantidad_mediano'] = $cantidad;
-                } elseif ($tamano === 'grande') {
-                    $porTipo[$tipo][$id]['cantidad_grande'] = $cantidad;
                 }
             }
 
-            // IDs de ingredientes antes del cambio (para recalcular stock mínimo)
             $ingredientesAntesIds = $producto->ingredientes()->pluck('ingredientes.id')->toArray();
 
-            // Sincronizar cada tipo por separado
             $producto->ingredientes()->sync($porTipo['ingrediente']);
             $producto->insumosPreparados()->sync($porTipo['insumo_preparado']);
 
@@ -459,42 +467,49 @@ class IngredienteController extends Controller
             }
 
             $producto = \App\Models\Producto::with(['ingredientes', 'insumosPreparados'])->findOrFail($productoId);
-
             $tamano = request()->query('tamano');
 
             $componentes = $producto->todosLosComponentes;
 
             $tipoReal = fn($item) => $item instanceof \App\Models\InsumoPreparado ? 'insumo_preparado' : 'ingrediente';
 
-            if ($tamano && in_array($tamano, ['pequeno', 'mediano', 'grande'])) {
-                $columna = $tamano === 'pequeno' ? 'cantidad_pequeno' : ($tamano === 'mediano' ? 'cantidad_mediano' : 'cantidad_grande');
+            if ($tamano) {
+                $columna = in_array($tamano, ['pequeno', 'mediano', 'grande']) ? "cantidad_{$tamano}" : null;
                 $componentes = $componentes->map(fn($i) => [
                     ...$this->transformCompuesto($i),
                     'componente_type' => $tipoReal($i),
-                    'cantidad_receta' => (float) ($i->pivot->$columna ?: $i->pivot->cantidad),
+                    'cantidad_receta' => $columna
+                        ? (float) ($i->pivot->$columna ?: $i->pivot->cantidad)
+                        : (float) ($i->pivot->cantidad ?? 0),
                     'tamano' => $tamano,
                 ]);
             } else {
-                $tamanosPersonalizados = $producto->tamanos_personalizados;
-                $numTamanos = is_array($tamanosPersonalizados) ? count($tamanosPersonalizados) : 1;
-                $tamanos = ['pequeno', 'mediano', 'grande'];
-                $tamanos = array_slice($tamanos, 0, max($numTamanos, 1));
+                $tamanosKeys = collect($producto->tamanos_personalizados ?? [])
+                    ->pluck('key')
+                    ->filter()
+                    ->values()
+                    ->toArray();
 
-                $componentes = $componentes->flatMap(function($i) use ($tipoReal, $producto, $tamanos) {
+                if (empty($tamanosKeys)) {
+                    $tamanosKeys = ['pequeno', 'mediano', 'grande'];
+                }
+
+                $componentes = $componentes->flatMap(function($i) use ($tipoReal, $producto, $tamanosKeys) {
                     $items = [];
-                    foreach ($tamanos as $idx => $t) {
-                        $col = "cantidad_{$t}";
-                        $cant = (float) ($i->pivot->$col ?: ($t === 'pequeno' ? $i->pivot->cantidad : 0));
+                    $tams = is_array($producto->tamanos_personalizados) ? $producto->tamanos_personalizados : [];
+                    foreach ($tamanosKeys as $t) {
+                        $col = in_array($t, ['pequeno', 'mediano', 'grande']) ? "cantidad_{$t}" : null;
+                        $cant = $col
+                            ? (float) ($i->pivot->$col ?: ($t === 'pequeno' ? $i->pivot->cantidad : 0))
+                            : (float) ($i->pivot->cantidad ?? 0);
                         if ($cant > 0) {
-                            $tamanoNombre = is_array($producto->tamanos_personalizados)
-                                ? ($producto->tamanos_personalizados[$idx]['nombre'] ?? null)
-                                : null;
+                            $tamanoInfo = collect($tams)->firstWhere('key', $t);
                             $items[] = [
                                 ...$this->transformCompuesto($i),
                                 'componente_type' => $tipoReal($i),
                                 'cantidad_receta' => $cant,
                                 'tamano' => $t,
-                                'tamano_nombre' => $tamanoNombre,
+                                'tamano_nombre' => $tamanoInfo['nombre'] ?? null,
                             ];
                         }
                     }

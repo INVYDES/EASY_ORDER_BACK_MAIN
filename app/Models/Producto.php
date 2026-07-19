@@ -20,15 +20,10 @@ class Producto extends Model
         'nombre',
         'descripcion',
         'precio',
-        'precio_mediano',
-        'precio_grande',
         'costo',
         'stock',
         'tiene_tamanos',
         'tamanos_personalizados',
-        'stock_pequeno',
-        'stock_mediano',
-        'stock_grande',
         'stock_minimo',
         'minutos_produccion',
         'nomina_diaria',
@@ -204,6 +199,59 @@ class Producto extends Model
         return '$' . number_format($this->precio, 2);
     }
 
+    private function getPrecioFromTamano(string $key, $default): float
+    {
+        if (!$this->tiene_tamanos || empty($this->tamanos_personalizados)) {
+            return (float) $default;
+        }
+        foreach ((array) $this->tamanos_personalizados as $t) {
+            if (($t['key'] ?? '') === $key) {
+                $p = $t['precio'] ?? null;
+                if ($p !== null && (float) $p > 0) return (float) $p;
+            }
+        }
+        return (float) $default;
+    }
+
+    private function getStockFromTamano(string $key, $default): int
+    {
+        if (!$this->tiene_tamanos || empty($this->tamanos_personalizados)) {
+            return (int) $default;
+        }
+        foreach ((array) $this->tamanos_personalizados as $t) {
+            if (($t['key'] ?? '') === $key) {
+                $s = $t['stock'] ?? null;
+                if ($s !== null) return (int) $s;
+            }
+        }
+        return (int) $default;
+    }
+
+    public function getPrecioMedianoAttribute($value): float
+    {
+        return $this->getPrecioFromTamano('mediano', $value);
+    }
+
+    public function getPrecioGrandeAttribute($value): float
+    {
+        return $this->getPrecioFromTamano('grande', $value);
+    }
+
+    public function getStockPequenoAttribute($value): int
+    {
+        return $this->getStockFromTamano('pequeno', $value);
+    }
+
+    public function getStockMedianoAttribute($value): int
+    {
+        return $this->getStockFromTamano('mediano', $value);
+    }
+
+    public function getStockGrandeAttribute($value): int
+    {
+        return $this->getStockFromTamano('grande', $value);
+    }
+
     /**
      * ACCESORS PARA IMAGEN - 🖼️ NUEVOS
      */
@@ -263,6 +311,7 @@ class Producto extends Model
     /**
      * Recalcula el stock del producto basándose en el componente más limitante.
      * Soporta ingredientes crudos, insumos preparados y sub-productos.
+     * Para productos con tamaños, itera dinámicamente sobre tamanos_personalizados.
      */
     public function recalcularStockDesdeIngredientes()
     {
@@ -281,17 +330,25 @@ class Producto extends Model
 
         $getStock = fn($item) => $item->stock_actual;
 
-        if ($this->tiene_tamanos) {
-            $nuevoStockPeq = $todos->map(fn($c) => $this->calcularUnidades($c, 'cantidad_pequeno', $getStock))->min();
-            $nuevoStockMed = $todos->map(fn($c) => $this->calcularUnidades($c, 'cantidad_mediano', $getStock))->min();
-            $nuevoStockGra = $todos->map(fn($c) => $this->calcularUnidades($c, 'cantidad_grande', $getStock))->min();
+        if ($this->tiene_tamanos && !empty($this->tamanos_personalizados)) {
+            $tamanosActualizados = [];
+            $stockTotal = 0;
 
-            $this->stock_pequeno = max(0, (int) ($nuevoStockPeq === PHP_INT_MAX ? 0 : $nuevoStockPeq));
-            $this->stock_mediano = max(0, (int) ($nuevoStockMed === PHP_INT_MAX ? 0 : $nuevoStockMed));
-            $this->stock_grande  = max(0, (int) ($nuevoStockGra === PHP_INT_MAX ? 0 : $nuevoStockGra));
-            $this->stock = $this->stock_pequeno + $this->stock_mediano + $this->stock_grande;
+            foreach ((array) $this->tamanos_personalizados as $t) {
+                $key = $t['key'] ?? '';
+                if (!$key) continue;
+
+                $minimo = $todos->map(fn($c) => $this->calcularUnidadesPorTamano($c, $key, $getStock))->min();
+                $stockTamano = max(0, (int) ($minimo === PHP_INT_MAX ? 0 : $minimo));
+
+                $tamanosActualizados[] = array_merge($t, ['stock' => $stockTamano]);
+                $stockTotal += $stockTamano;
+            }
+
+            $this->tamanos_personalizados = $tamanosActualizados;
+            $this->stock = $stockTotal;
         } else {
-            $minimo = $todos->map(fn($c) => $this->calcularUnidades($c, 'cantidad', $getStock))->min();
+            $minimo = $todos->map(fn($c) => $this->calcularUnidadesPorTamano($c, '', $getStock))->min();
             $this->stock = max(0, (int) ($minimo === PHP_INT_MAX ? 0 : $minimo));
         }
 
@@ -299,12 +356,29 @@ class Producto extends Model
         return $this->stock;
     }
 
-    private function calcularUnidades($componente, string $columna, \Closure $getStock): int
+    private function calcularUnidadesPorTamano($componente, string $key, \Closure $getStock): int
     {
-        $cantidad = (float) ($componente->pivot->$columna ?? $componente->pivot->cantidad ?? 0);
+        $cantidad = $this->getCantidadReceta($componente, $key);
         if ($cantidad <= 0) return PHP_INT_MAX;
         $stock = $getStock($componente);
         return (int) floor($stock / $cantidad);
+    }
+
+    /**
+     * Obtiene la cantidad de un componente para un tamaño específico.
+     * Mapea 'pequeno'/'mediano'/'grande' a columnas legacy,
+     * cualquier otro key usa la columna 'cantidad' (base).
+     */
+    private function getCantidadReceta($componente, string $key): float
+    {
+        $legacyMap = ['pequeno' => 'cantidad_pequeno', 'mediano' => 'cantidad_mediano', 'grande' => 'cantidad_grande'];
+        $columna = $legacyMap[$key] ?? null;
+
+        if ($columna) {
+            return (float) ($componente->pivot->$columna ?? $componente->pivot->cantidad ?? 0);
+        }
+
+        return (float) ($componente->pivot->cantidad ?? 0);
     }
 
     /**

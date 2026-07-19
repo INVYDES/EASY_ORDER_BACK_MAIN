@@ -19,12 +19,11 @@ class ProductoStoreRequest extends FormRequest
             'nombre' => 'required|string|max:150',
             'descripcion' => 'nullable|string|max:1000',
             'precio' => 'nullable|numeric|min:0|max:999999.99',
-            'precio_mediano' => 'nullable|numeric|min:0|max:999999.99',
-            'precio_grande' => 'nullable|numeric|min:0|max:999999.99',
             'categoria_id' => 'nullable|exists:categorias,id',
             'stock' => 'nullable|numeric|min:0',
             'stock_minimo' => 'nullable|numeric|min:0',
             'minutos_produccion' => 'nullable|numeric|min:0|max:1440',
+            'tiene_tamanos' => 'nullable|boolean',
             'activo' => 'nullable|boolean',
             'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
             'imagen_url' => 'nullable|url|max:500',
@@ -37,8 +36,20 @@ class ProductoStoreRequest extends FormRequest
     {
         $validator->after(function ($validator) {
             $data = $this->all();
-            if (empty($data['precio']) && empty($data['precio_mediano']) && empty($data['precio_grande'])) {
-                $validator->errors()->add('precio', 'Debe proporcionar al menos un precio');
+            $tienePrecioDirecto = !empty($data['precio']) && (float) $data['precio'] > 0;
+            $tienePreciosEnTamanos = false;
+            $tamanosRaw = $data['tamanos_personalizados'] ?? [];
+            if (is_string($tamanosRaw)) $tamanosRaw = json_decode($tamanosRaw, true) ?? [];
+            if (is_array($tamanosRaw)) {
+                foreach ($tamanosRaw as $t) {
+                    if (!empty($t['precio']) && (float) $t['precio'] > 0) {
+                        $tienePreciosEnTamanos = true;
+                        break;
+                    }
+                }
+            }
+            if (!$tienePrecioDirecto && !$tienePreciosEnTamanos) {
+                $validator->errors()->add('precio', 'Debe proporcionar un precio base o precios en los tamaños personalizados');
             }
         });
     }
