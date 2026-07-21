@@ -1175,7 +1175,7 @@ class OrdenController extends Controller
     {
         foreach ($orden->detalles as $detalle) {
             // Solo restaurar si el producto NO había iniciado preparación (estaba pendiente)
-            if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
+            if (in_array($detalle->estado_preparacion, ['ABIERTA', 'PENDIENTE']) || empty($detalle->estado_preparacion)) {
                 \App\Helpers\StockHelper::restaurarStock($detalle, $detalle->cantidad, $orden->usuario_id);
             }
         }

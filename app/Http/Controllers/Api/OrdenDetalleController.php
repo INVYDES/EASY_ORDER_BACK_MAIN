@@ -313,7 +313,7 @@ class OrdenDetalleController extends Controller
                 \App\Helpers\StockHelper::descontarStock($detalle, $diferencia, $user->id);
             } elseif ($diferencia < 0) {
                 // Si disminuye y no ha iniciado preparación, restauramos el stock
-                if (in_array($detalle->estado_preparacion, ['PENDIENTE']) || empty($detalle->estado_preparacion)) {
+                if (in_array($detalle->estado_preparacion, ['ABIERTA', 'PENDIENTE']) || empty($detalle->estado_preparacion)) {
                     \App\Helpers\StockHelper::restaurarStock($detalle, abs($diferencia), $user->id);
                 }
             }

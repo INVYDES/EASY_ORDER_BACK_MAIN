@@ -380,6 +380,24 @@ class IngredienteController extends Controller
                 ], 403);
             }
 
+            // Protección: detectar duplicados ingrediente_id + tamano en el payload
+            $seen = [];
+            foreach ($request->ingredientes as $item) {
+                $key = ($item['ingrediente_id'] ?? $item['id']) . '|' . ($item['tamano'] ?? 'pequeno');
+                if (isset($seen[$key])) {
+                    \Log::warning('[syncProducto] Duplicado detectado en payload', [
+                        'producto_id' => $productoId,
+                        'ingrediente_id' => $item['ingrediente_id'] ?? $item['id'],
+                        'tamano' => $item['tamano'] ?? 'pequeno',
+                    ]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'El payload contiene entradas duplicadas para el mismo ingrediente y tamaño. Revisa que los tamaños estén correctamente asignados en el formulario.'
+                    ], 422);
+                }
+                $seen[$key] = true;
+            }
+
             $producto = \App\Models\Producto::findOrFail($productoId);
 
             $porTipo = [
@@ -387,15 +405,26 @@ class IngredienteController extends Controller
                 'insumo_preparado' => [],
             ];
 
-            $keysTamanos = collect($producto->tamanos_personalizados ?? [])
-                ->pluck('key')
-                ->filter()
-                ->values()
-                ->toArray();
+            $tamanosData = collect($producto->tamanos_personalizados ?? [])->filter()->values();
+            $keysTamanos = $tamanosData->pluck('key')->toArray();
+            $keyToSlot = [];
+            foreach ($tamanosData as $i => $td) {
+                $slotsLegacy = ['pequeno', 'mediano', 'grande'];
+                $keyToSlot[$td['key']] = $td['slot'] ?? $slotsLegacy[$i] ?? null;
+            }
 
             if (empty($keysTamanos)) {
                 $keysTamanos = ['pequeno', 'mediano', 'grande'];
             }
+
+            $slotsUsados = [];
+            foreach ($keysTamanos as $k) {
+                $s = $keyToSlot[$k] ?? $k;
+                if (in_array($s, ['pequeno', 'mediano', 'grande'])) {
+                    $slotsUsados[] = $s;
+                }
+            }
+            $slotsUsados = array_unique($slotsUsados);
 
             foreach ($request->ingredientes as $item) {
                 $id = $item['id'];
@@ -408,10 +437,8 @@ class IngredienteController extends Controller
                         'cantidad' => 0,
                         'componente_type' => $tipo,
                     ];
-                    foreach ($keysTamanos as $k) {
-                        if (in_array($k, ['pequeno', 'mediano', 'grande'])) {
-                            $base["cantidad_{$k}"] = 0;
-                        }
+                    foreach ($slotsUsados as $s) {
+                        $base["cantidad_{$s}"] = 0;
                     }
                     $porTipo[$tipo][$id] = $base;
                 }
@@ -484,23 +511,27 @@ class IngredienteController extends Controller
                     'tamano' => $tamano,
                 ]);
             } else {
-                $tamanosKeys = collect($producto->tamanos_personalizados ?? [])
-                    ->pluck('key')
-                    ->filter()
-                    ->values()
-                    ->toArray();
+                $tamanosData = collect($producto->tamanos_personalizados ?? [])->filter()->values();
+                $tamanosKeys = $tamanosData->pluck('key')->toArray();
 
                 if (empty($tamanosKeys)) {
                     $tamanosKeys = ['pequeno', 'mediano', 'grande'];
                 }
 
-                $componentes = $componentes->flatMap(function($i) use ($tipoReal, $producto, $tamanosKeys) {
+                $keyToSlot = [];
+                foreach ($tamanosData as $td) {
+                    $keyToSlot[$td['key']] = $td['slot'] ?? null;
+                }
+
+                $componentes = $componentes->flatMap(function($i) use ($tipoReal, $producto, $tamanosKeys, $keyToSlot) {
                     $items = [];
                     $tams = is_array($producto->tamanos_personalizados) ? $producto->tamanos_personalizados : [];
-                    foreach ($tamanosKeys as $t) {
-                        $col = in_array($t, ['pequeno', 'mediano', 'grande']) ? "cantidad_{$t}" : null;
+                    foreach ($tamanosKeys as $idx => $t) {
+                        $slotsLegacy = ['pequeno', 'mediano', 'grande'];
+                        $slot = $keyToSlot[$t] ?? $slotsLegacy[$idx] ?? 'pequeno';
+                        $col = in_array($slot, ['pequeno', 'mediano', 'grande']) ? "cantidad_{$slot}" : null;
                         $cant = $col
-                            ? (float) ($i->pivot->$col ?: ($t === 'pequeno' ? $i->pivot->cantidad : 0))
+                            ? (float) ($i->pivot->$col ?: ($slot === 'pequeno' ? $i->pivot->cantidad : 0))
                             : (float) ($i->pivot->cantidad ?? 0);
                         if ($cant > 0) {
                             $tamanoInfo = collect($tams)->firstWhere('key', $t);
