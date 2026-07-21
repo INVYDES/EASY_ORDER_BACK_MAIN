@@ -17,7 +17,7 @@ class EnsureTenantSelected
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (!$user || $user->hasRole('SUPER_ADMIN')) {
             return $next($request);
         }
 

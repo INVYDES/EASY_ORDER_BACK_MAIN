@@ -20,15 +20,24 @@ class StockHelper
         if ($cantidad <= 0) return;
 
         // Asegurarse de tener la relación cargada
-        $detalle->loadMissing('producto.ingredientes');
+        $detalle->loadMissing(['producto.ingredientes', 'tamano.ingredientes']);
         $producto = $detalle->producto;
         if (!$producto) return;
 
         $userId = $userId ?? auth()->id() ?? $detalle->orden->usuario_id ?? 1;
+        $tamano = $detalle->tamano;
 
-        if ($producto->ingredientes->isNotEmpty()) {
+        // Determinar qué conjunto de ingredientes usar
+        $ingredientes = null;
+        if ($tamano && $tamano->ingredientes->isNotEmpty()) {
+            $ingredientes = $tamano->ingredientes;
+        } else if ($producto->ingredientes->isNotEmpty()) {
+            $ingredientes = $producto->ingredientes;
+        }
+
+        if ($ingredientes && $ingredientes->isNotEmpty()) {
             $ingredientesAfectadosIds = [];
-            foreach ($producto->ingredientes as $ingrediente) {
+            foreach ($ingredientes as $ingrediente) {
                 $cantidadADescontar = (float) $ingrediente->pivot->cantidad * (float) $cantidad;
                 $stockAnterior      = $ingrediente->stock_actual;
                 $stockNuevo         = $stockAnterior - $cantidadADescontar;
@@ -47,7 +56,7 @@ class StockHelper
                     'cantidad_anterior'   => $stockAnterior,
                     'cantidad_movimiento' => $cantidadADescontar,
                     'cantidad_nueva'      => $stockNuevo,
-                    'motivo'              => "Pedido - Orden #{$detalle->orden_id}",
+                    'motivo'              => "Pedido - Orden #{$detalle->orden_id}" . ($tamano ? " ({$tamano->nombre})" : ""),
                 ]);
 
                 $ingredientesAfectadosIds[] = $ingrediente->id;
@@ -64,8 +73,12 @@ class StockHelper
                 }
             }
         } else {
-            Producto::where('id', $producto->id)
-                ->decrement('stock', $cantidad);
+            if ($tamano) {
+                \App\Models\ProductoTamano::where('id', $tamano->id)->decrement('stock', $cantidad);
+                Producto::where('id', $producto->id)->decrement('stock', $cantidad);
+            } else {
+                Producto::where('id', $producto->id)->decrement('stock', $cantidad);
+            }
         }
     }
 
@@ -78,15 +91,24 @@ class StockHelper
         if ($cantidad <= 0) return;
 
         // Asegurarse de tener la relación cargada
-        $detalle->loadMissing('producto.ingredientes');
+        $detalle->loadMissing(['producto.ingredientes', 'tamano.ingredientes']);
         $producto = $detalle->producto;
         if (!$producto) return;
 
         $userId = $userId ?? auth()->id() ?? $detalle->orden->usuario_id ?? 1;
+        $tamano = $detalle->tamano;
 
-        if ($producto->ingredientes->isNotEmpty()) {
+        // Determinar qué conjunto de ingredientes usar
+        $ingredientes = null;
+        if ($tamano && $tamano->ingredientes->isNotEmpty()) {
+            $ingredientes = $tamano->ingredientes;
+        } else if ($producto->ingredientes->isNotEmpty()) {
+            $ingredientes = $producto->ingredientes;
+        }
+
+        if ($ingredientes && $ingredientes->isNotEmpty()) {
             $ingredientesAfectadosIds = [];
-            foreach ($producto->ingredientes as $ingrediente) {
+            foreach ($ingredientes as $ingrediente) {
                 $cantidadARestaurar = (float) $ingrediente->pivot->cantidad * (float) $cantidad;
                 $stockAnterior      = $ingrediente->stock_actual;
                 $stockNuevo         = $stockAnterior + $cantidadARestaurar;
@@ -105,7 +127,7 @@ class StockHelper
                     'cantidad_anterior'   => $stockAnterior,
                     'cantidad_movimiento' => $cantidadARestaurar,
                     'cantidad_nueva'      => $stockNuevo,
-                    'motivo'              => "Cancelación/Devolución - Orden #{$detalle->orden_id}",
+                    'motivo'              => "Cancelación/Devolución - Orden #{$detalle->orden_id}" . ($tamano ? " ({$tamano->nombre})" : ""),
                 ]);
 
                 $ingredientesAfectadosIds[] = $ingrediente->id;
@@ -122,8 +144,12 @@ class StockHelper
                 }
             }
         } else {
-            Producto::where('id', $producto->id)
-                ->increment('stock', $cantidad);
+            if ($tamano) {
+                \App\Models\ProductoTamano::where('id', $tamano->id)->increment('stock', $cantidad);
+                Producto::where('id', $producto->id)->increment('stock', $cantidad);
+            } else {
+                Producto::where('id', $producto->id)->increment('stock', $cantidad);
+            }
         }
     }
 }

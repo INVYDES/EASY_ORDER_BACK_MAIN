@@ -22,36 +22,44 @@ class OrdenResource extends JsonResource
             }),
             'mesero'           => $this->usuario ? $this->usuario->name : 'N/A',
             'detalles'         => $this->whenLoaded('detalles', function() {
-                return $this->detalles->map(fn($d) => [
-                    'id'            => $d->id,
-                    'producto_id'   => $d->producto_id,
-                    'producto'      => [
-                        'id'           => $d->producto_id,
-                        'nombre'       => $d->producto->nombre ?? 'N/A',
-                        'categoria_id' => $d->producto->categoria_id ?? null,
-                        'categoria'    => $d->producto->categoria ? [
-                            'id'     => $d->producto->categoria->id,
-                            'nombre' => $d->producto->categoria->nombre,
-                        ] : null,
-                    ],
-                    'producto_nombre' => $d->producto->nombre ?? 'N/A',
-                    'categoria_id'  => $d->producto->categoria_id ?? null,
-                    'categoria'     => $d->producto->categoria?->nombre ?? null,
-                    'cantidad'      => $d->cantidad,
-                    'mesa'          => $this->mesa,
-                    'comensal'      => $d->nom_comensal,
-                    'nom_comensal'  => $d->nom_comensal,
-                    'comensal_id'   => $d->comensal_id,
-                    'precio_unitario' => (float) $d->precio_unitario,
-                    'subtotal'      => (float)$d->subtotal,
-                    'estado'        => $d->estado_preparacion,
-                    'estado_preparacion' => $d->estado_preparacion,
-                    'notas'         => $d->notas,
-                    'cancelado'     => $d->trashed(),
-                    'motivo_cancelacion' => $d->motivo_cancelacion,
-                    'minutos_produccion' => (float) ($d->producto->minutos_produccion ?? 0),
-                    'created_at'    => $d->created_at?->format('Y-m-d H:i:s'),
-                ]);
+                return $this->detalles->map(function($d) {
+                    $tamanoNombre   = $d->tamano_nombre;
+                    $baseProdNombre = $d->producto->nombre ?? 'N/A';
+                    $fullProdNombre = !empty($tamanoNombre) ? "{$baseProdNombre} ({$tamanoNombre})" : $baseProdNombre;
+
+                    return [
+                        'id'                  => $d->id,
+                        'producto_id'         => $d->producto_id,
+                        'tamano_id'           => $d->tamano_id,
+                        'tamano_nombre'       => $tamanoNombre,
+                        'producto'            => [
+                            'id'           => $d->producto_id,
+                            'nombre'       => $fullProdNombre,
+                            'categoria_id' => $d->producto->categoria_id ?? null,
+                            'categoria'    => $d->producto->categoria ? [
+                                'id'     => $d->producto->categoria->id,
+                                'nombre' => $d->producto->categoria->nombre,
+                            ] : null,
+                        ],
+                        'producto_nombre'     => $fullProdNombre,
+                        'categoria_id'        => $d->producto->categoria_id ?? null,
+                        'categoria'           => $d->producto->categoria?->nombre ?? null,
+                        'cantidad'            => $d->cantidad,
+                        'mesa'                => $this->mesa,
+                        'comensal'            => $d->nom_comensal,
+                        'nom_comensal'        => $d->nom_comensal,
+                        'comensal_id'         => $d->comensal_id,
+                        'precio_unitario'     => (float) $d->precio_unitario,
+                        'subtotal'            => (float) $d->subtotal,
+                        'estado'              => $d->estado_preparacion,
+                        'estado_preparacion'  => $d->estado_preparacion,
+                        'notas'               => $d->notas,
+                        'cancelado'           => $d->trashed(),
+                        'motivo_cancelacion'  => $d->motivo_cancelacion,
+                        'minutos_produccion'  => (float) ($d->producto->minutos_produccion ?? 0),
+                        'created_at'          => $d->created_at?->format('Y-m-d H:i:s'),
+                    ];
+                });
             }),
             'notas'            => $this->notas,
             'metodo_pago'      => $this->metodo_pago,

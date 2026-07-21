@@ -63,9 +63,14 @@ class PaqueteController extends Controller
 
             $paquete = Paquete::create($data);
 
-            // Sincronizar productos
+            // Sincronizar productos con posible tamano_id
+            $paquete->productos()->detach();
             foreach ($request->productos as $prod) {
-                $paquete->productos()->attach($prod['id'], ['cantidad' => $prod['cantidad']]);
+                $attachData = ['cantidad' => $prod['cantidad']];
+                if (!empty($prod['tamano_id'])) {
+                    $attachData['tamano_id'] = $prod['tamano_id'];
+                }
+                $paquete->productos()->attach($prod['id'], $attachData);
             }
 
             DB::commit();
@@ -86,7 +91,7 @@ class PaqueteController extends Controller
     {
         try {
             $restauranteActivo = app('restaurante_activo');
-            $paquete = Paquete::with(['productos.categoria', 'productos.ingredientes'])
+            $paquete = Paquete::with(['productos.categoria', 'productos.ingredientes', 'productos.tamanos'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();
@@ -130,12 +135,15 @@ class PaqueteController extends Controller
 
             $paquete->update($data);
 
-            // Sincronizar productos
-            $productosSinc = [];
+            // Sincronizar productos con posible tamano_id
+            $paquete->productos()->detach();
             foreach ($request->productos as $prod) {
-                $productosSinc[$prod['id']] = ['cantidad' => $prod['cantidad']];
+                $attachData = ['cantidad' => $prod['cantidad']];
+                if (!empty($prod['tamano_id'])) {
+                    $attachData['tamano_id'] = $prod['tamano_id'];
+                }
+                $paquete->productos()->attach($prod['id'], $attachData);
             }
-            $paquete->productos()->sync($productosSinc);
 
             DB::commit();
 
@@ -303,7 +311,7 @@ class PaqueteController extends Controller
 
     private function formatPaqueteResponse($paquete)
     {
-        $paquete->loadMissing(['productos.categoria', 'productos.ingredientes']);
+        $paquete->loadMissing(['productos.categoria', 'productos.ingredientes', 'productos.tamanos']);
 
         $totalNominaMensual = $this->obtenerTotalNominaMensual($paquete->restaurante_id);
 
@@ -315,6 +323,15 @@ class PaqueteController extends Controller
 
         $unidadesPosibles = collect();
         foreach ($paquete->productos as $producto) {
+            $tamanoId  = $producto->pivot->tamano_id ?? null;
+            $tamanoObj = $tamanoId ? $producto->tamanos->find($tamanoId) : null;
+            if ($tamanoObj) {
+                $producto->tamano_id     = $tamanoObj->id;
+                $producto->tamano_nombre   = $tamanoObj->nombre;
+                $producto->precio          = $tamanoObj->precio;
+                $producto->stock           = $tamanoObj->stock;
+            }
+
             $c = $this->calcularCostosProducto($producto, $totalNominaMensual);
             $cantidad = (float) ($producto->pivot->cantidad ?? 1);
             $costoTotalPaquete += $c['costoTotal'] * $cantidad;

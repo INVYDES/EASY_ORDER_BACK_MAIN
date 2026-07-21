@@ -324,6 +324,7 @@ Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('
         Route::post('/{orden}/actualizar-estado-estacion', [OrdenDetalleController::class, 'actualizarEstadoPorEstacion'])->middleware('permission:EDITAR_ORDENES');
         Route::post('/{orden}/cerrar',                     [OrdenController::class, 'cerrar'])->middleware('permission:CERRAR_ORDENES');
         Route::post('/{orden}/dividir',                    [OrdenController::class, 'dividirCuenta'])->middleware('permission:EDITAR_ORDENES');
+        Route::post('/{orden}/split-details',              [OrdenController::class, 'splitDetails'])->middleware('permission:EDITAR_ORDENES');
     });
 
     // ========== DETALLES DE ÓRDENES ==========

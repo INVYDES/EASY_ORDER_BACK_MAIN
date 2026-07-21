@@ -220,7 +220,7 @@ class Orden extends Model
     public function puedeCambiarEstado(string $nuevoEstado): bool
     {
         $transiciones = [
-            'ABIERTA' => ['POR_PREPARAR', 'CANCELADA'],
+            'ABIERTA' => ['POR_PREPARAR', 'EN_PREPARACION', 'CANCELADA'],
             'POR_PREPARAR' => ['EN_PREPARACION', 'LISTA', 'ENTREGADA', 'CANCELADA'],
             'EN_PREPARACION' => ['LISTA', 'ENTREGADA', 'CANCELADA'],
             'LISTA' => ['ENTREGADA', 'CERRADA'],

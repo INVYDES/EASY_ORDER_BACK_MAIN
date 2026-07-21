@@ -38,7 +38,7 @@ class Paquete extends Model
     public function productos()
     {
         return $this->belongsToMany(Producto::class, 'paquete_producto')
-                    ->withPivot('cantidad')
+                    ->withPivot(['cantidad', 'tamano_id'])
                     ->withTimestamps();
     }
 

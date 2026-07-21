@@ -70,10 +70,15 @@ class Producto extends Model
                     ->withTimestamps();
     }
 
-public function ingredienteMovimientos()
-{
-    return $this->hasMany(IngredienteMovimiento::class);
-}
+    public function ingredienteMovimientos()
+    {
+        return $this->hasMany(IngredienteMovimiento::class);
+    }
+
+    public function tamanos()
+    {
+        return $this->hasMany(ProductoTamano::class);
+    }
     /**
      * SCOPES (ÁMBITOS)
      */
@@ -225,10 +230,23 @@ public function ingredienteMovimientos()
      */
     public function recalcularStockDesdeIngredientes()
     {
+        $this->load(['tamanos']);
+
+        if ($this->tamanos && $this->tamanos->isNotEmpty()) {
+            $totalStock = 0;
+            foreach ($this->tamanos as $tamano) {
+                $stockTamano = $tamano->recalcularStockDesdeIngredientes();
+                $totalStock += $stockTamano;
+            }
+            $this->stock = $totalStock;
+            $this->save();
+            return $totalStock;
+        }
+
         // Forzamos la carga de ingredientes omitiendo el scope global de tenant para asegurar
         // que la consulta interna no sea filtrada si el contexto de restaurante_activo cambia
         $this->load(['ingredientes' => function($query) {
-            $query->withoutGlobalScope(\App\Scopes\TenantScope::class);
+            $query->withoutGlobalScope(\App\Scopes\TenantScope::class)->wherePivot('tamano_id', null);
         }]);
         
         if ($this->ingredientes->isEmpty()) {

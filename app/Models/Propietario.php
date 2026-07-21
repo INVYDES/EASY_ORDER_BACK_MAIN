@@ -62,6 +62,17 @@ class Propietario extends Model
     }
 
     /**
+     * Obtener la última licencia registrada (activa o no)
+     */
+    public function getLastLicencia()
+    {
+        return $this->licencias()
+            ->with('licencia')
+            ->orderBy('id', 'desc')
+            ->first();
+    }
+
+    /**
      * Verificar si puede crear otro restaurante
      */
     public function puedeCrearRestaurante()

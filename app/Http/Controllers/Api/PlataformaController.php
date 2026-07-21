@@ -29,7 +29,7 @@ class PlataformaController extends Controller
                 ->orderBy('nombre', 'asc')
                 ->get()
                 ->map(function($prop) {
-                    $licencia = $prop->getLicenciaActiva();
+                    $licencia = $prop->getLicenciaActiva() ?? $prop->getLastLicencia();
                     
                     return [
                         'id' => $prop->id,

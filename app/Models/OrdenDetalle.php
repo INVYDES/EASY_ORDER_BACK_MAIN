@@ -15,6 +15,8 @@ class OrdenDetalle extends Model {
     protected $fillable = [
         'orden_id',
         'producto_id',
+        'tamano_id',
+        'tamano_nombre',
         'paquete_id',
         'cantidad',
         'precio_unitario',  // ✅ NOMBRE CORRECTO
@@ -29,6 +31,11 @@ class OrdenDetalle extends Model {
         'motivo_cancelacion',
         'usuario_cancelo_id'
     ];
+
+    public function tamano()
+    {
+        return $this->belongsTo(ProductoTamano::class, 'tamano_id');
+    }
 
     protected $casts = [
         'cantidad' => 'decimal:2',
@@ -79,7 +86,11 @@ class OrdenDetalle extends Model {
 
     public function getProductoNombreAttribute(): string
     {
-        return $this->producto->nombre ?? 'Producto eliminado';
+        $baseName = $this->producto->nombre ?? 'Producto eliminado';
+        if (!empty($this->tamano_nombre)) {
+            return "{$baseName} ({$this->tamano_nombre})";
+        }
+        return $baseName;
     }
 
     /**

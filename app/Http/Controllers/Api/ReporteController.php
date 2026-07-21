@@ -149,7 +149,7 @@ class ReporteController extends Controller
                 ->leftJoin('categorias', 'productos.categoria_id', '=', 'categorias.id')
                 ->select(
                     'productos.id',
-                    'productos.nombre',
+                    DB::raw('CONCAT(productos.nombre, IF(orden_detalles.tamano_nombre IS NOT NULL AND orden_detalles.tamano_nombre != "", CONCAT(" (", orden_detalles.tamano_nombre, ")"), "")) as nombre'),
                     'productos.precio',
                     'productos.costo',
                     DB::raw('COALESCE(categorias.nombre, "Sin categoría") as categoria'),
@@ -160,7 +160,7 @@ class ReporteController extends Controller
                     DB::raw('ROUND(productos.precio - COALESCE(productos.costo, 0), 2) as margen'),
                     DB::raw('CAST(SUM(orden_detalles.cantidad) AS UNSIGNED) as ventas')
                 )
-                ->groupBy('productos.id', 'productos.nombre', 'productos.precio', 'productos.costo', 'categorias.nombre')
+                ->groupBy('productos.id', 'productos.nombre', 'orden_detalles.tamano_nombre', 'productos.precio', 'productos.costo', 'categorias.nombre')
                 ->orderByDesc('total_vendido')
                 ->limit($limite)
                 ->get();
@@ -272,7 +272,7 @@ class ReporteController extends Controller
             $selectFields = [
                 'ordenes.id as orden_id',
                 'productos.id',
-                'productos.nombre',
+                DB::raw('CONCAT(productos.nombre, IF(orden_detalles.tamano_nombre IS NOT NULL AND orden_detalles.tamano_nombre != "", CONCAT(" (", orden_detalles.tamano_nombre, ")"), "")) as nombre'),
                 'productos.minutos_produccion as tiempo_estimado',
                 DB::raw("ROUND({$realTimeSql}, 1) as tiempo_real"),
                 DB::raw("ROUND(({$realTimeSql} - productos.minutos_produccion), 1) as exceso"),
@@ -701,7 +701,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                     'orden_detalles.id',
                     // ✅ Usar el momento de la cancelación (deleted_at o updated_at de la orden)
                     DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at) as fecha'),
-                    'productos.nombre as producto',
+                    DB::raw('CONCAT(productos.nombre, IF(orden_detalles.tamano_nombre IS NOT NULL AND orden_detalles.tamano_nombre != "", CONCAT(" (", orden_detalles.tamano_nombre, ")"), "")) as producto'),
                     'orden_detalles.cantidad',
                     'orden_detalles.subtotal',
                     'orden_detalles.estado_preparacion',

@@ -39,7 +39,7 @@ class ProductoController extends Controller
             $page = $request->get('page', 1);
 
             // Construir query base con relaciones
-            $query = Producto::with(['categoria', 'ingredientes'])
+            $query = Producto::with(['categoria', 'ingredientes', 'tamanos.ingredientes'])
                 ->where('restaurante_id', $restauranteActivo->id);
 
             // FILTROS
@@ -114,70 +114,8 @@ class ProductoController extends Controller
             $productos = $query->paginate($perPage, ['*'], 'page', $page);
 
             $totalNomina = $this->obtenerTotalNominaMensual($restauranteActivo->id);
-            $productosData = $productos->map(function($producto) use ($totalNomina) {
-                $bajoStock = $producto->stock <= $producto->stock_minimo;
-                $c = $this->calcularCostosProducto($producto, $totalNomina);
-
-                return [
-                    'id' => $producto->id,
-                    'nombre' => $producto->nombre,
-                    'descripcion' => $producto->descripcion,
-                    
-                    'categoria' => $producto->categoria ? [
-                        'id' => $producto->categoria->id,
-                        'nombre' => $producto->categoria->nombre,
-                        'color' => $producto->categoria->color,
-                        'icono' => $producto->categoria->icono ?? null
-                    ] : null,
-                    'categoria_id' => $producto->categoria_id,
-
-                    'ingredientes' => $producto->ingredientes->map(function($ing) {
-                        return [
-                            'id' => $ing->id,
-                            'nombre' => $ing->nombre,
-                            'unidad' => $ing->unidad,
-                            'stock_actual' => (float) $ing->stock_actual,
-                            'stock_minimo' => (float) $ing->stock_minimo,
-                            'costo_unitario' => (float) $ing->costo_unitario,
-                            'cantidad_necesaria' => (float) ($ing->pivot->cantidad ?? 0)
-                        ];
-                    })->toArray(),
-                    
-                    'tiene_ingredientes' => $producto->ingredientes->isNotEmpty(),
-                    'puede_prepararse' => $this->puedePrepararse($producto),
-                    
-                    'imagen' => $producto->imagen,
-                    'imagen_url' => $producto->imagen_url,
-                    
-                    'precio' => (float) $producto->precio,
-                    'precio_formateado' => '$' . number_format($producto->precio, 2),
-                    'costo_insumos' => round($c['costoInsumos'], 4),
-                    'costo_mo' => round($c['costoMO'], 4),
-                    'costo_indirectos' => round($c['costoIndirectos'], 4),
-                    'costo_total' => round($c['costoTotal'], 4),
-                    'margen' => round($c['margenValor'], 2),
-                    'margen_pct' => $c['margenPct'],
-                    'minutos_produccion' => (float) $producto->minutos_produccion,
-                    'nomina_diaria' => (float) $producto->nomina_diaria,
-                    
-                    'stock' => (int) $producto->stock,
-                    'stock_minimo' => (int) $producto->stock_minimo,
-                    'bajo_stock' => $bajoStock,
-                    'bajo_stock_texto' => $bajoStock ? 'Sí' : 'No',
-                    'agotado' => $producto->stock <= 0,
-                    'estado_stock' => $this->getEstadoStock($producto->stock, $producto->stock_minimo),
-                    
-                    'activo' => (bool) $producto->activo,
-                    'activo_texto' => $producto->activo ? 'Activo' : 'Inactivo',
-                    
-                    'created_at' => $producto->created_at,
-                    'created_at_formateado' => $producto->created_at ? $producto->created_at->format('d/m/Y H:i') : null,
-                    'updated_at' => $producto->updated_at,
-                    'updated_at_formateado' => $producto->updated_at ? $producto->updated_at->format('d/m/Y H:i') : null,
-                    
-                    'total_ventas' => (int) ($producto->total_ventas ?? 0),
-                    'cantidad_vendida' => (int) ($producto->orden_detalles_sum_cantidad ?? 0)
-                ];
+            $productosData = $productos->map(function($producto) {
+                return $this->formatProductoResponse($producto);
             });
 
             $estadisticas = [
@@ -259,7 +197,7 @@ class ProductoController extends Controller
 
             $restauranteActivo = app('restaurante_activo');
 
-            $producto = Producto::with(['categoria', 'ingredientes'])
+            $producto = Producto::with(['categoria', 'ingredientes', 'tamanos.ingredientes'])
                 ->withCount(['ordenDetalles as total_ventas'])
                 ->withSum('ordenDetalles', 'cantidad')
                 ->where('restaurante_id', $restauranteActivo->id)
@@ -426,6 +364,44 @@ class ProductoController extends Controller
                 }
             }
 
+            // Manejo de Tamaños (Variantes)
+            $tamanosInput = $request->tamanos;
+            if (is_string($tamanosInput)) {
+                $tamanosInput = json_decode($tamanosInput, true);
+            }
+
+            if (!empty($tamanosInput) && is_array($tamanosInput)) {
+                foreach ($tamanosInput as $tamData) {
+                    if (!empty($tamData['nombre'])) {
+                        $tamanoObj = $producto->tamanos()->create([
+                            'restaurante_id' => $restauranteActivo->id,
+                            'nombre' => $tamData['nombre'],
+                            'precio' => $tamData['precio'] ?? 0,
+                            'stock' => $tamData['stock'] ?? 0,
+                            'stock_minimo' => $tamData['stock_minimo'] ?? 5
+                        ]);
+
+                        if (isset($tamData['ingredientes']) && is_array($tamData['ingredientes'])) {
+                            $ingredientesTamano = [];
+                            foreach ($tamData['ingredientes'] as $item) {
+                                $ingredienteId = $item['id'] ?? $item['ingrediente_id'] ?? null;
+                                if ($ingredienteId) {
+                                    $ingredientesTamano[$ingredienteId] = [
+                                        'producto_id' => $producto->id,
+                                        'cantidad' => $item['cantidad'] ?? $item['cantidad_receta'] ?? 1
+                                    ];
+                                }
+                            }
+                            if (!empty($ingredientesTamano)) {
+                                $tamanoObj->ingredientes()->sync($ingredientesTamano);
+                                $tamanoObj->recalcularStockDesdeIngredientes();
+                            }
+                        }
+                    }
+                }
+                $producto->recalcularStockDesdeIngredientes();
+            }
+
             DB::commit();
 
             if (method_exists($user, 'logAction')) {
@@ -437,7 +413,7 @@ class ProductoController extends Controller
                 );
             }
 
-            $producto->load(['categoria', 'ingredientes']);
+            $producto->load(['categoria', 'ingredientes', 'tamanos.ingredientes']);
 
             return response()->json([
                 'success' => true,
@@ -607,6 +583,70 @@ class ProductoController extends Controller
                 }
             }
 
+            // Manejo de Tamaños (Variantes)
+            $tamanosInput = $request->tamanos;
+            if (is_string($tamanosInput)) {
+                $tamanosInput = json_decode($tamanosInput, true);
+            }
+
+            if (!empty($tamanosInput) && is_array($tamanosInput)) {
+                $tamanosMantenerIds = [];
+                foreach ($tamanosInput as $tamData) {
+                    if (!empty($tamData['nombre'])) {
+                        $tamanoId = $tamData['id'] ?? null;
+                        if ($tamanoId) {
+                            $tamanoObj = $producto->tamanos()->where('id', $tamanoId)->first();
+                            if ($tamanoObj) {
+                                $tamanoObj->update([
+                                    'nombre' => $tamData['nombre'],
+                                    'precio' => $tamData['precio'] ?? 0,
+                                    'stock' => $tamData['stock'] ?? 0,
+                                    'stock_minimo' => $tamData['stock_minimo'] ?? 5
+                                ]);
+                            }
+                        } else {
+                            $tamanoObj = $producto->tamanos()->create([
+                                'restaurante_id' => $restauranteActivo->id,
+                                'nombre' => $tamData['nombre'],
+                                'precio' => $tamData['precio'] ?? 0,
+                                'stock' => $tamData['stock'] ?? 0,
+                                'stock_minimo' => $tamData['stock_minimo'] ?? 5
+                            ]);
+                        }
+
+                        if ($tamanoObj) {
+                            $tamanosMantenerIds[] = $tamanoObj->id;
+
+                            if (isset($tamData['ingredientes']) && is_array($tamData['ingredientes'])) {
+                                $ingredientesTamano = [];
+                                foreach ($tamData['ingredientes'] as $item) {
+                                    $ingredienteId = $item['id'] ?? $item['ingrediente_id'] ?? null;
+                                    if ($ingredienteId) {
+                                        $ingredientesTamano[$ingredienteId] = [
+                                            'producto_id' => $producto->id,
+                                            'cantidad' => $item['cantidad'] ?? $item['cantidad_receta'] ?? 1
+                                        ];
+                                    }
+                                }
+                                $tamanoObj->ingredientes()->sync($ingredientesTamano);
+                                $tamanoObj->recalcularStockDesdeIngredientes();
+                            } else {
+                                $tamanoObj->recalcularStockDesdeIngredientes();
+                            }
+                        }
+                    }
+                }
+
+                // Eliminar los tamaños que fueron removidos en la interfaz
+                $tamanosEliminar = $producto->tamanos()->whereNotIn('id', $tamanosMantenerIds)->get();
+                foreach ($tamanosEliminar as $tBorrar) {
+                    \Illuminate\Support\Facades\DB::table('ingredientes_de_productos')->where('tamano_id', $tBorrar->id)->delete();
+                    $tBorrar->delete();
+                }
+
+                $producto->recalcularStockDesdeIngredientes();
+            }
+
             DB::commit();
 
             if (method_exists($user, 'logAction')) {
@@ -618,7 +658,7 @@ class ProductoController extends Controller
                 );
             }
 
-            $producto = Producto::with(['categoria', 'ingredientes'])
+            $producto = Producto::with(['categoria', 'ingredientes', 'tamanos.ingredientes'])
                 ->where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();
@@ -1022,12 +1062,19 @@ class ProductoController extends Controller
                 }
             }
 
-            $productos = Producto::with(['categoria', 'ingredientes'])
+            $productos = Producto::with(['categoria', 'ingredientes', 'tamanos'])
                 ->where('restaurante_id', $restaurante->id)
                 ->where('activo', true)
                 ->get();
 
             $data = $productos->map(function ($producto) {
+                $tamanosFormatted = $producto->tamanos->map(fn($t) => [
+                    'id'                => $t->id,
+                    'nombre'            => $t->nombre,
+                    'precio'            => (float) $t->precio,
+                    'precio_formateado' => '$' . number_format($t->precio, 2),
+                    'stock'             => (float) $t->stock,
+                ])->values();
                 
                 // Producto SIN receta
                 if ($producto->ingredientes->isEmpty()) {
@@ -1036,12 +1083,12 @@ class ProductoController extends Controller
                     }
                     
                     return [
-                        'id'              => $producto->id,
-                        'nombre'          => $producto->nombre,
-                        'descripcion'     => $producto->descripcion,
-                        'precio'          => (float) $producto->precio,
-                        'imagen_url'      => $producto->imagen_url,
-                        'categoria'       => $producto->categoria ? [
+                        'id'               => $producto->id,
+                        'nombre'           => $producto->nombre,
+                        'descripcion'      => $producto->descripcion,
+                        'precio'           => (float) $producto->precio,
+                        'imagen_url'       => $producto->imagen_url,
+                        'categoria'        => $producto->categoria ? [
                             'id'     => $producto->categoria->id,
                             'nombre' => $producto->categoria->nombre,
                             'color'  => $producto->categoria->color,
@@ -1049,10 +1096,11 @@ class ProductoController extends Controller
                             'orden'  => $producto->categoria->orden ?? 99,
                         ] : null,
                         'stock_disponible' => (int) $producto->stock,
-                        'bajo_stock'      => $producto->stock <= $producto->stock_minimo && $producto->stock_minimo > 0,
-                        'agotado'         => $producto->stock <= 0,
-                        'sin_receta'      => true,
+                        'bajo_stock'       => $producto->stock <= $producto->stock_minimo && $producto->stock_minimo > 0,
+                        'agotado'          => $producto->stock <= 0,
+                        'sin_receta'       => true,
                         'minutos_produccion' => (float) $producto->minutos_produccion,
+                        'tamanos'          => $tamanosFormatted,
                     ];
                 }
 
@@ -1071,12 +1119,12 @@ class ProductoController extends Controller
                 });
 
                 return [
-                    'id'              => $producto->id,
-                    'nombre'          => $producto->nombre,
-                    'descripcion'     => $producto->descripcion,
-                    'precio'          => (float) $producto->precio,
-                    'imagen_url'      => $producto->imagen_url,
-                    'categoria'       => $producto->categoria ? [
+                    'id'               => $producto->id,
+                    'nombre'           => $producto->nombre,
+                    'descripcion'      => $producto->descripcion,
+                    'precio'           => (float) $producto->precio,
+                    'imagen_url'       => $producto->imagen_url,
+                    'categoria'        => $producto->categoria ? [
                         'id'     => $producto->categoria->id,
                         'nombre' => $producto->categoria->nombre,
                         'color'  => $producto->categoria->color,
@@ -1084,10 +1132,11 @@ class ProductoController extends Controller
                         'orden'  => $producto->categoria->orden ?? 99,
                     ] : null,
                     'stock_disponible' => $stockCalculado,
-                    'bajo_stock'      => $bajoStock,
-                    'agotado'         => false,
-                    'sin_receta'      => false,
+                    'bajo_stock'       => $bajoStock,
+                    'agotado'          => false,
+                    'sin_receta'       => false,
                     'minutos_produccion' => (float) $producto->minutos_produccion,
+                    'tamanos'          => $tamanosFormatted,
                 ];
             })->filter()->values();
 
@@ -1495,12 +1544,19 @@ class ProductoController extends Controller
             }
 
             $productos = Producto::withoutGlobalScope(\App\Scopes\TenantScope::class)
-                ->with(['categoria', 'ingredientes'])
+                ->with(['categoria', 'ingredientes', 'tamanos'])
                 ->where('restaurante_id', $restaurante->id)
                 ->where('activo', true)
                 ->get();
 
             $data = $productos->map(function ($producto) {
+                $tamanosFormatted = $producto->tamanos->map(fn($t) => [
+                    'id'                => $t->id,
+                    'nombre'            => $t->nombre,
+                    'precio'            => (float) $t->precio,
+                    'precio_formateado' => '$' . number_format($t->precio, 2),
+                    'stock'             => (float) $t->stock,
+                ])->values();
                 
                 if ($producto->ingredientes->isEmpty()) {
                     $stockRestante = (int) $producto->stock;
@@ -1519,6 +1575,7 @@ class ProductoController extends Controller
                         'disponible' => $stockRestante > 0,
                         'stock_restante' => $stockRestante,
                         'minutos_produccion' => (float) $producto->minutos_produccion,
+                        'tamanos' => $tamanosFormatted,
                     ];
                 }
 
@@ -1545,6 +1602,7 @@ class ProductoController extends Controller
                     'disponible' => $stockCalculado > 0,
                     'stock_restante' => $stockCalculado,
                     'minutos_produccion' => (float) $producto->minutos_produccion,
+                    'tamanos' => $tamanosFormatted,
                 ];
             })->filter()->values();
 
@@ -1610,11 +1668,64 @@ class ProductoController extends Controller
     /**
      * Formatear respuesta de producto con ingredientes
      */
+    private function calcularCostosTamano($tamano, $precioTamano, $minutosProduccion, $totalNominaMensual)
+    {
+        $costoInsumos = $tamano->ingredientes ? $tamano->ingredientes->reduce(function($carry, $ing) {
+            $cant = $ing->pivot->cantidad ?? 0;
+            return $carry + ($ing->costo_unitario * $cant);
+        }, 0) : 0;
+
+        $minProd = (float) ($minutosProduccion ?? 0);
+        $costoMO = $totalNominaMensual > 0 && $minProd > 0
+            ? ($totalNominaMensual / 14400) * 1.36 * $minProd
+            : 0;
+
+        $costoBase = $costoInsumos + $costoMO;
+        $costoIndirectos = $costoBase * 0.05;
+        $costoTotal = $costoBase + $costoIndirectos;
+
+        $margenValor = $precioTamano - $costoTotal;
+        $margenPct = $precioTamano > 0 ? round(($margenValor / $precioTamano) * 100, 2) : 0;
+
+        return compact('costoInsumos', 'costoMO', 'costoIndirectos', 'costoTotal', 'margenValor', 'margenPct');
+    }
+
     private function formatProductoResponse($producto)
     {
         $bajoStock = $producto->stock <= $producto->stock_minimo;
         $totalNominaMensual = $this->obtenerTotalNominaMensual($producto->restaurante_id);
         $c = $this->calcularCostosProducto($producto, $totalNominaMensual);
+
+        $tamanosFormatted = ($producto->tamanos && $producto->tamanos->isNotEmpty()) 
+            ? $producto->tamanos->map(function($tam) use ($producto, $totalNominaMensual) {
+                $cTam = $this->calcularCostosTamano($tam, (float) $tam->precio, $producto->minutos_produccion, $totalNominaMensual);
+                return [
+                    'id' => $tam->id,
+                    'nombre' => $tam->nombre,
+                    'precio' => (float) $tam->precio,
+                    'precio_formateado' => '$' . number_format($tam->precio, 2),
+                    'stock' => (int) $tam->stock,
+                    'stock_minimo' => (int) $tam->stock_minimo,
+                    'costo_insumos' => round($cTam['costoInsumos'], 4),
+                    'costo_mo' => round($cTam['costoMO'], 4),
+                    'costo_indirectos' => round($cTam['costoIndirectos'], 4),
+                    'costo_total' => round($cTam['costoTotal'], 4),
+                    'margen' => round($cTam['margenValor'], 2),
+                    'margen_pct' => $cTam['margenPct'],
+                    'margen_porcentaje' => $cTam['margenPct'],
+                    'ingredientes' => $tam->ingredientes ? $tam->ingredientes->map(function($ing) {
+                        return [
+                            'id' => $ing->id,
+                            'nombre' => $ing->nombre,
+                            'unidad' => $ing->unidad,
+                            'stock_actual' => (float) $ing->stock_actual,
+                            'stock_minimo' => (float) $ing->stock_minimo,
+                            'costo_unitario' => (float) $ing->costo_unitario,
+                            'cantidad_necesaria' => (float) ($ing->pivot->cantidad ?? 0)
+                        ];
+                    })->toArray() : []
+                ];
+            })->values()->toArray() : [];
 
         return [
             'id' => $producto->id,
@@ -1644,6 +1755,9 @@ class ProductoController extends Controller
             'tiene_ingredientes' => $producto->ingredientes->isNotEmpty(),
             'puede_prepararse' => $this->puedePrepararse($producto),
             'unidades_posibles' => $this->calcularUnidadesPosibles($producto),
+
+            'tamanos' => $tamanosFormatted,
+            'tiene_tamanos' => !empty($tamanosFormatted),
 
             'imagen' => $producto->imagen,
             'imagen_url' => $producto->imagen_url,

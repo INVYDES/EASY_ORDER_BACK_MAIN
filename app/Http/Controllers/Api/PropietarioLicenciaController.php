@@ -194,7 +194,11 @@ class PropietarioLicenciaController extends Controller
                 'metodo_pago' => 'nullable|string|max:50'
             ]);
 
-            $asignacion->update($request->all());
+            $data = $request->all();
+            if (isset($data['fecha_expiracion']) && \Carbon\Carbon::parse($data['fecha_expiracion'])->isFuture()) {
+                $data['estado'] = 'ACTIVA';
+            }
+            $asignacion->update($data);
 
             // Registrar en log
             if (method_exists($user, 'logAction')) {

@@ -365,6 +365,7 @@ class IngredienteController extends Controller
             'ingredientes' => 'required|array',
             'ingredientes.*.id' => 'required|exists:ingredientes,id',
             'ingredientes.*.cantidad' => 'required|numeric|min:0.001',
+            'tamano_id' => 'nullable|integer',
         ]);
 
         try {
@@ -377,28 +378,62 @@ class IngredienteController extends Controller
                 ], 403);
             }
 
-            $sync = [];
-            foreach ($request->ingredientes as $item) {
-                $sync[$item['id']] = ['cantidad' => $item['cantidad']];
-            }
-            
             $producto = \App\Models\Producto::findOrFail($productoId);
-            
-            // Obtener ingredientes asociados antes del cambio
-            $ingredientesAntesIds = $producto->ingredientes()->pluck('ingredientes.id')->toArray();
+            $tamanoId = $request->input('tamano_id');
 
-            $producto->ingredientes()->sync($sync);
-            $producto->recalcularStockDesdeIngredientes();
+            // Si se envió un arreglo completo de tamanos, sincronizar cada tamaño
+            $tamanosInput = $request->input('tamanos');
+            if (is_string($tamanosInput)) {
+                $tamanosInput = json_decode($tamanosInput, true);
+            }
 
-            // Recalcular stock mínimo de todos los ingredientes afectados (antes y después)
-            $todosAfectadosIds = array_unique(array_merge($ingredientesAntesIds, array_keys($sync)));
-            
-            foreach ($todosAfectadosIds as $ingredienteId) {
-                $ing = \App\Models\Ingrediente::withoutGlobalScope(\App\Scopes\TenantScope::class)->find($ingredienteId);
-                if ($ing) {
-                    $ing->recalcularStockMinimoDesdeProductos();
+            if (!empty($tamanosInput) && is_array($tamanosInput)) {
+                foreach ($tamanosInput as $tamData) {
+                    if (!empty($tamData['nombre'])) {
+                        $tId = $tamData['id'] ?? null;
+                        if ($tId) {
+                            $tamanoObj = $producto->tamanos()->where('id', $tId)->first();
+                            if ($tamanoObj && isset($tamData['ingredientes']) && is_array($tamData['ingredientes'])) {
+                                $syncTam = [];
+                                foreach ($tamData['ingredientes'] as $item) {
+                                    $ingId = $item['id'] ?? $item['ingrediente_id'] ?? null;
+                                    if ($ingId) {
+                                        $syncTam[$ingId] = [
+                                            'producto_id' => $producto->id,
+                                            'cantidad' => $item['cantidad'] ?? $item['cantidad_receta'] ?? 1
+                                        ];
+                                    }
+                                }
+                                $tamanoObj->ingredientes()->sync($syncTam);
+                                $tamanoObj->recalcularStockDesdeIngredientes();
+                            }
+                        }
+                    }
                 }
             }
+
+            if ($tamanoId) {
+                $tamanoObj = \App\Models\ProductoTamano::where('producto_id', $producto->id)->find($tamanoId);
+                if ($tamanoObj) {
+                    $sync = [];
+                    foreach ($request->ingredientes as $item) {
+                        $sync[$item['id']] = [
+                            'producto_id' => $producto->id,
+                            'cantidad' => $item['cantidad']
+                        ];
+                    }
+                    $tamanoObj->ingredientes()->sync($sync);
+                    $tamanoObj->recalcularStockDesdeIngredientes();
+                }
+            } else {
+                $sync = [];
+                foreach ($request->ingredientes as $item) {
+                    $sync[$item['id']] = ['cantidad' => $item['cantidad']];
+                }
+                $producto->ingredientes()->sync($sync);
+            }
+
+            $producto->recalcularStockDesdeIngredientes();
 
             return response()->json([
                 'success' => true,
@@ -416,7 +451,7 @@ class IngredienteController extends Controller
     /**
      * Obtener ingredientes de un producto
      */
-    public function deProducto($productoId)
+    public function deProducto(Request $request, $productoId)
     {
         try {
             $user = request()->user();
@@ -428,14 +463,72 @@ class IngredienteController extends Controller
                 ], 403);
             }
 
-            $producto = \App\Models\Producto::with('ingredientes')->findOrFail($productoId);
+            $producto = \App\Models\Producto::findOrFail($productoId);
+            $tamanoId = $request->input('tamano_id');
+
+            if ($tamanoId) {
+                // Obtener ÚNICAMENTE los ingredientes específicos de este tamano_id
+                $ingredientes = \App\Models\Ingrediente::whereHas('productos', function($q) use ($productoId, $tamanoId) {
+                    $q->where('ingredientes_de_productos.producto_id', $productoId)
+                      ->where('ingredientes_de_productos.tamano_id', $tamanoId);
+                })->get();
+
+                // Si no tiene ingredientes asignados este tamaño específico, buscar los base (tamano_id IS NULL)
+                if ($ingredientes->isEmpty()) {
+                    $ingredientes = \App\Models\Ingrediente::whereHas('productos', function($q) use ($productoId) {
+                        $q->where('ingredientes_de_productos.producto_id', $productoId)
+                          ->whereNull('ingredientes_de_productos.tamano_id');
+                    })->get();
+                }
+
+                // Cargar la cantidad correspondiente a este tamano_id en el pivot
+                $ingredientes->each(function($ing) use ($productoId, $tamanoId) {
+                    $pivotRow = \DB::table('ingredientes_de_productos')
+                        ->where('producto_id', $productoId)
+                        ->where(function($q) use ($tamanoId) {
+                            $q->where('tamano_id', $tamanoId)
+                              ->orWhereNull('tamano_id');
+                        })
+                        ->where('ingrediente_id', $ing->id)
+                        ->orderByRaw('tamano_id IS NOT NULL DESC')
+                        ->first();
+
+                    $ing->pivot = (object) ['cantidad' => $pivotRow ? (float) $pivotRow->cantidad : 0];
+                });
+
+            } else {
+                // Si NO se especifica tamaño, buscar ingredientes base (tamano_id IS NULL)
+                $ingredientes = \App\Models\Ingrediente::whereHas('productos', function($q) use ($productoId) {
+                    $q->where('ingredientes_de_productos.producto_id', $productoId)
+                      ->whereNull('ingredientes_de_productos.tamano_id');
+                })->get();
+
+                // Si no hay base, pero tiene al menos un tamaño, tomar los del primer tamaño para no dejar vacío
+                if ($ingredientes->isEmpty()) {
+                    $firstTamano = \App\Models\ProductoTamano::where('producto_id', $productoId)->first();
+                    if ($firstTamano) {
+                        $ingredientes = \App\Models\Ingrediente::whereHas('productos', function($q) use ($productoId, $firstTamano) {
+                            $q->where('ingredientes_de_productos.producto_id', $productoId)
+                              ->where('ingredientes_de_productos.tamano_id', $firstTamano->id);
+                        })->get();
+                    }
+                }
+
+                $ingredientes->each(function($ing) use ($productoId) {
+                    $pivotRow = \DB::table('ingredientes_de_productos')
+                        ->where('producto_id', $productoId)
+                        ->where('ingrediente_id', $ing->id)
+                        ->first();
+                    $ing->pivot = (object) ['cantidad' => $pivotRow ? (float) $pivotRow->cantidad : 0];
+                });
+            }
             
             return response()->json([
                 'success' => true,
-                'data' => $producto->ingredientes->map(fn($i) => [
+                'data' => $ingredientes->map(fn($i) => [
                     ...$this->transform($i),
-                    'cantidad_receta' => (float) $i->pivot->cantidad,
-                    'costo_receta' => round($i->pivot->cantidad * $i->costo_unitario, 4),
+                    'cantidad_receta' => (float) ($i->pivot->cantidad ?? 0),
+                    'costo_receta' => round(($i->pivot->cantidad ?? 0) * $i->costo_unitario, 4),
                 ]),
             ]);
         } catch (\Exception $e) {

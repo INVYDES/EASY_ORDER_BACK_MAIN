@@ -21,7 +21,13 @@ class Restaurante extends Model
         'ciudad',
         'estado',
         'imagen',
-        'total_mesas'
+        'total_mesas',
+        'servicio_rapido'
+    ];
+
+    protected $casts = [
+        'servicio_rapido' => 'boolean',
+        'total_mesas' => 'integer',
     ];
 
     protected $appends = ['imagen_url'];

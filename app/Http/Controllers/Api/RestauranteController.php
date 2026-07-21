@@ -24,7 +24,7 @@ class RestauranteController extends Controller
         }
 
         $perPage   = min($request->get('per_page', 15), 50);
-        $isCliente = $user->hasRole('cliente') || $user->hasRole('CLIENTE');
+        $isCliente = $user->hasRole('cliente') || $user->hasRole('CLIENTE') || $user->hasRole('SUPER_ADMIN');
         $query     = $isCliente ? Restaurante::query() : $user->restaurantes();
 
         // Filtros
@@ -81,6 +81,7 @@ class RestauranteController extends Controller
                 'estado'          => $r->estado,
                 'imagen'          => $r->imagen,
                 'imagen_url'      => $r->imagen_url,
+                'servicio_rapido' => (bool) $r->servicio_rapido,
                 'es_activo'       => !$isCliente && $user->restaurante_activo == $r->id,
                 'estadisticas'    => $isCliente ? null : [
                     'productos_count'     => $r->productos_count,
@@ -200,6 +201,7 @@ class RestauranteController extends Controller
                         'nombre' => $restaurante->propietario->nombre_completo ?? $restaurante->propietario->nombre,
                         'correo' => $restaurante->propietario->correo ?? $restaurante->propietario->email,
                     ] : null,
+                    'servicio_rapido' => (bool) $restaurante->servicio_rapido,
                     'es_activo' => $user->restaurante_activo == $restaurante->id,
                     'imagen' => $restaurante->imagen,
                     'imagen_url' => $restaurante->imagen_url,
@@ -234,6 +236,7 @@ class RestauranteController extends Controller
                 'calle' => 'nullable|string|max:150',
                 'ciudad' => 'nullable|string|max:100',
                 'estado' => 'nullable|string|max:100',
+                'servicio_rapido' => 'nullable|boolean',
                 'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120',
             ], [
                 'imagen.max' => 'La imagen es muy pesada. El tamaño máximo permitido es de 5MB.',
@@ -267,6 +270,7 @@ class RestauranteController extends Controller
                 'calle' => $request->calle,
                 'ciudad' => $request->ciudad,
                 'estado' => $request->estado,
+                'servicio_rapido' => $request->boolean('servicio_rapido'),
             ]);
 
             if ($request->hasFile('imagen')) {
@@ -312,6 +316,7 @@ class RestauranteController extends Controller
                     'calle' => $restaurante->calle,
                     'ciudad' => $restaurante->ciudad,
                     'estado' => $restaurante->estado,
+                    'servicio_rapido' => (bool) $restaurante->servicio_rapido,
                     'es_activo' => false,
                     'created_at' => $restaurante->created_at,
                 ],
@@ -342,6 +347,7 @@ class RestauranteController extends Controller
                 'calle' => 'nullable|string|max:150',
                 'ciudad' => 'nullable|string|max:100',
                 'estado' => 'nullable|string|max:100',
+                'servicio_rapido' => 'sometimes|boolean',
                 'activo' => 'sometimes|boolean',
                 'imagen' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120',
                 'eliminar_imagen' => 'nullable|boolean',
@@ -353,7 +359,7 @@ class RestauranteController extends Controller
 
             DB::beginTransaction();
 
-            $restaurante->update($request->only(['nombre', 'telefono', 'calle', 'ciudad', 'estado', 'activo']));
+            $restaurante->update($request->only(['nombre', 'telefono', 'calle', 'ciudad', 'estado', 'activo', 'servicio_rapido']));
 
             if ($request->eliminar_imagen && $restaurante->imagen) {
                 if (!filter_var($restaurante->imagen, FILTER_VALIDATE_URL)) {
