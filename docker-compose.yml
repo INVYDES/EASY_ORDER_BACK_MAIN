@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      APP_KEY: base64:JGtW8QBO0LSLtCjbdUBEYz9yBzNAXIjREQIxGmkZ95w=
+      APP_URL: http://localhost:8080
+      FRONTEND_URL: http://localhost:5173
+
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: easy_order
+      DB_USERNAME: easy_order
+      DB_PASSWORD: secret
+
+      QUEUE_CONNECTION: database
+      CACHE_STORE: database
+      SESSION_DRIVER: cookie
+
+      BROADCAST_CONNECTION: reverb
+      REVERB_APP_ID: 411884
+      REVERB_APP_KEY: ds9d0dge2etayrnrzaca
+      REVERB_APP_SECRET: yngg0ei0y009kpoqnfqn
+      REVERB_HOST: localhost
+      REVERB_PORT: 8080
+      REVERB_SCHEME: http
+
+      SANCTUM_STATEFUL_DOMAINS: localhost
+      SESSION_DOMAIN: localhost
+      SESSION_SECURE_COOKIE: "false"
+
+      TRUSTED_PROXIES: "*"
+    volumes:
+      - tmp_storage:/tmp/storage
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: easy_order
+      MYSQL_USER: easy_order
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: rootsecret
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 5s
+      retries: 10
+    volumes:
+      - db_data:/var/lib/mysql
+
+volumes:
+  tmp_storage:
+  db_data:

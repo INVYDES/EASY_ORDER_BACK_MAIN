@@ -24,14 +24,14 @@ return [
         'http://localhost:3000',
         'http://127.0.0.1:5173',
         'http://localhost:8080',
-        // Producción — con y sin www
-        'https://corion.mx',
-        'https://www.corion.mx',
-        'http://corion.mx',
-        'http://www.corion.mx',
+        // Producción
+        'https://eorder.mx',
+        'https://www.eorder.mx',
     ],
 
-    'allowed_origins_patterns' => ['#^https?://(www\.)?corion\.mx#'],
+    'allowed_origins_patterns' => [
+        '#^https?://(www\.)?eorder\.mx#',
+    ],
 
     'allowed_headers' => ['*'],
 
