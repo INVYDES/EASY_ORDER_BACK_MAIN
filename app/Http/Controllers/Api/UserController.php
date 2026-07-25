@@ -183,7 +183,14 @@ public function toggleActivo(Request $request, $id)
 
             $restaurantes = Restaurante::where('propietario_id', $propietarioId)
                 ->orderBy('nombre')
-                ->get(['id', 'nombre', 'ciudad']);
+                ->get(['id', 'nombre', 'ciudad'])
+                ->map(fn($r) => [
+                    'id'        => $r->id,
+                    'nombre'    => $r->nombre,
+                    'ciudad'    => $r->ciudad,
+                    'imagen_url'=> $r->imagen_url,
+                    'es_activo' => $user->restaurante_activo == $r->id,
+                ]);
 
             return response()->json(['success' => true, 'data' => $restaurantes]);
         } catch (\Exception $e) {
