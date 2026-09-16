@@ -33,6 +33,7 @@ steps:
       - --max-instances=10
       - --concurrency=80
       - --timeout=300
+      - --update-env-vars=^@^APP_ENV=production@APP_DEBUG=false@APP_NAME=EasyOrder@CACHE_STORE=database@QUEUE_CONNECTION=database@SESSION_DRIVER=database@LOG_CHANNEL=stderr@DB_CONNECTION=mysql@DB_HOST=turntable.proxy.rlwy.net@DB_PORT=12823@DB_DATABASE=railway@DB_USERNAME=root@FRONTEND_URL=https://eorder.mx@SANCTUM_STATEFUL_DOMAINS=eorder.mx,www.eorder.mx@CORS_ALLOWED_ORIGINS=https://eorder.mx,https://www.eorder.mx@SESSION_DOMAIN=.easy-order-back-201452705980.us-central1.run.app@SESSION_SECURE_COOKIE=true@FILESYSTEM_IMAGES_DISK=s3@AWS_DEFAULT_REGION=auto@AWS_BUCKET=eorder-ing@AWS_ENDPOINT=https://d710289688d71dc4b5c6c57e2ed3d91e.r2.cloudflarestorage.com@AWS_URL=https://pub-d695805af99b445996579ecbc0fb909c.r2.dev@AWS_USE_PATH_STYLE_ENDPOINT=true@MAIL_MAILER=gmail-api@MAIL_FROM_ADDRESS=eorder.mexico@gmail.com@WHATSAPP_PROVIDER=evolution@EVOLUTION_INSTANCE_NAME=eorder@WHATSAPP_RECIPIENT_NUMBER=522294848144@GEMINI_MODEL=gemini-3.6-flash
       - --update-secrets=APP_KEY=eorder-app-key:latest,DB_PASSWORD=eorder-db-password:latest,AWS_ACCESS_KEY_ID=eorder-r2-access-key:latest,AWS_SECRET_ACCESS_KEY=eorder-r2-secret-key:latest,GOOGLE_CLIENT_ID=eorder-google-client-id:latest,GOOGLE_CLIENT_SECRET=eorder-google-client-secret:latest,EVOLUTION_API_KEY=eorder-evolution-api-key:latest
 
 

@@ -29,4 +29,5 @@ Thumbs.db
 /storage/logs/*
 /storage/framework/*
 .github/PULL_REQUEST_TEMPLATE.md
-backend_documentation.txt
+backend_documentation.txtenv-run.json
+svc_tmp.json
