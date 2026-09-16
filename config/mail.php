@@ -37,6 +37,14 @@ return [
 
     'mailers' => [
 
+        'gmail-api' => [
+            'transport' => 'gmail-api',
+            'client_id' => env('GOOGLE_CLIENT_ID'),
+            'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+            'refresh_token' => env('GOOGLE_REFRESH_TOKEN'),
+        ],
+
+
         'smtp' => [
             'transport' => 'smtp',
             'scheme' => env('MAIL_SCHEME'),
@@ -115,5 +123,17 @@ return [
         'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),
         'name' => env('MAIL_FROM_NAME', 'Example'),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Avisos internos del equipo
+    |--------------------------------------------------------------------------
+    |
+    | Buzón (o buzones separados por coma) que reciben las notificaciones
+    | operativas, por ejemplo cada nueva solicitud del formulario de contacto.
+    |
+    */
+
+    'contact_recipient' => env('MAIL_CONTACT_RECIPIENT', 'contacto@eorder.mx'),
 
 ];

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use App\Models\Restaurante;
 
 class GeminiService
 {
@@ -13,8 +14,8 @@ class GeminiService
 
     public function __construct()
     {
-        $this->apiKey = config('services.gemini.key');
-        $this->model = config('services.gemini.model', 'gemini-1.5-flash');
+        $this->apiKey = (string) config('services.gemini.key', '');
+        $this->model = (string) config('services.gemini.model', 'gemini-3.6-flash');
     }
 
     /**
@@ -70,11 +71,25 @@ class GeminiService
      * Analyze user intent and categorize the message.
      * Returns a structured array.
      */
-    public function analyzeIntent(string $message): array
+    public function analyzeIntent(string $message, ?int $restaurantId = null): array
     {
-        $prompt = "Analiza el siguiente mensaje de un usuario de un sistema de gestión de restaurantes (TiendaFer/EASY ORDER). " .
-            "Determina su categoría, prioridad y si requiere atención humana inmediata.\n\n" .
-            "Categorías permitidas: ERROR_CRITICO, FALLA_SISTEMA, SUGERENCIA_MEJORA, DUDA_OPERATIVA, SPAM, FUERA_DE_CONTEXTO, CLIENTE_MOLESTO, POSIBLE_FRAUDE.\n" .
+        // Sistema de soporte administrativo eOrder
+        $projectInfo = "Eres el Asistente Virtual de Soporte Técnico y Administrativo de eOrder (Sistema SaaS Restaurantero). " .
+            "Tu objetivo es ayudar a los ADMINISTRADORES, PROPIETARIOS y EMPLEADOS del restaurante a resolver dudas operativas sobre el sistema. " .
+            "Ejemplos de ayuda: cómo subir o editar productos y categorías, consultar el reporte de ventas y cortes de caja, gestionar comandas de mesero/cocina/barra, configurar impresoras, controlar inventario, administrar licencias y usuarios. " .
+            "Sé conciso, profesional, amable y proporciona los pasos exactos en el panel de eOrder para realizar cada tarea.";
+
+        $restaurantInfo = '';
+        if ($restaurantId) {
+            $restaurant = Restaurante::find($restaurantId);
+            if ($restaurant) {
+                $restaurantInfo = "Restaurante Activo: {$restaurant->nombre} (ID: {$restaurant->id}).";
+            }
+        }
+        $prompt = "{$projectInfo}\n{$restaurantInfo}\n" .
+            "Analiza el siguiente mensaje de un administrador o empleado de eOrder. " .
+            "Determina su categoría, prioridad y responde con los pasos exactos o solución.\n\n" .
+            "Categorías permitidas: DUDA_OPERATIVA, ERROR_SISTEMA, CONFIGURACION, REPORTES_VENTAS, GESTION_PRODUCTOS, GESTION_USUARIOS, SUGERENCIA_MEJORA.\n" .
             "Prioridades: ALTA, MEDIA, BAJA.\n\n" .
             "Responde ÚNICAMENTE con un objeto JSON válido con este formato:\n" .
             "{\n" .
@@ -82,7 +97,7 @@ class GeminiService
             "  \"prioridad\": \"PRIORIDAD\",\n" .
             "  \"resumen\": \"Resumen breve en 5-10 palabras\",\n" .
             "  \"requiere_soporte_humano\": true/false,\n" .
-            "  \"respuesta_sugerida\": \"Respuesta amable para el usuario\"\n" .
+            "  \"respuesta_sugerida\": \"Respuesta clara y paso a paso para el administrador\"\n" .
             "}\n\n" .
             "Mensaje del usuario: \"$message\"";
 
@@ -92,17 +107,15 @@ class GeminiService
                     ['role' => 'user', 'parts' => [['text' => $prompt]]]
                 ],
                 'generationConfig' => [
-                    'temperature' => 0.1, // Low temperature for consistent JSON
+                    'temperature' => 0.1,
                     'responseMimeType' => 'application/json'
                 ]
             ]);
 
             if ($response->successful()) {
                 $rawText = $response->json('candidates.0.content.parts.0.text');
-                // Clean markdown code blocks if Gemini includes them despite the prompt
                 $cleanJson = preg_replace('/^```json\s*|\s*```$/', '', trim($rawText));
                 $data = json_decode($cleanJson, true);
-
                 if (json_last_error() === JSON_ERROR_NONE) {
                     return $data;
                 }

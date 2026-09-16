@@ -29,7 +29,7 @@ class PlataformaController extends Controller
                 ->orderBy('nombre', 'asc')
                 ->get()
                 ->map(function($prop) {
-                    $licencia = $prop->getLicenciaActiva();
+                    $licencia = $prop->licencias->sortByDesc('created_at')->first();
                     
                     return [
                         'id' => $prop->id,
@@ -42,6 +42,7 @@ class PlataformaController extends Controller
                         'total_usuarios' => $prop->users()->count(),
                         'licencia_actual' => $licencia ? [
                             'id' => $licencia->id,
+                            'licencia_id' => $licencia->licencia_id,
                             'nombre' => $licencia->licencia->nombre ?? 'N/A',
                             'estado' => $licencia->estado,
                             'inicio' => $licencia->fecha_inicio,

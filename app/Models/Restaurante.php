@@ -30,7 +30,7 @@ class Restaurante extends Model
     {
         if (!$this->imagen) return null;
         if (filter_var($this->imagen, FILTER_VALIDATE_URL)) return $this->imagen;
-        return asset('storage/' . $this->imagen);
+        return \Illuminate\Support\Facades\Storage::disk(config('filesystems.images_disk'))->url($this->imagen);
     }
 
     public function propietario()

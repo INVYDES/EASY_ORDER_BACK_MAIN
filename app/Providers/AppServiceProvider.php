@@ -7,6 +7,9 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Http\Request;
 
+use Illuminate\Support\Facades\Mail;
+use App\Mail\Transport\GmailApiTransport;
+
 class AppServiceProvider extends ServiceProvider
 {
     /**
@@ -37,6 +40,15 @@ class AppServiceProvider extends ServiceProvider
         // 🔒 SEGURIDAD: Limitar consultas pesadas de reportes (10 por minuto)
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+        });
+
+        // Registrar driver de correo Gmail API via OAuth2
+        Mail::extend('gmail-api', function (array $config = []) {
+            return new GmailApiTransport(
+                $config['client_id'] ?? env('GOOGLE_CLIENT_ID'),
+                $config['client_secret'] ?? env('GOOGLE_CLIENT_SECRET', ''),
+                $config['refresh_token'] ?? env('GOOGLE_REFRESH_TOKEN', '')
+            );
         });
     }
 }

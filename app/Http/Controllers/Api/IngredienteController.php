@@ -454,7 +454,14 @@ class IngredienteController extends Controller
             $ingredientesAntesIds = $producto->ingredientes()->pluck('ingredientes.id')->toArray();
 
             $producto->ingredientes()->sync($porTipo['ingrediente']);
-            $producto->insumosPreparados()->sync($porTipo['insumo_preparado']);
+
+            // NOTA: la relación insumosPreparados() filtra con whereRaw('1 = 0'), pero
+            // ese where NO se aplica al newPivotQuery() que usa sync() para detachar,
+            // así que sync([]) borraría TODAS las filas del pivot (incluidas las de
+            // ingredientes). Solo sincronizar cuando realmente hay insumos preparados.
+            if (!empty($porTipo['insumo_preparado'])) {
+                $producto->insumosPreparados()->sync($porTipo['insumo_preparado']);
+            }
 
             $producto->recalcularStockDesdeIngredientes();
 

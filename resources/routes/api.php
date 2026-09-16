@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\ChatbotController;
 use App\Http\Controllers\Api\PlataformaController;
 use App\Http\Controllers\Api\EstacionController;
 use App\Http\Controllers\Api\InsumosPreparadosController;
+use App\Http\Controllers\Api\ContactoController;
 
 /*
 |--------------------------------------------------------------------------
@@ -57,14 +58,18 @@ Route::prefix('')->group(function () {
     });
     Route::post('/reset-password',     [AuthController::class, 'resetPassword']);
     Route::post('/verify-reset-token', [AuthController::class, 'verifyResetToken']);
+    Route::get('/verificar-email/{id}/{hash}', [AuthController::class, 'verificarEmail'])->name('verification.verify');
+
 
     // ========== PROPIETARIOS ==========
     Route::post('/propietarios', [PropietarioController::class, 'store']);
 
     // ========== WEBHOOKS (Protegidos con Rate Limit) ==========
-    Route::middleware('throttle:10,1')->group(function () {
+    Route::middleware('throttle:60,1')->group(function () {
         Route::post('/paypal/licencia-webhook',      [LicenciaController::class, 'webhookPayPal']);
         Route::post('/mercadopago/licencia-webhook', [LicenciaController::class, 'webhookMercadoPago']);
+        // Alias: URL legacy que se envió en notification_url de preferencias ya creadas
+        Route::post('/licencias/webhook/mercadopago', [LicenciaController::class, 'webhookMercadoPago']);
     });
 
     // ========== CALLBACKS PAYPAL ==========
@@ -82,11 +87,11 @@ Route::get('/paypal/capturar-pago',         [CajaController::class, 'capturarPay
     Route::get('/productos/disponibles',             [ProductoController::class, 'disponiblesPublic']);
     Route::get('/productos/categoria/{categoriaId}', [ProductoController::class, 'porCategoria']);
     Route::get('/productos',                         [ProductoController::class, 'indexPublic']);
-    Route::get('/productos/{id}',                    [ProductoController::class, 'showPublic']);
+    Route::get('/productos/{id}',                    [ProductoController::class, 'showPublic'])->whereNumber('id');
 
     // ========== CATEGORÍAS ==========
     Route::get('/categorias',      [CategoriaController::class, 'indexPublic']);
-    Route::get('/categorias/{id}', [CategoriaController::class, 'showPublic']);
+    Route::get('/categorias/{id}', [CategoriaController::class, 'showPublic'])->whereNumber('id');
 
     // ========== OFERTAS ==========
     Route::get('/ofertas/activas', [OfertaController::class, 'activasPublic']);
@@ -94,8 +99,15 @@ Route::get('/paypal/capturar-pago',         [CajaController::class, 'capturarPay
     // ========== LICENCIAS ==========
     Route::get('/licencias/disponibles', [LicenciaController::class, 'disponibles']);
 
+    // ========== CONTACTO (Landing pública) ==========
+    Route::middleware('throttle:20,1')->group(function () {
+        Route::post('/contacto', [ContactoController::class, 'store']);
+        Route::post('/contact',  [ContactoController::class, 'store']); // alias
+    });
+
     // ========== CHATBOT & TICKETS ==========
     Route::post('/chatbot/chat', [ChatbotController::class, 'chat']);
+Route::post('/chatbot/sugerencia', [ChatbotController::class, 'suggestion']);
     
     // Rutas administrativas de Tickets (Protegidas)
     Route::middleware(['auth:sanctum', 'permission:VER_RESTAURANTE'])->group(function () {
@@ -117,6 +129,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/cambiar-restaurante', [AuthController::class, 'cambiarRestaurante']);
     Route::post('/change-password',     [AuthController::class, 'changePassword']);
     Route::post('/register-empleado',   [AuthController::class, 'registerEmpleado']);
+    Route::post('/reenviar-verificacion', [AuthController::class, 'reenviarVerificacion']);
+
 
     // ========== PERFIL DE USUARIO ==========
     Route::get('/user',                   [UserController::class, 'show']);
@@ -207,6 +221,8 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::delete('/{propietarioLicencia}',       [PropietarioLicenciaController::class, 'destroy'])->middleware('permission:ELIMINAR_PROPIETARIO_LICENCIA');
         Route::post('/{propietarioLicencia}/renovar', [PropietarioLicenciaController::class, 'renovar'])->middleware('permission:ASIGNAR_LICENCIA');
         Route::post('/{propietarioLicencia}/cancelar',[PropietarioLicenciaController::class, 'cancelar'])->middleware('permission:EDITAR_PROPIETARIO_LICENCIA');
+        Route::post('/{propietarioLicencia}/cambiar-plan', [PropietarioLicenciaController::class, 'cambiarPlan'])->middleware('permission:EDITAR_PROPIETARIO_LICENCIA');
+        Route::post('/{propietarioLicencia}/confirmar-cambio', [PropietarioLicenciaController::class, 'confirmarCambio'])->middleware('permission:EDITAR_PROPIETARIO_LICENCIA');
     });
 
     // ========== LICENCIAS (ADMIN) ==========
@@ -418,6 +434,17 @@ Route::get('/ventas-por-canal-tipo', [ReporteController::class, 'ventasPorCanalT
         Route::delete('/{id}', [UserController::class, 'destroy'])->middleware('permission:ELIMINAR_EMPLEADOS');
         Route::patch('/{id}/toggle-activo', [UserController::class, 'toggleActivo'])->middleware('permission:VER_RESTAURANTE');
     });
+
+    // ========== CONTACTOS (Admin) ==========
+    // Seguimiento de las solicitudes del formulario público.
+    Route::middleware('permission:VER_CONTACTOS')->group(function () {
+        Route::get('/contactos',         [ContactoController::class, 'index']);
+        Route::get('/contactos/resumen', [ContactoController::class, 'resumen']);
+        Route::get('/contactos/{id}',    [ContactoController::class, 'show'])->whereNumber('id');
+    });
+    Route::patch('/contactos/{id}', [ContactoController::class, 'update'])
+        ->whereNumber('id')
+        ->middleware('permission:EDITAR_CONTACTOS');
 
     // ========== MESEROS ==========
    // ========== MESEROS ==========

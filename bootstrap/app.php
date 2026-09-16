@@ -53,4 +53,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 return response()->json(['success' => false, 'message' => 'Ruta no encontrada'], 404);
             }
         });
+    })
+    ->withSchedule(function (\Illuminate\Console\Scheduling\Schedule $schedule) {
+        $schedule->command('app:notificar-suscripcion-por-vencer')->dailyAt('09:00');
     })->create();

@@ -51,7 +51,7 @@ class Paquete extends Model
             if (filter_var($this->imagen, FILTER_VALIDATE_URL)) {
                 return $this->imagen;
             }
-            return asset('storage/' . $this->imagen);
+            return \Illuminate\Support\Facades\Storage::disk(config('filesystems.images_disk'))->url($this->imagen);
         }
         return 'https://ui-avatars.com/api/?name=' . urlencode($this->nombre) . '&color=7F9CF5&background=EBF4FF';
     }

@@ -63,6 +63,39 @@ return [
             ]) : [],
         ],
 
+        /*
+        |------------------------------------------------------------------
+        | Conexión del módulo de contactos (base eorder_contactos)
+        |------------------------------------------------------------------
+        |
+        | Guarda las solicitudes del formulario público de contacto en su
+        | propia base de datos. Por defecto reutiliza host, puerto, usuario y
+        | contraseña de la conexión principal y sólo cambia la base. Si se
+        | crea un usuario exclusivo, definir DB_CONTACTOS_USERNAME y
+        | DB_CONTACTOS_PASSWORD (o DB_CONTACTOS_URL).
+        |
+        */
+
+        'contactos' => [
+            'driver' => 'mysql',
+            'url' => env('DB_CONTACTOS_URL'),
+            'host' => env('DB_CONTACTOS_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => env('DB_CONTACTOS_PORT', env('DB_PORT', '3306')),
+            'database' => env('DB_CONTACTOS_DATABASE', 'eorder_contactos'),
+            'username' => env('DB_CONTACTOS_USERNAME', env('DB_USERNAME', 'root')),
+            'password' => env('DB_CONTACTOS_PASSWORD', env('DB_PASSWORD', '')),
+            'unix_socket' => env('DB_SOCKET', ''),
+            'charset' => env('DB_CHARSET', 'utf8mb4'),
+            'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => null,
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+        ],
+
         'mariadb' => [
             'driver' => 'mariadb',
             'url' => env('DB_URL'),

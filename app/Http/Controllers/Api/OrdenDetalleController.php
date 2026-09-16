@@ -709,6 +709,8 @@ class OrdenDetalleController extends Controller
                 $orden->update(['estado' => 'EN_PREPARACION']);
             }
 
+            $orden->verificarYActualizarEstadoGlobal();
+
             DB::commit();
 
             // Broadcast opcional

@@ -822,7 +822,7 @@ class OrdenController extends Controller
                         'metodo_pago' => $request->metodo_pago,
                         'propina'     => $request->propina ?? 0,
                         'referencia'  => $request->referencia,
-                        'total'       => $orden->detalles()->sum('subtotal') + ($request->propina ?? 0),
+                        'total'       => $orden->detalles()->sum('subtotal') + ($orden->costo_envio ?? 0) + ($request->propina ?? 0),
                     ];
                     if ($request->filled('comision_pct')) $updateData['comision_pct'] = $request->comision_pct;
                     if ($request->filled('comision_monto')) $updateData['comision_monto'] = $request->comision_monto;

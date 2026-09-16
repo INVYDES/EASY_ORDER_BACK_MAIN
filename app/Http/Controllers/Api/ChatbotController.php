@@ -37,7 +37,7 @@ class ChatbotController extends Controller
         $restauranteId = $request->restaurante_id ?: $request->header('X-Restaurante-Id');
 
         // 1. Analyze Intent with AI
-        $analysis = $this->gemini->analyzeIntent($userMessage);
+        $analysis = $this->gemini->analyzeIntent($userMessage, $restauranteId);
 
         // 2. Create Ticket in Database
         $ticket = Ticket::create([
@@ -121,4 +121,40 @@ class ChatbotController extends Controller
             'data' => $ticket
         ]);
     }
+    /**
+     * Recibe una sugerencia del cliente y la envía por WhatsApp al dueño.
+     */
+    public function suggestion(Request $request)
+    {
+        $request->validate([
+            'name'    => 'required|string|max:100',
+            'contact' => 'required|string|max:100',
+            'message' => 'required|string|max:1000',
+        ]);
+
+        // Mensaje para WhatsApp
+        $waMessage = "📝 *Sugerencia de cliente*\n\n"
+                   . "*Nombre:* {$request->name}\n"
+                   . "*Contacto:* {$request->contact}\n"
+                   . "*Mensaje:* {$request->message}";
+
+        // Envío (si la configuración de WhatsApp no está completa, solo se loguea)
+        $this->whatsapp->sendNotification($waMessage);
+
+        // Registrar como ticket de tipo "SUGERENCIA"
+        Ticket::create([
+            'restaurante_id'  => $request->header('X-Restaurante-Id'),
+            'user_id'        => Auth::id(),
+            'usuario_nombre' => $request->name,
+            'contacto'       => $request->contact,
+            'mensaje'        => $request->message,
+            'clasificacion'  => 'SUGERENCIA',
+            'prioridad'      => 'BAJA',
+            'respuesta_ia'   => 'Gracias por tu sugerencia.',
+            'metadata'       => ['tipo' => 'SUGERENCIA'],
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Sugerencia enviada.']);
+    }
+
 }

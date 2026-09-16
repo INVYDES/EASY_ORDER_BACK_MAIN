@@ -105,7 +105,20 @@ class PropietarioController extends Controller
 
             $token = $user->createToken('auth_token_' . $user->id)->plainTextToken;
 
+            // Enviar correo de verificación de cuenta
+            try {
+                $urlVerificacion = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+                    'verification.verify',
+                    now()->addHours(48),
+                    ['id' => $user->id, 'hash' => sha1($user->getEmailForVerification())]
+                );
+                \Illuminate\Support\Facades\Mail::to($user->email)->send(new \App\Mail\VerificarCuenta($user->name, $urlVerificacion));
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Error enviando correo de verificación a ' . $user->email . ': ' . $e->getMessage());
+            }
+
             return response()->json([
+
                 'success' => true,
                 'message' => 'Registro completado exitosamente',
                 'data'    => [

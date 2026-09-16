@@ -243,6 +243,28 @@ class CajaController extends Controller
                 return response()->json(['success' => false, 'message' => 'No hay una caja abierta actualmente'], 404);
             }
 
+            $cuentasActivas = Orden::where('restaurante_id', $restauranteActivo->id)
+                ->where('updated_at', '>=', $caja->fecha_apertura)
+                ->whereNotIn('estado', ['CERRADA', 'PAGADA', 'CANCELADA'])
+                ->get(['id', 'mesa', 'comensales', 'estado', 'tipo_orden', 'total']);
+
+            if ($cuentasActivas->isNotEmpty()) {
+                $detalle = $cuentasActivas->map(fn($o) => [
+                    'id'         => $o->id,
+                    'folio'      => $o->folio ?? '#' . $o->id,
+                    'mesa'       => $o->mesa,
+                    'comensales' => $o->comensales,
+                    'estado'     => $o->estado,
+                    'tipo'       => $o->tipo_orden,
+                    'total'      => (float) $o->total,
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se puede cerrar la caja porque hay ' . $cuentasActivas->count() . ' cuenta(s) activa(s). Cierra o cancela todas antes de cerrar.',
+                    'data'    => ['cuentas_activas' => $detalle],
+                ], 409);
+            }
+
             DB::beginTransaction();
 
             $ventas = Orden::where('restaurante_id', $restauranteActivo->id)
@@ -359,14 +381,14 @@ class CajaController extends Controller
             DB::beginTransaction();
 
             $caja = Caja::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', now()->format('Y-m-d'))
                 ->whereNull('fecha_cierre')
+                ->latest()
                 ->lockForUpdate()
                 ->first();
 
             if (!$caja) {
                 DB::rollBack();
-                return response()->json(['success' => false, 'message' => 'No hay una caja abierta para hoy'], 404);
+                return response()->json(['success' => false, 'message' => 'No hay una caja abierta actualmente'], 404);
             }
 
             if ($request->tipo === 'egreso') {
@@ -873,8 +895,8 @@ class CajaController extends Controller
             }
 
             $caja = Caja::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', now()->format('Y-m-d'))
                 ->whereNull('fecha_cierre')
+                ->latest()
                 ->first();
 
             if (!$caja) {
@@ -936,8 +958,8 @@ class CajaController extends Controller
 
             $restauranteActivo = $orden->restaurante;
             $caja = Caja::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', now()->format('Y-m-d'))
                 ->whereNull('fecha_cierre')
+                ->latest()
                 ->first();
 
             if (!$caja) {

@@ -16,7 +16,7 @@ class Anuncio extends Model
         'restaurante_id', 'titulo', 'contenido', 'tipo', 'producto_id', 'paquete_id',
         'precio_promo', 'emoji', 'color', 'activo',
         'mostrar_cliente', 'mostrar_interno',
-        'fecha_inicio', 'fecha_fin', 'orden',
+        'fecha_inicio', 'fecha_fin', 'dias_semana', 'orden',
     ];
 
     protected $casts = [
@@ -26,6 +26,7 @@ class Anuncio extends Model
         'fecha_inicio'    => 'datetime:Y-m-d H:i:s',
         'fecha_fin'       => 'datetime:Y-m-d H:i:s',
         'precio_promo'    => 'float',
+        'dias_semana'     => 'array',
         'orden'           => 'integer',
     ];
 
@@ -36,8 +37,23 @@ class Anuncio extends Model
     {
         $ahora = now();
         return $this->activo && 
+               $this->correspondeDia($ahora) &&
                (!$this->fecha_inicio || $this->fecha_inicio <= $ahora) && 
                (!$this->fecha_fin || $this->fecha_fin->endOfDay() >= $ahora);
+    }
+
+    /**
+     * True si el anuncio se debe mostrar en el día de la semana indicado.
+     * Si `dias_semana` está vacío, aplica todos los días.
+     */
+    public function correspondeDia($fecha = null): bool
+    {
+        $dias  = $this->dias_semana ?? [];
+        $dias  = array_map('intval', $dias);
+        if (empty($dias)) return true;
+
+        $dia = (int) (($fecha ?? now())->format('w')); // 0=Dom ... 6=Sáb
+        return in_array($dia, $dias, true);
     }
 
     public function restaurante()
@@ -65,6 +81,12 @@ class Anuncio extends Model
             })
             ->where(function($q) use ($ahora) {
                 $q->whereNull('fecha_fin')->orWhere('fecha_fin', '>=', $ahora->startOfDay());
+            })
+            ->where(function($q) use ($ahora) {
+                $dia = (int) $ahora->format('w'); // 0=Dom ... 6=Sáb
+                $q->whereNull('dias_semana')
+                    ->orWhere('dias_semana', '=', '[]')
+                    ->orWhere('dias_semana', 'LIKE', '%"'.$dia.'"%');
             })
             ->orderBy('orden')
             ->orderBy('created_at', 'desc');

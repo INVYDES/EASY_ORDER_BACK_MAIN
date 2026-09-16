@@ -95,14 +95,37 @@ class LicenciaPagoController extends Controller
             $licenciaActiva = PropietarioLicencia::with('licencia')
                 ->where('propietario_id', $propietario->id)
                 ->where('estado', 'ACTIVA')
+                ->where('fecha_expiracion', '>', now())
                 ->orderBy('created_at', 'desc')
                 ->first();
 
             if (!$licenciaActiva) {
+                $ultimaLicencia = PropietarioLicencia::with('licencia')
+                    ->where('propietario_id', $propietario->id)
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+
+                if ($ultimaLicencia) {
+                    $diasRestantes = $ultimaLicencia->fecha_expiracion ? max(0, (int) Carbon::now()->diffInDays(Carbon::parse($ultimaLicencia->fecha_expiracion), false)) : 0;
+                    return response()->json([
+                        'success' => true,
+                        'data' => [
+                            'id' => $ultimaLicencia->id,
+                            'licencia' => $ultimaLicencia->licencia,
+                            'estado' => $ultimaLicencia->estado ?: 'INACTIVA',
+                            'fecha_inicio' => $ultimaLicencia->fecha_inicio,
+                            'fecha_expiracion' => $ultimaLicencia->fecha_expiracion,
+                            'dias_restantes' => $diasRestantes,
+                            'metodo_pago' => $ultimaLicencia->metodo_pago ?? 'paypal'
+                        ],
+                        'message' => 'Tu licencia se encuentra ' . strtolower($ultimaLicencia->estado ?: 'inactiva')
+                    ]);
+                }
+
                 return response()->json([
                     'success' => true,
                     'data' => null,
-                    'message' => 'No tienes una licencia activa'
+                    'message' => 'No tienes una licencia registrada'
                 ]);
             }
 

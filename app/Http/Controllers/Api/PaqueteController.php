@@ -57,7 +57,7 @@ class PaqueteController extends Controller
             $data['activo'] = true;
 
             if ($request->hasFile('imagen')) {
-                $path = $request->file('imagen')->store('paquetes', 'public');
+                $path = $request->file('imagen')->store('paquetes', config('filesystems.images_disk'));
                 $data['imagen'] = $path;
             }
 
@@ -122,9 +122,9 @@ class PaqueteController extends Controller
             if ($request->hasFile('imagen')) {
                 // Eliminar imagen anterior
                 if ($paquete->imagen) {
-                    Storage::disk('public')->delete($paquete->imagen);
+                    Storage::disk(config('filesystems.images_disk'))->delete($paquete->imagen);
                 }
-                $path = $request->file('imagen')->store('paquetes', 'public');
+                $path = $request->file('imagen')->store('paquetes', config('filesystems.images_disk'));
                 $data['imagen'] = $path;
             }
 
@@ -168,7 +168,7 @@ class PaqueteController extends Controller
             }
 
             if ($paquete->imagen) {
-                Storage::disk('public')->delete($paquete->imagen);
+                Storage::disk(config('filesystems.images_disk'))->delete($paquete->imagen);
             }
 
             $paquete->delete();

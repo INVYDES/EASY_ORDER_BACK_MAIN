@@ -270,7 +270,7 @@ class RestauranteController extends Controller
             ]);
 
             if ($request->hasFile('imagen')) {
-                $path = $request->file('imagen')->store('restaurantes', 'public');
+                $path = $request->file('imagen')->store('restaurantes', config('filesystems.images_disk'));
                 $restaurante->update(['imagen' => $path]);
             }
 
@@ -357,7 +357,7 @@ class RestauranteController extends Controller
 
             if ($request->eliminar_imagen && $restaurante->imagen) {
                 if (!filter_var($restaurante->imagen, FILTER_VALIDATE_URL)) {
-                    \Illuminate\Support\Facades\Storage::disk('public')->delete($restaurante->imagen);
+                    \Illuminate\Support\Facades\Storage::disk(config('filesystems.images_disk'))->delete($restaurante->imagen);
                 }
                 $restaurante->update(['imagen' => null]);
             }
@@ -365,9 +365,9 @@ class RestauranteController extends Controller
             if ($request->hasFile('imagen')) {
                 // Borrar anterior
                 if ($restaurante->imagen && !filter_var($restaurante->imagen, FILTER_VALIDATE_URL)) {
-                    \Illuminate\Support\Facades\Storage::disk('public')->delete($restaurante->imagen);
+                    \Illuminate\Support\Facades\Storage::disk(config('filesystems.images_disk'))->delete($restaurante->imagen);
                 }
-                $path = $request->file('imagen')->store('restaurantes', 'public');
+                $path = $request->file('imagen')->store('restaurantes', config('filesystems.images_disk'));
                 $restaurante->update(['imagen' => $path]);
             }
 

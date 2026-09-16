@@ -406,7 +406,7 @@ class ProductoController extends Controller
             ];
 
             if ($request->hasFile('imagen')) {
-                $path = $request->file('imagen')->store('productos', 'public');
+                $path = $request->file('imagen')->store('productos', config('filesystems.images_disk'));
                 $data['imagen'] = $path;
             }
             
@@ -525,8 +525,9 @@ class ProductoController extends Controller
 
             $data = $request->only($camposPermitidos);
 
-            if ($request->has('tamanos_personalizados')) {
-                $data['tamanos_personalizados'] = $this->decodeTamanosPersonalizados($request->tamanos_personalizados);
+            if ($request->has('tamanos_personalizados') || $request->has('tamanos')) {
+                $rawTamanos = $request->tamanos_personalizados ?? $request->tamanos;
+                $data['tamanos_personalizados'] = $this->decodeTamanosPersonalizados($rawTamanos);
             }
 
             // ---------------------------------------------------------------
@@ -553,22 +554,22 @@ class ProductoController extends Controller
 
             if ($request->eliminar_imagen && $producto->imagen) {
                 if (!filter_var($producto->imagen, FILTER_VALIDATE_URL)) {
-                    Storage::disk('public')->delete($producto->imagen);
+                    Storage::disk(config('filesystems.images_disk'))->delete($producto->imagen);
                 }
                 $data['imagen'] = null;
             }
 
             if ($request->hasFile('imagen')) {
                 if ($producto->imagen && !filter_var($producto->imagen, FILTER_VALIDATE_URL)) {
-                    Storage::disk('public')->delete($producto->imagen);
+                    Storage::disk(config('filesystems.images_disk'))->delete($producto->imagen);
                 }
-                $path = $request->file('imagen')->store('productos', 'public');
+                $path = $request->file('imagen')->store('productos', config('filesystems.images_disk'));
                 $data['imagen'] = $path;
             }
             
             if ($request->has('imagen_url') && !empty($request->imagen_url)) {
                 if ($producto->imagen && !filter_var($producto->imagen, FILTER_VALIDATE_URL)) {
-                    Storage::disk('public')->delete($producto->imagen);
+                    Storage::disk(config('filesystems.images_disk'))->delete($producto->imagen);
                 }
                 $data['imagen'] = $request->imagen_url;
             }
@@ -661,7 +662,7 @@ class ProductoController extends Controller
             $nombreProducto = $producto->nombre;
 
             if ($producto->imagen && !filter_var($producto->imagen, FILTER_VALIDATE_URL)) {
-                Storage::disk('public')->delete($producto->imagen);
+                Storage::disk(config('filesystems.images_disk'))->delete($producto->imagen);
             }
 
             $ingredientesIds = DB::table('ingredientes_de_productos')
@@ -907,7 +908,7 @@ class ProductoController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'cantidad' => 'required|numeric|min:0.1',
-                'tipo' => 'required|in:sumar,restar,asignar',
+                'tipo' => 'required|in:sumar,restar,asignar,entrada,salida,ajuste',
                 'motivo' => 'nullable|string|max:255'
             ]);
 
@@ -919,12 +920,19 @@ class ProductoController extends Controller
                 ], 422);
             }
 
+            $tipo = match ($request->tipo) {
+                'entrada' => 'sumar',
+                'salida'  => 'restar',
+                'ajuste'  => 'asignar',
+                default   => $request->tipo,
+            };
+
             $stockAnterior = $producto->stock;
             $mensaje = '';
 
             DB::beginTransaction();
 
-            switch ($request->tipo) {
+            switch ($tipo) {
                 case 'sumar':
                     $producto->increment('stock', $request->cantidad);
                     $mensaje = "Stock aumentado en {$request->cantidad} unidades";
@@ -1235,13 +1243,15 @@ class ProductoController extends Controller
                 return redirect($producto->imagen);
             }
             
-            $path = Storage::disk('public')->path($producto->imagen);
-            
-            if (!file_exists($path)) {
-                return response()->json(['message' => 'Image not found'], 404);
+            $disk = config('filesystems.images_disk');
+            if ($disk === 'public') {
+                $path = Storage::disk('public')->path($producto->imagen);
+                if (!file_exists($path)) {
+                    return response()->json(['message' => 'Image not found'], 404);
+                }
+                return response()->file($path);
             }
-            
-            return response()->file($path);
+            return redirect(Storage::disk($disk)->url($producto->imagen));
             
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['message' => 'Product not found'], 404);
@@ -1364,10 +1374,10 @@ class ProductoController extends Controller
             
             $producto = $query->firstOrFail();
 
-            $ofertas = \App\Models\Oferta::where('producto_id', $producto->id)
-                ->where('activa', true)
-                ->where('fecha_inicio', '<=', now())
-                ->where('fecha_fin', '>=', now())
+            $ofertas = \App\Models\Oferta::whereHas('productos', function ($q) use ($producto) {
+                    $q->where('productos.id', $producto->id);
+                })
+                ->where('activo', true)
                 ->get();
 
             $precioOriginal = (float) $producto->precio;
@@ -1700,11 +1710,17 @@ class ProductoController extends Controller
      */
     private function getTamanosDisponibles($producto)
     {
+        $limpiar = function ($value) {
+            if (!is_string($value)) return $value;
+            $fixed = mb_convert_encoding($value, 'UTF-8', 'UTF-8');
+            return preg_replace('/[\x80-\xBF]/', '', $fixed) === $fixed ? $value : $fixed;
+        };
+
         if (!empty($producto->tamanos_personalizados) && is_array($producto->tamanos_personalizados)) {
             return collect($producto->tamanos_personalizados)
                 ->map(fn($t) => [
                     'key'    => $t['key'] ?? $t['nombre'] ?? null,
-                    'nombre' => $t['nombre'] ?? $t['key'] ?? null,
+                    'nombre' => $limpiar($t['nombre'] ?? $t['key'] ?? null),
                     'precio' => (float) ($t['precio'] ?? 0),
                     'stock'  => (int) ($t['stock'] ?? $producto->stock ?? 0),
                 ])
@@ -1913,10 +1929,10 @@ class ProductoController extends Controller
 
     private function checkOfertaActiva($producto)
     {
-        return \App\Models\Oferta::where('producto_id', $producto->id)
-            ->where('activa', true)
-            ->where('fecha_inicio', '<=', now())
-            ->where('fecha_fin', '>=', now())
+        return \App\Models\Oferta::whereHas('productos', function ($q) use ($producto) {
+                $q->where('productos.id', $producto->id);
+            })
+            ->where('activo', true)
             ->exists();
     }
 

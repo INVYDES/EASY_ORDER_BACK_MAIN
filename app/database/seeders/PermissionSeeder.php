@@ -109,6 +109,11 @@ class PermissionSeeder extends Seeder
             ['id' => 68, 'nombre' => 'VER_EMPLEADOS', 'descripcion' => 'Ver catálogo de empleados y ficha'],
             ['id' => 69, 'nombre' => 'VER_ASISTENCIA', 'descripcion' => 'Ver y registrar asistencias'],
             ['id' => 70, 'nombre' => 'VER_NOMINA', 'descripcion' => 'Ver y generar nóminas'],
+
+            // Contactos / solicitudes del formulario público (116-117)
+            // Los IDs continúan después de los ya existentes en la base (71-115).
+            ['id' => 116, 'nombre' => 'VER_CONTACTOS', 'descripcion' => 'Ver solicitudes del formulario de contacto'],
+            ['id' => 117, 'nombre' => 'EDITAR_CONTACTOS', 'descripcion' => 'Dar seguimiento a las solicitudes de contacto'],
         ];
 
         foreach ($permissions as $perm) {

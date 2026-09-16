@@ -23,6 +23,7 @@ class UserResource extends JsonResource
             'telefono'           => $this->telefono,
             'restaurante_activo' => $this->restaurante_activo,
             'activo'             => (bool) $this->activo,
+            'licencia_activa'    => $this->propietario_id ? (bool)$this->propietario->licenciaActiva() : true,
             'roles' => $this->whenLoaded('roles', function() {
     return $this->roles->map(fn($r) => [
         'id'     => $r->id,

@@ -274,14 +274,37 @@ public function disponibles(Request $request)
             $licenciaActiva = PropietarioLicencia::with('licencia')
                 ->where('propietario_id', $propietario->id)
                 ->where('estado', 'ACTIVA')
+                ->where('fecha_expiracion', '>', now())
                 ->orderBy('created_at', 'desc')
                 ->first();
 
             if (!$licenciaActiva) {
+                $ultimaLicencia = PropietarioLicencia::with('licencia')
+                    ->where('propietario_id', $propietario->id)
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+
+                if ($ultimaLicencia) {
+                    $diasRestantes = $ultimaLicencia->fecha_expiracion ? max(0, (int) Carbon::now()->diffInDays(Carbon::parse($ultimaLicencia->fecha_expiracion), false)) : 0;
+                    return response()->json([
+                        'success' => true,
+                        'data' => [
+                            'id' => $ultimaLicencia->id,
+                            'licencia' => $ultimaLicencia->licencia,
+                            'estado' => $ultimaLicencia->estado ?: 'INACTIVA',
+                            'fecha_inicio' => $ultimaLicencia->fecha_inicio,
+                            'fecha_expiracion' => $ultimaLicencia->fecha_expiracion,
+                            'dias_restantes' => $diasRestantes,
+                            'metodo_pago' => $ultimaLicencia->metodo_pago ?? 'paypal'
+                        ],
+                        'message' => 'Tu licencia se encuentra ' . strtolower($ultimaLicencia->estado ?: 'inactiva')
+                    ]);
+                }
+
                 return response()->json(['success' => true, 'data' => null]);
             }
 
-            $diasRestantes = $licenciaActiva->fecha_expiracion ? max(0, Carbon::now()->diffInDays($licenciaActiva->fecha_expiracion, false)) : 0;
+            $diasRestantes = $licenciaActiva->fecha_expiracion ? max(0, (int) Carbon::now()->diffInDays(Carbon::parse($licenciaActiva->fecha_expiracion), false)) : 0;
 
             return response()->json([
                 'success' => true,
@@ -422,13 +445,8 @@ public function disponibles(Request $request)
                 return response()->json(['success' => false, 'message' => 'Plan PayPal no configurado'], 400);
             }
 
-            $licenciaActiva = PropietarioLicencia::where('propietario_id', $propietario->id)
-                ->where('estado', 'ACTIVA')->where('fecha_expiracion', '>', Carbon::now())->first();
-
-            if ($licenciaActiva) {
-                return response()->json(['success' => false, 'message' => 'Ya tienes una licencia activa'], 400);
-            }
-
+            // Cambio de plan: no se bloquea al propietario que ya tiene una licencia activa.
+            // Al activarse la nueva suscripción (webhook), la licencia vigente anterior se cancela automáticamente.
             $accessToken = $this->getPayPalAccessToken();
 
             $response = Http::withToken($accessToken)
@@ -503,7 +521,19 @@ public function disponibles(Request $request)
                             : "https://api-m.paypal.com/v1/billing/subscriptions/{$subscriptionId}");
 
                     if ($response->successful() && $response->json()['status'] === 'ACTIVE') {
-                        PropietarioLicencia::where('paypal_subscription_id', $subscriptionId)->update(['estado' => 'ACTIVA']);
+                        // Encontrar el registro de la suscripción que se activa
+                        $registro = PropietarioLicencia::where('paypal_subscription_id', $subscriptionId)->first();
+
+                        if ($registro) {
+                            // ⚠️ Al activar una nueva suscripción se cancela la licencia vigente anterior (cambio de plan)
+                            PropietarioLicencia::where('propietario_id', $registro->propietario_id)
+                                ->where('estado', 'ACTIVA')
+                                ->where('id', '!=', $registro->id)
+                                ->update(['estado' => 'CANCELADA']);
+
+                            $registro->update(['estado' => 'ACTIVA']);
+                        }
+
                         Log::info('Suscripción PayPal verificada y activada', ['sub_id' => $subscriptionId]);
                     } else {
                         Log::warning('Intento de activar suscripción PayPal no verificada', ['payload' => $payload]);
@@ -545,15 +575,7 @@ public function comprarLicenciaMercadoPago(Request $request, $licenciaId)
             return response()->json(['success' => false, 'message' => 'Licencia no disponible'], 400);
         }
 
-        $licenciaActiva = PropietarioLicencia::where('propietario_id', $propietario->id)
-            ->where('estado', 'ACTIVA')
-            ->where('fecha_expiracion', '>', Carbon::now())
-            ->first();
-
-        if ($licenciaActiva) {
-            return response()->json(['success' => false, 'message' => 'Ya tienes una licencia activa'], 400);
-        }
-
+        // Cambio de plan: permitir comprar otro plan aunque haya una licencia vigente.
         $preferenceClient = new PreferenceClient();
 
         $preference = $preferenceClient->create([
@@ -577,7 +599,7 @@ public function comprarLicenciaMercadoPago(Request $request, $licenciaId)
             'auto_return'          => 'approved',
             // ✅ Formato consistente con el webhook
             'external_reference'   => 'LIC-' . $licencia->id . '-' . $propietario->id,
-            'notification_url'     => config('app.url') . '/api/licencias/webhook/mercadopago',
+            'notification_url'     => config('app.url') . '/api/mercadopago/licencia-webhook',
             'statement_descriptor' => 'Easy Order',
             'metadata' => [
                 'propietario_id' => $propietario->id,
@@ -607,7 +629,13 @@ public function webhookMercadoPago(Request $request)
 {
     try {
         $payload = $request->all();
-        Log::info('Webhook Mercado Pago', $payload);
+        Log::info('Webhook Mercado Pago recibido', [
+            'type'      => $payload['type'] ?? 'desconocido',
+            'action'    => $payload['action'] ?? 'desconocida',
+            'data_id'   => $payload['data']['id'] ?? null,
+            'ip'        => $request->ip(),
+            'full_url'  => $request->fullUrl(),
+        ]);
 
         if (($payload['type'] ?? null) !== 'payment') {
             return response()->json(['status' => 'ok'], 200);
@@ -673,6 +701,12 @@ public function webhookMercadoPago(Request $request)
 
         $registro->save();
 
+        // ⚠️ Al activar una nueva compra se cancela la licencia vigente anterior (cambio de plan)
+        PropietarioLicencia::where('propietario_id', $propietarioId)
+            ->where('estado', 'ACTIVA')
+            ->where('id', '!=', $registro->id)
+            ->update(['estado' => 'CANCELADA']);
+
         Log::info('Licencia activada', [
             'propietario_id' => $propietarioId,
             'licencia_id' => $licenciaId
@@ -717,18 +751,14 @@ public function simularPago(Request $request, $licenciaId)
             return response()->json(['success' => false, 'message' => 'Licencia no disponible'], 400);
         }
 
-        $licenciaActiva = PropietarioLicencia::where('propietario_id', $propietario->id)
-            ->where('estado', 'ACTIVA')
-            ->where('fecha_expiracion', '>', Carbon::now())
-            ->first();
-
-        if ($licenciaActiva) {
-            return response()->json(['success' => false, 'message' => 'Ya tienes una licencia activa'], 400);
-        }
-
         $dias      = $licencia->tipo === 'ANUAL' ? 365 : 30;
         $monto     = $licencia->tipo === 'ANUAL' ? $licencia->precio_anual : $licencia->precio;
         $pasarela  = $request->input('pasarela', 'simulado');
+
+        // Cancelar cualquier licencia vigente anterior para no duplicar la activa
+        PropietarioLicencia::where('propietario_id', $propietario->id)
+            ->where('estado', 'ACTIVA')
+            ->update(['estado' => 'CANCELADA']);
 
         $propLicencia = PropietarioLicencia::create([
             'propietario_id'         => $propietario->id,

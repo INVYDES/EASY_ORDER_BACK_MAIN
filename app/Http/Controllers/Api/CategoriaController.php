@@ -430,4 +430,143 @@ class CategoriaController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Resumen de categorías con conteo de productos
+     */
+    public function resumen(Request $request)
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user->hasPermission('VER_CATEGORIAS')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tienes permiso para ver categorías'
+                ], 403);
+            }
+
+            $restauranteActivo = app('restaurante_activo');
+
+            $categorias = Categoria::where('restaurante_id', $restauranteActivo->id)
+                ->withCount('productos')
+                ->orderBy('orden')
+                ->orderBy('nombre')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $categorias,
+                'total' => $categorias->count(),
+                'total_productos' => $categorias->sum('productos_count')
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener resumen de categorías',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Activar / desactivar una categoría
+     */
+    public function toggleActive(Request $request, $id)
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user->hasPermission('EDITAR_CATEGORIAS')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tienes permiso para editar categorías'
+                ], 403);
+            }
+
+            $restauranteActivo = app('restaurante_activo');
+
+            $categoria = Categoria::where('restaurante_id', $restauranteActivo->id)
+                ->findOrFail($id);
+
+            $categoria->activo = !$categoria->activo;
+            $categoria->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => $categoria->activo ? 'Categoría activada correctamente' : 'Categoría desactivada correctamente',
+                'data' => [
+                    'id' => $categoria->id,
+                    'activo' => $categoria->activo
+                ]
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Categoría no encontrada'
+            ], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cambiar estado de la categoría',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Reordenar categorías
+     */
+    public function reordenar(Request $request)
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user->hasPermission('EDITAR_CATEGORIAS')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tienes permiso para editar categorías'
+                ], 403);
+            }
+
+            $request->validate([
+                'categorias' => 'required|array|min:1',
+                'categorias.*.id' => 'required|integer',
+                'categorias.*.orden' => 'required|integer'
+            ]);
+
+            $restauranteActivo = app('restaurante_activo');
+
+            DB::beginTransaction();
+
+            foreach ($request->categorias as $item) {
+                Categoria::where('restaurante_id', $restauranteActivo->id)
+                    ->where('id', $item['id'])
+                    ->update(['orden' => $item['orden']]);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Categorías reordenadas correctamente'
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error de validación',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al reordenar categorías',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 }

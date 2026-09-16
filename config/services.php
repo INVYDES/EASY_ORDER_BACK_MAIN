@@ -44,13 +44,23 @@ return [
 
     'gemini' => [
         'key' => env('GEMINI_API_KEY'),
-        'model' => env('GEMINI_MODEL', 'gemini-1.5-flash'),
+        'model' => env('GEMINI_MODEL', 'gemini-3.6-flash'),
     ],
 
     'whatsapp' => [
+        'provider' => env('WHATSAPP_PROVIDER', 'evolution'),
         'phone_number_id' => env('WHATSAPP_PHONE_NUMBER_ID'),
         'access_token' => env('WHATSAPP_ACCESS_TOKEN'),
-        'recipient_number' => env('WHATSAPP_RECIPIENT_NUMBER'), // Número a donde llegan las dudas
+        'recipient_number' => env('WHATSAPP_RECIPIENT_NUMBER', '522294848144'),
+        'evolution_url' => env('EVOLUTION_API_URL'),
+        'evolution_key' => env('EVOLUTION_API_KEY'),
+        'evolution_instance' => env('EVOLUTION_INSTANCE_NAME', 'eorder'),
+    ],
+
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'),
     ],
 
 ];

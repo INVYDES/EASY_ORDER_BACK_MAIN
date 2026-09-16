@@ -78,6 +78,8 @@ class AnuncioController extends Controller
             'mostrar_interno'  => 'boolean',
             'fecha_inicio'     => 'nullable|date',
             'fecha_fin'        => 'nullable|date|after_or_equal:fecha_inicio',
+            'dias_semana'      => 'nullable|array',
+            'dias_semana.*'    => 'integer|between:0,6',
             'orden'            => 'nullable|integer',
         ]);
         try {
@@ -105,6 +107,7 @@ class AnuncioController extends Controller
                 'mostrar_interno' => $request->boolean('mostrar_interno', false),
                 'fecha_inicio'    => $request->fecha_inicio,
                 'fecha_fin'       => $request->fecha_fin,
+                'dias_semana'     => $request->input('dias_semana'),
                 'orden'           => $request->orden ?? 0,
             ]);
             return response()->json(['success'=>true,'message'=>'Anuncio creado','data'=>$this->transform($anuncio)],201);
@@ -126,6 +129,8 @@ class AnuncioController extends Controller
             'mostrar_interno' => 'sometimes|boolean',
             'fecha_inicio'    => 'nullable|date',
             'fecha_fin'       => 'nullable|date',
+            'dias_semana'     => 'nullable|array',
+            'dias_semana.*'   => 'integer|between:0,6',
             'orden'           => 'nullable|integer',
         ]);
         try {
@@ -142,7 +147,7 @@ class AnuncioController extends Controller
             $anuncio->update($request->only([
                 'titulo','contenido','tipo','producto_id','paquete_id','precio_promo',
                 'emoji','color','activo','mostrar_cliente','mostrar_interno',
-                'fecha_inicio','fecha_fin','orden',
+                'fecha_inicio','fecha_fin','dias_semana','orden',
             ]));
             return response()->json(['success'=>true,'message'=>'Actualizado','data'=>$this->transform($anuncio)]);
         } catch (\Exception $e) {
@@ -183,6 +188,7 @@ class AnuncioController extends Controller
             'mostrar_interno' => $a->mostrar_interno,
             'fecha_inicio'    => $a->fecha_inicio?->format('Y-m-d'),
             'fecha_fin'       => $a->fecha_fin?->format('Y-m-d'),
+            'dias_semana'     => is_array($a->dias_semana) ? array_map('intval', $a->dias_semana) : [],
             'orden'           => $a->orden,
             'producto_id'     => $a->producto_id,
             'paquete_id'      => $a->paquete_id,

@@ -38,7 +38,8 @@ class PropietarioLicencia extends Model
         'precio_personalizado_mensual',
         'precio_personalizado_anual',
         'notas_admin',
-        'creado_por_admin_id'
+        'creado_por_admin_id',
+        'notificado_vencimiento_at'
     ];
 
     protected $casts = [
@@ -46,6 +47,7 @@ class PropietarioLicencia extends Model
         'fecha_expiracion' => 'datetime',
         'ultimo_pago_at' => 'datetime',
         'proximo_pago_at' => 'datetime',
+        'notificado_vencimiento_at' => 'datetime',
         'monto_pagado' => 'decimal:2',
         'costo_personalizado' => 'decimal:2',
         'precio_personalizado_mensual' => 'decimal:2',

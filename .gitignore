@@ -3,6 +3,10 @@
 .env
 .env.backup
 .env.production
+.env.cloudrun
+cloudrun.yaml
+cloudbuild.prod.yaml
+get_gmail_token.php
 .phpactor.json
 .phpunit.result.cache
 /.fleet

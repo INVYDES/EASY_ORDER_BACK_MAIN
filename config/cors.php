@@ -38,10 +38,15 @@ return [
         'https://www.corion.mx',
         'http://corion.mx',
         'http://www.corion.mx',
+        'https://eorder.mx',
+        'https://www.eorder.mx',
+        'http://eorder.mx',
+        'http://www.eorder.mx',
     ],
 
     'allowed_origins_patterns' => [
         '#^https?://(www\.)?corion\.mx#',
+        '#^https?://(www\.)?eorder\.mx#',
         '#^(capacitor|ionic)://localhost#',
         '#^http://localhost(:\d+)?$#',
         '#^http://10\.0\.2\.2(:\d+)?$#',

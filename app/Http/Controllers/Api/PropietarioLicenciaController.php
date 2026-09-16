@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\PropietarioLicencia;
 use App\Models\Propietario;
 use App\Models\Licencia;
+use App\Models\Restaurante;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -186,7 +187,8 @@ class PropietarioLicenciaController extends Controller
 
             $asignacion = PropietarioLicencia::findOrFail($id);
 
-            $request->validate([
+$request->validate([
+                'licencia_id' => 'sometimes|exists:licencias,id',
                 'fecha_inicio' => 'sometimes|date',
                 'fecha_expiracion' => 'sometimes|date|after:fecha_inicio',
                 'estado' => 'sometimes|in:ACTIVA,INACTIVA,CANCELADA,EXPIRADA,PENDIENTE',
@@ -194,7 +196,12 @@ class PropietarioLicenciaController extends Controller
                 'metodo_pago' => 'nullable|string|max:50'
             ]);
 
-            $asignacion->update($request->all());
+            $datos = $request->only([
+                'licencia_id', 'fecha_inicio', 'fecha_expiracion', 'estado',
+                'monto_pagado', 'metodo_pago'
+            ]);
+
+            $asignacion->update($datos);
 
             // Registrar en log
             if (method_exists($user, 'logAction')) {

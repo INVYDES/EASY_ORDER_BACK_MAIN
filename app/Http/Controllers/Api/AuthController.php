@@ -408,19 +408,84 @@ final class AuthController extends Controller
             'email' => ['required', 'email', 'max:255'],
         ]);
 
-        // Password::sendResetLink busca el usuario por email, genera el token
-        // y dispara el evento que envía el correo (Notification: ResetPassword)
-        $status = Password::sendResetLink(
-            $request->only('email')
-        );
+        $user = User::where('email', $request->email)->first();
 
-        // Siempre devolver 200 aunque el email no exista — evita email enumeration
-        // El mensaje es genérico intencionalmente
+        if ($user) {
+            $token = Password::createToken($user);
+            $frontendUrl = env('FRONTEND_URL', 'http://localhost:5173');
+            $urlReset = rtrim($frontendUrl, '/') . '/reset-password?token=' . $token . '&email=' . urlencode($user->email);
+
+            try {
+                \Illuminate\Support\Facades\Mail::to($user->email)->send(
+                    new \App\Mail\RestablecerContrasena($user->name, $urlReset)
+                );
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Error enviando correo de reset de contraseña: ' . $e->getMessage());
+            }
+        }
+
         return $this->success(
             null,
             message: 'Si existe una cuenta con ese correo, recibirás un enlace para restablecer tu contraseña.',
         );
     }
+
+    /**
+     * Procesa la verificación de correo electrónico enviada por el link firmado.
+     */
+    public function verificarEmail(Request $request, $id, $hash): JsonResponse
+    {
+        if (! $request->hasValidSignature()) {
+            return $this->failure('El enlace de verificación es inválido o ha expirado.', 403);
+        }
+
+        $user = User::find($id);
+        if (! $user) {
+            return $this->failure('Usuario no encontrado.', 404);
+        }
+
+        if (! hash_equals((string) $hash, sha1($user->getEmailForVerification()))) {
+            return $this->failure('El código de verificación no coincide con este usuario.', 403);
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return $this->success(null, message: 'La cuenta ya se encuentra verificada.');
+        }
+
+        $user->markEmailAsVerified();
+
+        return $this->success(null, message: 'Correo electrónico verificado con éxito.');
+    }
+
+    /**
+     * Reenvía el correo de verificación al usuario autenticado.
+     */
+    public function reenviarVerificacion(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        if ($user->hasVerifiedEmail()) {
+            return $this->failure('Tu correo electrónico ya ha sido verificado.', 400);
+        }
+
+        try {
+            $urlVerificacion = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+                'verification.verify',
+                now()->addHours(48),
+                ['id' => $user->id, 'hash' => sha1($user->getEmailForVerification())]
+            );
+
+            \Illuminate\Support\Facades\Mail::to($user->email)->send(
+                new \App\Mail\VerificarCuenta($user->name, $urlVerificacion)
+            );
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error re-enviando correo de verificación: ' . $e->getMessage());
+            return $this->failure('No se pudo enviar el correo de verificación. Intenta nuevamente.', 500);
+        }
+
+        return $this->success(null, message: 'Correo de verificación reenviado correctamente.');
+    }
+
 
     /**
      * Verifica que el token de reset sea válido antes de mostrar el formulario.
@@ -530,23 +595,26 @@ final class AuthController extends Controller
             return null;
         }
 
-$tieneLicencia = PropietarioLicencia::where('propietario_id', $user->propietario_id)
-    ->where('estado', 'ACTIVA')
-    ->where('fecha_expiracion', '>', now())
-    ->exists();
+        $tieneLicencia = PropietarioLicencia::where('propietario_id', $user->propietario_id)
+            ->where('estado', 'ACTIVA')
+            ->where('fecha_expiracion', '>', now())
+            ->exists();
 
-if (! $tieneLicencia) {
+        if (! $tieneLicencia) {
+            // Si el usuario es PROPIETARIO, DUEÑO o SUPER_ADMIN, permitimos el login para que pueda renovar/comprar la licencia
+            if ($user->hasRole('PROPIETARIO') || $user->hasRole('DUEÑO') || $user->hasRole('SUPER_ADMIN')) {
+                return null;
+            }
 
-       
-            // Verificar si tiene licencia pero vencida — mensaje más específico
+            // Para los empleados, sí bloqueamos el inicio de sesión con el mensaje de licencia vencida
             $licenciaVencida = PropietarioLicencia::where('propietario_id', $user->propietario_id)
                 ->where('estado', 'ACTIVA')
                 ->where('fecha_expiracion', '<=', now())
                 ->exists();
 
             $mensaje = $licenciaVencida
-                ? 'Tu licencia ha vencido. Renueva tu suscripción para continuar.'
-                : 'No tienes una licencia activa. Adquiere un plan para acceder al sistema.';
+                ? 'La licencia de la sucursal ha vencido. Por favor, contacta al propietario.'
+                : 'La sucursal no cuenta con una licencia activa. Por favor, contacta al propietario.';
 
             return $this->failure($mensaje, 402); // 402 Payment Required
         }

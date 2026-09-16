@@ -4,14 +4,17 @@ steps:
     args:
       - build
       - -t
-      - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA
+      - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$BUILD_ID
+      - -t
+      - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest
       - .
 
   - id: push
     name: gcr.io/cloud-builders/docker
     args:
       - push
-      - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA
+      - --all-tags
+      - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME
 
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
@@ -20,7 +23,7 @@ steps:
       - run
       - deploy
       - $_SERVICE_NAME
-      - --image=$_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA
+      - --image=$_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$BUILD_ID
       - --region=$_DEPLOY_REGION
       - --platform=managed
       - --allow-unauthenticated
@@ -30,16 +33,15 @@ steps:
       - --max-instances=10
       - --concurrency=80
       - --timeout=300
-      - --set-cloudsql-instances=$PROJECT_ID:$_DEPLOY_REGION:$_SQL_INSTANCE
-      - --set-secrets=DB_HOST=mysql-host:latest,DB_DATABASE=mysql-database:latest,DB_USERNAME=mysql-username:latest,DB_PASSWORD=mysql-password:latest,APP_KEY=app-key:latest
-      - --update-env-vars=APP_ENV=production,APP_DEBUG=false,APP_NAME=EasyOrder,CACHE_STORE=database,QUEUE_CONNECTION=database,SESSION_DRIVER=database,LOG_CHANNEL=stderr,DB_CONNECTION=mysql
+      - --update-secrets=APP_KEY=eorder-app-key:latest,DB_PASSWORD=eorder-db-password:latest,AWS_ACCESS_KEY_ID=eorder-r2-access-key:latest,AWS_SECRET_ACCESS_KEY=eorder-r2-secret-key:latest,GOOGLE_CLIENT_ID=eorder-google-client-id:latest,GOOGLE_CLIENT_SECRET=eorder-google-client-secret:latest,EVOLUTION_API_KEY=eorder-evolution-api-key:latest
+
 
 substitutions:
-  _SERVICE_NAME: easy-order-api
+  _SERVICE_NAME: easy-order-back
   _DEPLOY_REGION: us-central1
   _AR_LOCATION: us-central1
   _AR_REPOSITORY: cloud-run-source-deploy
-  _SQL_INSTANCE: easy-order-mysql
 
 images:
-  - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA
+  - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$BUILD_ID
+  - $_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest

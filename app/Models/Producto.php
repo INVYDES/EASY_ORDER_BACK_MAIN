@@ -76,20 +76,42 @@ class Producto extends Model
         return $this->hasMany(OrdenDetalle::class);
     }
 
+    /**
+     * Ingredientes del producto.
+     *
+     * NOTA (fix 2026-08-07): la tabla real `ingredientes_de_productos` solo tiene
+     * las columnas id, producto_id, tamano_id, ingrediente_id, cantidad, timestamps.
+     * Las columnas cantidad_pequeno/cantidad_mediano/cantidad_grande y componente_type
+     * que se usaban aquí NUNCA existieron en la base de datos (verificado con
+     * DESCRIBE / dump), lo que causaba un 500 (SQLSTATE 42S22 Column not found)
+     * en cualquier endpoint que cargara esta relación (/api/productos, /api/paquetes).
+     * Se deja `tamano_id` en el pivot por si en el futuro se implementa cantidad
+     * de ingrediente distinta por tamaño (una fila por producto+tamaño+ingrediente).
+     */
     public function ingredientes()
     {
         return $this->belongsToMany(Ingrediente::class, 'ingredientes_de_productos', 'producto_id', 'ingrediente_id')
-                    ->wherePivot('componente_type', 'ingrediente')
-                    ->withPivot('cantidad', 'cantidad_pequeno', 'cantidad_mediano', 'cantidad_grande', 'componente_type')
+                    ->withPivot('cantidad', 'tamano_id')
                     ->withTimestamps();
     }
 
+    /**
+     * Insumos preparados del producto.
+     *
+     * NOTA (fix 2026-08-07): no existe ninguna tabla `insumos_preparados` en la
+     * base de datos actual, ni la columna `componente_type` que se usaba para
+     * distinguirlos de los ingredientes crudos dentro de `ingredientes_de_productos`.
+     * Esta feature nunca se terminó de implementar a nivel de esquema.
+     * Se deja la relación como un builder que siempre devuelve vacío para no
+     * romper getTodosLosComponentesAttribute() ni recalcularStockDesdeIngredientes(),
+     * hasta que se decida construir esta funcionalidad de verdad (tabla dedicada
+     * + su propio pivot, o una columna componente_type real vía migración).
+     */
     public function insumosPreparados()
     {
-        return $this->belongsToMany(InsumoPreparado::class, 'ingredientes_de_productos', 'producto_id', 'ingrediente_id')
-                    ->wherePivot('componente_type', 'insumo_preparado')
-                    ->withPivot('cantidad', 'cantidad_pequeno', 'cantidad_mediano', 'cantidad_grande', 'componente_type')
-                    ->withTimestamps();
+        return $this->belongsToMany(Ingrediente::class, 'ingredientes_de_productos', 'producto_id', 'ingrediente_id')
+                    ->withPivot('cantidad', 'tamano_id')
+                    ->whereRaw('1 = 0');
     }
 
     public function getTodosLosComponentesAttribute()
@@ -258,26 +280,24 @@ class Producto extends Model
     public function getImagenUrlAttribute()
     {
         if ($this->imagen) {
-            // Si es una URL completa (para imágenes externas)
             if (filter_var($this->imagen, FILTER_VALIDATE_URL)) {
                 return $this->imagen;
             }
-            // Si es solo el nombre del archivo (guardado en storage)
-            // Quitamos 'productos/' adicional porque $this->imagen ya lo incluye
-            return asset('storage/' . $this->imagen);
+            return \Illuminate\Support\Facades\Storage::disk(config('filesystems.images_disk'))->url($this->imagen);
         }
-        
-        // Imagen por defecto (apuntando a una ruta que no de error o un placeholder)
         return 'https://ui-avatars.com/api/?name=' . urlencode($this->nombre) . '&color=7F9CF5&background=EBF4FF';
     }
 
     public function getImagenDataAttribute()
     {
+        $disk = config('filesystems.images_disk');
         return [
             'nombre' => $this->imagen,
             'url' => $this->imagen_url,
             'existe' => !is_null($this->imagen) && $this->imagen !== '',
-            'ruta_completa' => $this->imagen ? storage_path('app/public/productos/' . $this->imagen) : null
+            'ruta_completa' => $this->imagen
+                ? ($disk === 'public' ? storage_path('app/public/' . $this->imagen) : $this->imagen_url)
+                : null
         ];
     }
 
@@ -292,9 +312,15 @@ class Producto extends Model
     public function eliminarImagenFisica()
     {
         if ($this->imagen) {
-            $ruta = storage_path('app/public/' . $this->imagen);
-            if (file_exists($ruta)) {
-                return unlink($ruta);
+            $disk = config('filesystems.images_disk');
+            if ($disk === 'public') {
+                $ruta = storage_path('app/public/' . $this->imagen);
+                if (file_exists($ruta)) {
+                    return unlink($ruta);
+                }
+            } else {
+                \Illuminate\Support\Facades\Storage::disk($disk)->delete($this->imagen);
+                return true;
             }
         }
         return false;
@@ -303,7 +329,11 @@ class Producto extends Model
     public function getRutaImagenAttribute()
     {
         if ($this->imagen) {
-            return storage_path('app/public/' . $this->imagen);
+            $disk = config('filesystems.images_disk');
+            if ($disk === 'public') {
+                return storage_path('app/public/' . $this->imagen);
+            }
+            return $this->imagen_url;
         }
         return null;
     }
@@ -366,18 +396,15 @@ class Producto extends Model
 
     /**
      * Obtiene la cantidad de un componente para un tamaño específico.
-     * Mapea 'pequeno'/'mediano'/'grande' a columnas legacy,
-     * cualquier otro key usa la columna 'cantidad' (base).
+     *
+     * NOTA (fix 2026-08-07): las columnas legacy cantidad_pequeno/mediano/grande
+     * nunca existieron en la base de datos, así que siempre se usa la columna
+     * base `cantidad`. Si en el futuro se quiere cantidad distinta por tamaño,
+     * usar el campo `tamano_id` del pivot (ya disponible en la relación) para
+     * filtrar/agrupar por tamaño en vez de columnas separadas.
      */
     private function getCantidadReceta($componente, string $key): float
     {
-        $legacyMap = ['pequeno' => 'cantidad_pequeno', 'mediano' => 'cantidad_mediano', 'grande' => 'cantidad_grande'];
-        $columna = $legacyMap[$key] ?? null;
-
-        if ($columna) {
-            return (float) ($componente->pivot->$columna ?? $componente->pivot->cantidad ?? 0);
-        }
-
         return (float) ($componente->pivot->cantidad ?? 0);
     }
 
@@ -404,9 +431,14 @@ class Producto extends Model
             if ($producto->isDirty('imagen')) {
                 $imagenAnterior = $producto->getOriginal('imagen');
                 if ($imagenAnterior) {
-                    $rutaAnterior = storage_path('app/public/' . $imagenAnterior);
-                    if (file_exists($rutaAnterior)) {
-                        unlink($rutaAnterior);
+                    $disk = config('filesystems.images_disk');
+                    if ($disk === 'public') {
+                        $rutaAnterior = storage_path('app/public/' . $imagenAnterior);
+                        if (file_exists($rutaAnterior)) {
+                            unlink($rutaAnterior);
+                        }
+                    } else {
+                        \Illuminate\Support\Facades\Storage::disk($disk)->delete($imagenAnterior);
                     }
                 }
             }

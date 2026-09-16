@@ -372,8 +372,8 @@ class MercadoPagoController extends Controller
 
             $restauranteActivo = $orden->restaurante;
             $caja = \App\Models\Caja::where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('fecha_apertura', now()->format('Y-m-d'))
                 ->whereNull('fecha_cierre')
+                ->latest()
                 ->first();
 
             if (!$caja) {
