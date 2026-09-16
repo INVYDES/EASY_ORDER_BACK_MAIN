@@ -17,13 +17,11 @@ class Authenticate extends Middleware
 
     /**
      * Handle unauthenticated requests for APIs
+     * Debe LANZAR la excepción (no retornar): el handler global de
+     * bootstrap/app.php la convierte en JSON 401 para rutas api/*.
      */
     protected function unauthenticated($request, array $guards)
     {
-        return response()->json([
-            'success' => false,
-            'message' => 'No autenticado',
-            'error' => 'Token inválido o no proporcionado'
-        ], 401);
+        throw new \Illuminate\Auth\AuthenticationException('No autenticado');
     }
 }
