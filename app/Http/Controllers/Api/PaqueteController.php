@@ -6,12 +6,15 @@ use App\Http\Controllers\Controller;
 use App\Models\OrdenDetalle;
 use App\Models\Paquete;
 use App\Models\User;
+use App\Traits\DetectaCambioDePrecioEnOrdenes;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class PaqueteController extends Controller
 {
+    use DetectaCambioDePrecioEnOrdenes;
+
     public function index(Request $request)
     {
         try {
@@ -106,16 +109,55 @@ class PaqueteController extends Controller
             'productos' => 'required|array|min:1',
             'productos.*.id' => 'required|exists:productos,id',
             'productos.*.cantidad' => 'required|numeric|min:0.1',
-            'imagen' => 'nullable|image|max:2048'
+            'imagen' => 'nullable|image|max:2048',
+            'forzar_precio' => 'nullable|boolean'
         ]);
 
         try {
-            DB::beginTransaction();
-
             $restauranteActivo = app('restaurante_activo');
             $paquete = Paquete::where('restaurante_id', $restauranteActivo->id)
                 ->where('id', $id)
                 ->firstOrFail();
+
+            // ─────────────────────────────────────────────────────────────
+            // Guardia de cambio de precio:
+            // si el paquete está en alguna orden que todavía no se ha cobrado
+            // (cualquier estado distinto de PAGADA/CANCELADA), no se aplica el
+            // nuevo precio hasta que el usuario lo confirme con `forzar_precio`.
+            // ─────────────────────────────────────────────────────────────
+            $cambiosPrecio = $this->cambioDePrecioBase($paquete->precio, $request->input('precio'));
+            $forzarPrecio  = filter_var($request->input('forzar_precio', false), FILTER_VALIDATE_BOOLEAN);
+
+            if (!empty($cambiosPrecio) && !$forzarPrecio) {
+                $ordenesSinCobrar = $this->ordenesSinCobrarConLinea(
+                    $paquete->restaurante_id,
+                    'paquete_id',
+                    $paquete->id,
+                    $this->mapaPreciosNuevos([], $cambiosPrecio)
+                );
+
+                if (!empty($ordenesSinCobrar)) {
+                    return response()->json([
+                        'success' => false,
+                        'code' => 'PRECIO_EN_ORDEN_SIN_COBRAR',
+                        'message' => 'Este paquete está en ' . count($ordenesSinCobrar)
+                            . ' orden(es) sin cobrar. El precio ya capturado en esas órdenes no cambiará, '
+                            . 'solo aplicará a órdenes nuevas. ¿Deseas continuar?',
+                        'data' => [
+                            'item' => [
+                                'id' => $paquete->id,
+                                'nombre' => $paquete->nombre,
+                                'tipo' => 'paquete'
+                            ],
+                            'cambios' => $cambiosPrecio,
+                            'ordenes' => $ordenesSinCobrar,
+                            'impacto' => $this->impactoDeOrdenes($ordenesSinCobrar)
+                        ]
+                    ], 409);
+                }
+            }
+
+            DB::beginTransaction();
 
             $data = $request->only(['nombre', 'descripcion', 'precio']);
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Mail\ConfirmacionContacto;
 use App\Mail\NuevoContacto;
 use App\Models\SolicitudContacto;
 use App\Services\WhatsAppService;
@@ -289,6 +290,18 @@ class ContactoController extends Controller
      */
     private function avisarEquipo(SolicitudContacto $solicitud): void
     {
+        // Confirmación al visitante que llenó el formulario
+        try {
+            Mail::to($solicitud->email)->send(new ConfirmacionContacto($solicitud));
+        } catch (Throwable $e) {
+            Log::warning('No se pudo enviar correo de confirmación al solicitante', [
+                'email' => $solicitud->email,
+                'folio' => $solicitud->folio,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        // Aviso interno al equipo
         foreach ($this->destinatariosAviso() as $destinatario) {
             try {
                 Mail::to($destinatario)->send(new NuevoContacto($solicitud));

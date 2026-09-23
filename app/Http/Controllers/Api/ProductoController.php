@@ -8,6 +8,7 @@ use App\Http\Requests\ProductoUpdateRequest;
 use App\Models\Producto;
 use App\Models\Categoria;
 use App\Models\User;
+use App\Traits\DetectaCambioDePrecioEnOrdenes;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
@@ -16,6 +17,8 @@ use Illuminate\Support\Facades\Validator;
 
 class ProductoController extends Controller
 {
+    use DetectaCambioDePrecioEnOrdenes;
+
     /**
      * Listar productos con paginación y filtros
      */
@@ -490,7 +493,8 @@ class ProductoController extends Controller
                 'imagen_url' => 'nullable|url|max:500',
                 'eliminar_imagen' => 'nullable|boolean',
                 'ingredientes' => 'nullable|array',
-                'ingredientes.*.componente_type' => 'nullable|in:ingrediente,insumo_preparado'
+                'ingredientes.*.componente_type' => 'nullable|in:ingrediente,insumo_preparado',
+                'forzar_precio' => 'nullable|boolean'
             ]);
 
             if ($validator->fails()) {
@@ -511,6 +515,43 @@ class ProductoController extends Controller
                     return response()->json([
                         'success' => false,
                         'message' => 'Ya existe otro producto con este nombre en el restaurante'
+                    ], 409);
+                }
+            }
+
+            // ───────────────────────────────────────────────────────────────
+            // Guardia de cambio de precio:
+            // si el producto está en alguna orden que todavía no se ha cobrado
+            // (cualquier estado distinto de PAGADA/CANCELADA), no se aplica el
+            // nuevo precio hasta que el usuario lo confirme con `forzar_precio`.
+            // ───────────────────────────────────────────────────────────────
+            $cambiosPrecio = $this->detectarCambioDePrecio($producto, $request);
+            $forzarPrecio  = filter_var($request->input('forzar_precio', false), FILTER_VALIDATE_BOOLEAN);
+
+            if (!empty($cambiosPrecio) && !$forzarPrecio) {
+                $ordenesSinCobrar = $this->ordenesSinCobrarConLinea(
+                    $producto->restaurante_id,
+                    'producto_id',
+                    $producto->id,
+                    $this->mapaPreciosNuevos($producto->tamanos_personalizados ?? [], $cambiosPrecio)
+                );
+
+                if (!empty($ordenesSinCobrar)) {
+                    return response()->json([
+                        'success' => false,
+                        'code' => 'PRECIO_EN_ORDEN_SIN_COBRAR',
+                        'message' => 'Este producto está en ' . count($ordenesSinCobrar)
+                            . ' orden(es) sin cobrar. El precio ya capturado en esas órdenes no cambiará, '
+                            . 'solo aplicará a órdenes nuevas. ¿Deseas continuar?',
+                        'data' => [
+                            'producto' => [
+                                'id' => $producto->id,
+                                'nombre' => $producto->nombre
+                            ],
+                            'cambios' => $cambiosPrecio,
+                            'ordenes' => $ordenesSinCobrar,
+                            'impacto' => $this->impactoDeOrdenes($ordenesSinCobrar)
+                        ]
                     ], 409);
                 }
             }
@@ -597,11 +638,18 @@ class ProductoController extends Controller
             DB::commit();
 
             if (method_exists($user, 'logAction')) {
+                $detallePrecio = (!empty($cambiosPrecio) && $forzarPrecio)
+                    ? ' - Cambio de precio confirmado con órdenes sin cobrar: '
+                        . collect($cambiosPrecio)
+                            ->map(fn ($c) => "{$c['nombre']} \${$c['antes']} → \${$c['despues']}")
+                            ->implode(', ')
+                    : '';
+
                 $user->logAction(
                     'EDITAR_PRODUCTO',
                     'productos',
                     $producto->id,
-                    "Producto actualizado: {$producto->nombre}"
+                    "Producto actualizado: {$producto->nombre}{$detallePrecio}"
                 );
             }
 
@@ -1143,7 +1191,8 @@ class ProductoController extends Controller
                 'productos.*.stock' => 'nullable|integer|min:0',
                 'productos.*.stock_minimo' => 'nullable|integer|min:0',
                 'productos.*.minutos_produccion' => 'nullable|numeric|min:0|max:1440',
-                'sobrescribir' => 'nullable|boolean'
+                'sobrescribir' => 'nullable|boolean',
+                'forzar_precio' => 'nullable|boolean'
             ]);
 
             if ($validator->fails()) {
@@ -1161,6 +1210,69 @@ class ProductoController extends Controller
                 'actualizados' => 0,
                 'errores' => []
             ];
+
+            // ───────────────────────────────────────────────────────────────
+            // Guardia de cambio de precio:
+            // igual que en update(), si la importación sobrescribiría el precio
+            // de productos que están en órdenes sin cobrar (cualquier estado
+            // distinto de PAGADA/CANCELADA), no se aplica nada hasta que el
+            // usuario lo confirme con `forzar_precio`.
+            // ───────────────────────────────────────────────────────────────
+            $forzarPrecio = filter_var($request->input('forzar_precio', false), FILTER_VALIDATE_BOOLEAN);
+
+            if (!$forzarPrecio && filter_var($request->input('sobrescribir', false), FILTER_VALIDATE_BOOLEAN)) {
+                $productosBloqueados = [];
+
+                foreach ($request->productos as $item) {
+                    $productoExistente = Producto::where('restaurante_id', $restauranteActivo->id)
+                        ->where('nombre', $item['nombre'])
+                        ->first();
+
+                    if (!$productoExistente) {
+                        continue;
+                    }
+
+                    $cambiosProducto = $this->cambioDePrecioBase($productoExistente->precio, $item['precio']);
+
+                    if (empty($cambiosProducto)) {
+                        continue;
+                    }
+
+                    $ordenesSinCobrar = $this->ordenesSinCobrarConLinea(
+                        $productoExistente->restaurante_id,
+                        'producto_id',
+                        $productoExistente->id,
+                        $this->mapaPreciosNuevos($productoExistente->tamanos_personalizados ?? [], $cambiosProducto)
+                    );
+
+                    if (empty($ordenesSinCobrar)) {
+                        continue;
+                    }
+
+                    $productosBloqueados[] = [
+                        'producto' => [
+                            'id' => $productoExistente->id,
+                            'nombre' => $productoExistente->nombre
+                        ],
+                        'cambios' => $cambiosProducto,
+                        'ordenes' => $ordenesSinCobrar,
+                        'impacto' => $this->impactoDeOrdenes($ordenesSinCobrar)
+                    ];
+                }
+
+                if (!empty($productosBloqueados)) {
+                    return response()->json([
+                        'success' => false,
+                        'code' => 'PRECIO_EN_ORDEN_SIN_COBRAR',
+                        'message' => 'La importación cambiaría el precio de ' . count($productosBloqueados)
+                            . ' producto(s) que están en órdenes sin cobrar. El precio ya capturado en esas '
+                            . 'órdenes no cambiará, solo aplicará a órdenes nuevas. ¿Deseas continuar?',
+                        'data' => [
+                            'productos' => $productosBloqueados
+                        ]
+                    ], 409);
+                }
+            }
 
             DB::beginTransaction();
 
@@ -1944,4 +2056,57 @@ class ProductoController extends Controller
         if (!is_array($decoded)) return null;
         return $decoded;
     }
+
+    /**
+     * Detecta si el request modifica algún precio (precio base o de tamaños).
+     * Devuelve la lista de cambios precio_anterior → precio_nuevo; vacío si no hay cambios.
+     */
+    private function detectarCambioDePrecio(Producto $producto, Request $request): array
+    {
+        $cambios = $this->cambioDePrecioBase(
+            $producto->precio,
+            $request->has('precio') ? $request->precio : null
+        );
+
+        if ($request->has('tamanos') || $request->has('tamanos_personalizados')) {
+            $nuevos   = array_values($this->decodeTamanosPersonalizados($request->tamanos_personalizados ?? $request->tamanos) ?? []);
+            $actuales = array_values($producto->tamanos_personalizados ?? []);
+
+            // El frontend devuelve los tamaños en el mismo orden en que los recibió,
+            // así que la comparación posicional es fiable; se prefiere la key/id cuando existe.
+            $actualesPorKey = [];
+            foreach ($actuales as $idx => $tam) {
+                if (!empty($tam['key']))   $actualesPorKey['key:' . $tam['key']]   = $tam;
+                if (!empty($tam['id']))    $actualesPorKey['id:' . $tam['id']]     = $tam;
+                $actualesPorKey['idx:' . $idx] = $tam;
+            }
+
+            foreach ($nuevos as $idx => $tamano) {
+                $previo = $actualesPorKey['key:' . ($tamano['key'] ?? '')]
+                    ?? $actualesPorKey['id:' . ($tamano['id'] ?? '')]
+                    ?? $actualesPorKey['idx:' . $idx]
+                    ?? null;
+
+                $antes   = round((float) ($previo['precio'] ?? 0), 2);
+                $despues = round((float) ($tamano['precio'] ?? 0), 2);
+
+                if ($antes === $despues) continue;
+
+                $nombre = $tamano['nombre'] ?? ($previo['nombre'] ?? ($tamano['key'] ?? 'Tamaño ' . ($idx + 1)));
+
+                $cambios[] = [
+                    'campo'   => 'precio_tamano_' . ($tamano['key'] ?? $tamano['id'] ?? $idx),
+                    'nombre'  => 'Tamaño ' . $nombre,
+                    // Nombre del tamaño sin prefijo, para poder casarlo con la
+                    // columna `tamano` de las líneas de las órdenes.
+                    'tamano'  => $nombre,
+                    'antes'   => $antes,
+                    'despues' => $despues,
+                ];
+            }
+        }
+
+        return $cambios;
+    }
+
 }

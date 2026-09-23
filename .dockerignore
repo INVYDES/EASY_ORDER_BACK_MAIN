@@ -3,6 +3,7 @@ node_modules/
 .env
 .env.backup
 .env.production
+.env.cloudrun
 .git/
 .gitignore
 .gitattributes
@@ -19,7 +20,16 @@ resumen_cambios_sesion.txt
 Dockerfile.txt
 docker-compose.yml
 cloudbuild.yaml
+cloudbuild.prod.yaml
+cloudrun.yaml
 README.md
+# Credenciales: no deben quedar dentro de la imagen
+env-run.json
+svc_tmp.json
+.gmail_refresh_token.txt
+gmail_token_server.php
+get_gmail_token.php
+gmail_oauth.log
 Homestead.json
 Homestead.yaml
 Thumbs.db

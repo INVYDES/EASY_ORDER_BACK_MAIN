@@ -29,5 +29,9 @@ Thumbs.db
 /storage/logs/*
 /storage/framework/*
 .github/PULL_REQUEST_TEMPLATE.md
-backend_documentation.txtenv-run.json
+backend_documentation.txt
+env-run.json
 svc_tmp.json
+.gmail_refresh_token.txt
+gmail_oauth.log
+gmail_token_server.php

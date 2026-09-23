@@ -28,6 +28,8 @@ class ProductoUpdateRequest extends FormRequest
             'imagen_url' => 'nullable|url|max:500',
             'ingredientes' => 'nullable|array',
             'ingredientes.*.componente_type' => 'nullable|in:ingrediente,insumo_preparado',
+            // Permite confirmar un cambio de precio aunque el producto esté en órdenes sin cobrar.
+            'forzar_precio' => 'nullable|boolean',
         ];
     }
 }
