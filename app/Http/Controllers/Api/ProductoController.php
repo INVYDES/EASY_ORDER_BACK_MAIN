@@ -544,9 +544,10 @@ class ProductoController extends Controller
                             . ' orden(es) sin cobrar. El precio ya capturado en esas órdenes no cambiará, '
                             . 'solo aplicará a órdenes nuevas. ¿Deseas continuar?',
                         'data' => [
-                            'producto' => [
+                            'item' => [
                                 'id' => $producto->id,
-                                'nombre' => $producto->nombre
+                                'nombre' => $producto->nombre,
+                                'tipo' => 'producto'
                             ],
                             'cambios' => $cambiosPrecio,
                             'ordenes' => $ordenesSinCobrar,
@@ -1250,9 +1251,10 @@ class ProductoController extends Controller
                     }
 
                     $productosBloqueados[] = [
-                        'producto' => [
+                        'item' => [
                             'id' => $productoExistente->id,
-                            'nombre' => $productoExistente->nombre
+                            'nombre' => $productoExistente->nombre,
+                            'tipo' => 'producto'
                         ],
                         'cambios' => $cambiosProducto,
                         'ordenes' => $ordenesSinCobrar,
@@ -1268,7 +1270,7 @@ class ProductoController extends Controller
                             . ' producto(s) que están en órdenes sin cobrar. El precio ya capturado en esas '
                             . 'órdenes no cambiará, solo aplicará a órdenes nuevas. ¿Deseas continuar?',
                         'data' => [
-                            'productos' => $productosBloqueados
+                            'items' => $productosBloqueados
                         ]
                     ], 409);
                 }
