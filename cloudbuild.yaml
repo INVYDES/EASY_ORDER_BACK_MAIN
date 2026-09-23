@@ -37,8 +37,23 @@ steps:
       - --update-secrets=APP_KEY=eorder-app-key:latest,DB_PASSWORD=eorder-db-password:latest,AWS_ACCESS_KEY_ID=eorder-r2-access-key:latest,AWS_SECRET_ACCESS_KEY=eorder-r2-secret-key:latest,GOOGLE_CLIENT_ID=eorder-google-client-id:latest,GOOGLE_CLIENT_SECRET=eorder-google-client-secret:latest,GOOGLE_REFRESH_TOKEN=eorder-gmail-refresh-token:latest,EVOLUTION_API_KEY=eorder-evolution-api-key:latest,GEMINI_API_KEY=eorder-gemini-api-key:latest,REVERB_APP_SECRET=eorder-reverb-app-secret:latest,MERCADOPAGO_ACCESS_TOKEN=eorder-mercadopago-access-token:latest,MERCADOPAGO_WEBHOOK_SECRET=eorder-mercadopago-webhook-secret:latest
 
 
+  # El Job programado debe correr exactamente la misma imagen que el servicio.
+  # Se fija al tag inmutable $BUILD_ID (no a :latest) para que no se desincronice.
+  - id: update-job
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - jobs
+      - update
+      - $_JOB_NAME
+      - --image=$_AR_LOCATION-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$BUILD_ID
+      - --region=$_DEPLOY_REGION
+
+
 substitutions:
   _SERVICE_NAME: easy-order-back
+  _JOB_NAME: easy-order-scheduler
   _DEPLOY_REGION: us-central1
   _AR_LOCATION: us-central1
   _AR_REPOSITORY: cloud-run-source-deploy
