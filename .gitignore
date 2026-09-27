@@ -2,6 +2,7 @@
 .DS_Store
 .env
 .env.backup
+.env.localtest
 .env.production
 .env.cloudrun
 cloudrun.yaml

@@ -15,6 +15,10 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
 
         $middleware->alias([
+            // `auth:sanctum` debe resolver a nuestro middleware: sin este alias
+            // se usaba el de Laravel, que intentaba redirigir a la ruta `login`
+            // (inexistente en una API) y terminaba en un 500 en vez de un 401.
+            'auth'       => \App\Http\Middleware\Authenticate::class,
             'tenant'     => \App\Http\Middleware\EnsureTenantSelected::class,
             'permission' => \App\Http\Middleware\CheckPermission::class,
         ]);
@@ -27,12 +31,22 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
+            // Falta de autenticación: siempre 401 JSON, en cualquier ruta
+            // (api/* y también /broadcasting/auth). Sin esto Laravel intentaba
+            // redirigir a la ruta `login` (inexistente) y terminaba en 500/404.
+            if ($e instanceof \Illuminate\Auth\AuthenticationException) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                    'errors'  => null,
+                    'debug'   => null,
+                ], 401);
+            }
+
             if ($request->is('api/*')) {
                 $status = 500;
                 if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
                     $status = $e->getStatusCode();
-                } elseif ($e instanceof \Illuminate\Auth\AuthenticationException) {
-                    $status = 401;
                 } elseif ($e instanceof \Illuminate\Validation\ValidationException) {
                     $status = 422;
                 }

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Schema;
 
 use App\Traits\BelongsToTenant;
 
@@ -79,14 +80,16 @@ class Producto extends Model
     /**
      * Ingredientes del producto.
      *
-     * NOTA (fix 2026-08-07): la tabla real `ingredientes_de_productos` solo tiene
-     * las columnas id, producto_id, tamano_id, ingrediente_id, cantidad, timestamps.
-     * Las columnas cantidad_pequeno/cantidad_mediano/cantidad_grande y componente_type
-     * que se usaban aquí NUNCA existieron en la base de datos (verificado con
-     * DESCRIBE / dump), lo que causaba un 500 (SQLSTATE 42S22 Column not found)
-     * en cualquier endpoint que cargara esta relación (/api/productos, /api/paquetes).
-     * Se deja `tamano_id` en el pivot por si en el futuro se implementa cantidad
-     * de ingrediente distinta por tamaño (una fila por producto+tamaño+ingrediente).
+     * ACTUALIZADO (verificado en railway_full_dump.sql, 2026-09-18): el pivot
+     * `ingredientes_de_productos` YA tiene componente_type,
+     * cantidad_pequeno/cantidad_mediano/cantidad_grande y cantidades_por_tamano, y
+     * su FK hacia `ingredientes` ya no existe (índice compuesto
+     * prod_comp_type_idx en su lugar). El comentario anterior (fix 2026-08-07)
+     * se basaba en los dumps de julio, donde esas columnas no estaban.
+     *
+     * La relación sigue leyendo la cantidad base (`cantidad`); el desglose por
+     * tamaño existe ya en el esquema pero no se usa aquí: los precios y stock por
+     * tamaño salen de `tamanos_personalizados`.
      */
     public function ingredientes()
     {
@@ -98,20 +101,56 @@ class Producto extends Model
     /**
      * Insumos preparados del producto.
      *
-     * NOTA (fix 2026-08-07): no existe ninguna tabla `insumos_preparados` en la
-     * base de datos actual, ni la columna `componente_type` que se usaba para
-     * distinguirlos de los ingredientes crudos dentro de `ingredientes_de_productos`.
-     * Esta feature nunca se terminó de implementar a nivel de esquema.
-     * Se deja la relación como un builder que siempre devuelve vacío para no
-     * romper getTodosLosComponentesAttribute() ni recalcularStockDesdeIngredientes(),
-     * hasta que se decida construir esta funcionalidad de verdad (tabla dedicada
-     * + su propio pivot, o una columna componente_type real vía migración).
+     * ACTUALIZADO (2026-09): la columna `componente_type` del pivot ya existe, así
+     * que los insumos preparados se distinguen en la MISMA tabla con
+     * componente_type = 'insumo_preparado'. Como además se eliminó la FK de
+     * `ingrediente_id` hacia `ingredientes`, esa columna puede referenciar un
+     * insumo preparado (no hay columna insumo_preparado_id aparte).
+     *
+     * La tabla `insumos_preparados` TODAVÍA NO existe en la base de datos actual:
+     * el esquema la define en la migración
+     * 2026_06_16_010000_create_insumos_preparados_table, pero solo aparece en
+     * core_res_backup_previo.sql, no en railway_full_dump.sql (2026-09-18).
+     * Consultarla rompería /api/productos, que carga esta relación vía
+     * getTodosLosComponentesAttribute() y recalcularStockDesdeIngredientes(), así
+     * que la reactivación queda POSPUESTA a propósito: mientras falte la tabla (o
+     * la columna) se devuelve una relación vacía que no la toca. En cuanto el
+     * esquema esté completo, la relación se activa sola.
      */
     public function insumosPreparados()
     {
-        return $this->belongsToMany(Ingrediente::class, 'ingredientes_de_productos', 'producto_id', 'ingrediente_id')
-                    ->withPivot('cantidad', 'tamano_id')
-                    ->whereRaw('1 = 0');
+        if (!$this->esquemaInsumosPreparadosListo()) {
+            return $this->belongsToMany(Ingrediente::class, 'ingredientes_de_productos', 'producto_id', 'ingrediente_id')
+                        ->withPivot('cantidad', 'tamano_id')
+                        ->whereRaw('1 = 0');
+        }
+
+        return $this->belongsToMany(InsumoPreparado::class, 'ingredientes_de_productos', 'producto_id', 'ingrediente_id')
+                    ->withPivot('cantidad', 'tamano_id', 'componente_type')
+                    ->wherePivot('componente_type', 'insumo_preparado')
+                    ->withTimestamps();
+    }
+
+    /** Resultado memoizado de la verificación de esquema (una consulta por request). */
+    protected static ?bool $esquemaInsumosPreparadosListo = null;
+
+    /**
+     * ¿El esquema soporta insumos preparados?
+     *
+     * Hacen falta las dos cosas: la tabla `insumos_preparados` y la columna
+     * `componente_type` del pivot (el backup de julio tenía la tabla pero no la
+     * columna; el de septiembre al revés). Las migraciones que las crean son
+     * 2026_06_16_010000_create_insumos_preparados_table y
+     * 2026_07_06_000001_add_componente_type_to_ingredientes_de_productos.
+     */
+    protected function esquemaInsumosPreparadosListo(): bool
+    {
+        if (static::$esquemaInsumosPreparadosListo === null) {
+            static::$esquemaInsumosPreparadosListo = Schema::hasTable('insumos_preparados')
+                && Schema::hasColumn('ingredientes_de_productos', 'componente_type');
+        }
+
+        return static::$esquemaInsumosPreparadosListo;
     }
 
     public function getTodosLosComponentesAttribute()
@@ -397,11 +436,10 @@ class Producto extends Model
     /**
      * Obtiene la cantidad de un componente para un tamaño específico.
      *
-     * NOTA (fix 2026-08-07): las columnas legacy cantidad_pequeno/mediano/grande
-     * nunca existieron en la base de datos, así que siempre se usa la columna
-     * base `cantidad`. Si en el futuro se quiere cantidad distinta por tamaño,
-     * usar el campo `tamano_id` del pivot (ya disponible en la relación) para
-     * filtrar/agrupar por tamaño en vez de columnas separadas.
+     * ACTUALIZADO (2026-09): las columnas cantidad_pequeno/mediano/grande ya
+     * existen en el pivot, pero se sigue leyendo la cantidad base. Para cantidad
+     * distinta por tamaño hay dos vías ya presentes en el esquema: esas columnas o
+     * `tamano_id` (una fila por producto + tamaño + componente).
      */
     private function getCantidadReceta($componente, string $key): float
     {
