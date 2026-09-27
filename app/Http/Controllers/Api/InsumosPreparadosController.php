@@ -32,17 +32,21 @@ class InsumosPreparadosController extends Controller
                 $query->where('activo', $request->boolean('activo'));
             }
 
+            // Stats con SQL agregado: no se recorre la colección completa
+            // en PHP (mismos filtros, porque se clona el query).
+            $stats = [
+                'total'       => (clone $query)->count(),
+                'bajo_stock'  => (clone $query)->whereColumn('stock_actual', '<=', 'stock_minimo')->count(),
+                'sin_stock'   => (clone $query)->where('stock_actual', '<=', 0)->count(),
+                'costo_total' => round((float) (clone $query)->sum(DB::raw('stock_actual * COALESCE(costo_unitario, 0)')), 2),
+            ];
+
             $insumos = $query->orderBy('nombre')->get();
 
             return response()->json([
                 'success' => true,
                 'data' => $insumos->map(fn($i) => $this->transform($i)),
-                'stats' => [
-                    'total' => $insumos->count(),
-                    'bajo_stock' => $insumos->filter(fn($i) => $i->bajo_stock)->count(),
-                    'sin_stock' => $insumos->filter(fn($i) => $i->stock_actual <= 0)->count(),
-                    'costo_total' => round($insumos->sum(fn($i) => $i->costo_total_stock), 2),
-                ],
+                'stats' => $stats,
             ]);
         } catch (\Exception $e) {
             return response()->json([

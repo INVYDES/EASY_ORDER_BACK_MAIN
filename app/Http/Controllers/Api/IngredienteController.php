@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Ingrediente;
 use App\Models\IngredienteMovimiento;
+use App\Helpers\XlsxWriter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -44,23 +45,314 @@ class IngredienteController extends Controller
                 $query->where('activo', $request->boolean('activo'));
             }
 
+            // Stats con SQL agregado: no se recorre la colección completa
+            // en PHP (mismos filtros, porque se clona el query).
+            $stats = [
+                'total'       => (clone $query)->count(),
+                'bajo_stock'  => (clone $query)->whereColumn('stock_actual', '<=', 'stock_minimo')->count(),
+                'sin_stock'   => (clone $query)->where('stock_actual', '<=', 0)->count(),
+                'costo_total' => round((float) (clone $query)->sum(DB::raw('stock_actual * COALESCE(costo_unitario, 0)')), 2),
+            ];
+
             $ingredientes = $query->orderBy('nombre')->get();
 
             return response()->json([
                 'success' => true,
                 'data' => $ingredientes->map(fn($i) => $this->transform($i)),
-                'stats' => [
-                    'total' => $ingredientes->count(),
-                    'bajo_stock' => $ingredientes->filter(fn($i) => $i->bajo_stock)->count(),
-                    'sin_stock' => $ingredientes->filter(fn($i) => $i->stock_actual <= 0)->count(),
-                    'costo_total' => round($ingredientes->sum(fn($i) => $i->costo_total_stock), 2),
-                ],
+                'stats' => $stats,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error al obtener ingredientes',
                 'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Exportar ingredientes a CSV.
+     *
+     * GET /api/ingredientes/export
+     */
+    public function export(Request $request)
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user->hasPermission('VER_PRODUCTOS')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Sin permiso para exportar ingredientes'
+                ], 403);
+            }
+
+            $restaurante = app('restaurante_activo');
+
+            $query = Ingrediente::where('restaurante_id', $restaurante->id);
+
+            // Mismos filtros que index() para respetar la vista actual.
+            if ($request->filled('buscar')) {
+                $b = $request->buscar;
+                $query->where(fn($q) => $q->where('nombre', 'like', "%{$b}%")
+                    ->orWhere('proveedor', 'like', "%{$b}%"));
+            }
+
+            if ($request->filled('bajo_stock')) {
+                $query->whereColumn('stock_actual', '<=', 'stock_minimo');
+            }
+
+            // .xlsx generado en el servidor: para catálogos enormes evita que el
+            // navegador tenga que parsear el CSV completo con SheetJS.
+            if (strtolower((string) $request->get('formato', 'csv')) === 'xlsx') {
+                $nombreXlsx = 'ingredientes_' . now()->format('Ymd_His') . '.xlsx';
+
+                return response()->streamDownload(function () use ($query) {
+                    $xlsx = new XlsxWriter('Ingredientes');
+                    $xlsx->addRow(['nombre', 'unidad', 'costo_unitario', 'stock_actual', 'stock_minimo', 'proveedor', 'activo']);
+
+                    foreach ($query->orderBy('nombre')->cursor() as $ingrediente) {
+                        $xlsx->addRow([
+                            $ingrediente->nombre,
+                            $ingrediente->unidad,
+                            (float) $ingrediente->costo_unitario,
+                            (float) $ingrediente->stock_actual,
+                            (float) $ingrediente->stock_minimo,
+                            $ingrediente->proveedor,
+                            (bool) $ingrediente->activo,
+                        ]);
+                    }
+
+                    $xlsx->writeTo(fopen('php://output', 'w'));
+                }, $nombreXlsx, [
+                    'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                ]);
+            }
+
+            $nombreArchivo = 'ingredientes_' . now()->format('Ymd_His') . '.csv';
+
+            // El catálogo no tiene tope: cursor() lee fila por fila sin
+            // materializar todo en memoria.
+            return response()->streamDownload(function () use ($query) {
+                $salida = fopen('php://output', 'w');
+
+                // BOM UTF-8 para que Excel muestre bien acentos y ñ.
+                fwrite($salida, "\xEF\xBB\xBF");
+
+                fputcsv($salida, [
+                    'nombre', 'unidad', 'costo_unitario', 'stock_actual', 'stock_minimo', 'proveedor', 'activo'
+                ]);
+
+                foreach ($query->orderBy('nombre')->cursor() as $ingrediente) {
+                    fputcsv($salida, [
+                        $ingrediente->nombre,
+                        $ingrediente->unidad,
+                        number_format((float) $ingrediente->costo_unitario, 4, '.', ''),
+                        $ingrediente->stock_actual,
+                        $ingrediente->stock_minimo,
+                        $ingrediente->proveedor,
+                        $ingrediente->activo ? 1 : 0,
+                    ]);
+                }
+
+                fclose($salida);
+            }, $nombreArchivo, [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al exportar ingredientes',
+                'error' => config('app.debug') ? $e->getMessage() : 'Error interno del servidor'
+            ], 500);
+        }
+    }
+
+    /**
+     * Importar ingredientes desde un array.
+     *
+     * Las columnas coinciden con las de export(), así que el archivo exportado
+     * funciona como plantilla. Se empareja por nombre (igual que productos) y
+     * los cambios de stock dejan rastro en el historial de movimientos.
+     *
+     * POST /api/ingredientes/import
+     */
+    public function import(Request $request)
+    {
+        $request->validate([
+            // Sin tope: el export no lo tiene, así que un catálogo completo debe
+            // poder reimportarse.
+            'ingredientes' => 'required|array|min:1',
+            'ingredientes.*.nombre' => 'required|string|max:100',
+            'ingredientes.*.unidad' => 'required|string|max:30',
+            'ingredientes.*.costo_unitario' => 'nullable|numeric|min:0',
+            'ingredientes.*.stock_actual' => 'nullable|numeric|min:0',
+            'ingredientes.*.stock_minimo' => 'nullable|numeric|min:0',
+            'ingredientes.*.proveedor' => 'nullable|string|max:150',
+            'ingredientes.*.activo' => 'nullable',
+            'sobrescribir' => 'nullable|boolean',
+        ]);
+
+        try {
+            $user = $request->user();
+
+            if (!$user->hasPermission('CREAR_PRODUCTOS')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Sin permiso para importar ingredientes'
+                ], 403);
+            }
+
+            $restaurante = app('restaurante_activo');
+            $sobrescribir = filter_var($request->input('sobrescribir', true), FILTER_VALIDATE_BOOLEAN);
+
+            $resultados = [
+                'creados' => 0,
+                'actualizados' => 0,
+                'errores' => []
+            ];
+
+            // Ingredientes cuyo stock cambió: al final se recalcula el stock de
+            // los productos que los usan, como hace ajustarStock().
+            $idsConCambioDeStock = [];
+
+            $ingredientesExistentesDict = Ingrediente::where('restaurante_id', $restaurante->id)
+                ->get()
+                ->mapWithKeys(fn($i) => [mb_strtolower(trim($i->nombre), 'UTF-8') => $i])
+                ->all();
+
+            DB::beginTransaction();
+
+            foreach ($request->ingredientes as $item) {
+                try {
+                    $nombre = trim($item['nombre']);
+                    $nombreKey = mb_strtolower($nombre, 'UTF-8');
+                    $ingrediente = $ingredientesExistentesDict[$nombreKey] ?? null;
+
+                    $stockNuevo = isset($item['stock_actual']) ? (float) $item['stock_actual'] : null;
+                    $activo = array_key_exists('activo', $item)
+                        ? filter_var($item['activo'], FILTER_VALIDATE_BOOLEAN)
+                        : true;
+
+                    if (!$ingrediente) {
+                        $ingrediente = Ingrediente::create([
+                            'restaurante_id' => $restaurante->id,
+                            'nombre' => $nombre,
+                            'unidad' => $item['unidad'],
+                            'costo_unitario' => $item['costo_unitario'] ?? 0,
+                            'stock_actual' => $stockNuevo ?? 0,
+                            'stock_minimo' => $item['stock_minimo'] ?? 0,
+                            'proveedor' => $item['proveedor'] ?? null,
+                            'activo' => $activo,
+                        ]);
+
+                        if ($ingrediente->stock_actual > 0) {
+                            IngredienteMovimiento::create([
+                                'ingrediente_id' => $ingrediente->id,
+                                'user_id' => $user->id,
+                                'tipo' => 'entrada',
+                                'cantidad_anterior' => 0,
+                                'cantidad_movimiento' => $ingrediente->stock_actual,
+                                'cantidad_nueva' => $ingrediente->stock_actual,
+                                'motivo' => 'Stock inicial al importar ingrediente',
+                            ]);
+                        }
+
+                        $resultados['creados']++;
+                        continue;
+                    }
+
+                    if (!$sobrescribir) {
+                        continue;
+                    }
+
+                    $anterior = (float) $ingrediente->stock_actual;
+
+                    $ingrediente->update([
+                        'unidad' => $item['unidad'] ?? $ingrediente->unidad,
+                        'costo_unitario' => $item['costo_unitario'] ?? $ingrediente->costo_unitario,
+                        'stock_actual' => $stockNuevo ?? $ingrediente->stock_actual,
+                        'stock_minimo' => $item['stock_minimo'] ?? $ingrediente->stock_minimo,
+                        'proveedor' => $item['proveedor'] ?? $ingrediente->proveedor,
+                        'activo' => array_key_exists('activo', $item) ? $activo : $ingrediente->activo,
+                    ]);
+
+                    // El stock es un dato sensible: se deja rastro en el historial.
+                    //
+                    // Se usa entrada/salida en vez de 'ajuste' porque
+                    // IngredienteMovimiento exige que en 'ajuste' cantidad_movimiento
+                    // sea el valor NUEVO absoluto y mayor que cero, así que dejar el
+                    // stock en 0 no se podría registrar.
+                    $diferencia = $stockNuevo !== null ? round($stockNuevo - $anterior, 3) : 0.0;
+
+                    if (abs($diferencia) > 0.00001) {
+                        IngredienteMovimiento::create([
+                            'ingrediente_id' => $ingrediente->id,
+                            'user_id' => $user->id,
+                            'tipo' => $diferencia > 0 ? 'entrada' : 'salida',
+                            'cantidad_anterior' => $anterior,
+                            'cantidad_movimiento' => abs($diferencia),
+                            'cantidad_nueva' => $stockNuevo,
+                            'motivo' => 'Importación de ingredientes',
+                        ]);
+
+                        $idsConCambioDeStock[] = $ingrediente->id;
+                    }
+
+                    $resultados['actualizados']++;
+
+                } catch (\Exception $e) {
+                    $resultados['errores'][] = [
+                        'ingrediente' => $item['nombre'] ?? '—',
+                        'error' => $e->getMessage()
+                    ];
+                }
+            }
+
+            DB::commit();
+
+            if (method_exists($user, 'logAction')) {
+                $user->logAction('IMPORTAR_INGREDIENTES', 'ingredientes', null, "Importación completada: {$resultados['creados']} creados, {$resultados['actualizados']} actualizados. Errores: " . count($resultados['errores']));
+            }
+
+            // Recalcular el stock de los productos afectados (mismo criterio que
+            // ajustarStock). Se hace fuera de la transacción para no alargarla.
+            $productosARecalcular = $idsConCambioDeStock
+                ? \App\Models\Producto::withoutGlobalScope(\App\Scopes\TenantScope::class)
+                    ->whereIn('id', function ($q) use ($idsConCambioDeStock) {
+                        $q->select('producto_id')
+                          ->from('ingredientes_de_productos')
+                          ->whereIn('ingrediente_id', array_unique($idsConCambioDeStock));
+                    })
+                    ->get()
+                : collect();
+
+            foreach ($productosARecalcular as $prod) {
+                try {
+                    $prod->recalcularStockDesdeIngredientes();
+                } catch (\Exception $ex) {
+                    \Illuminate\Support\Facades\Log::error('Error recalculando producto ID ' . $prod->id . ': ' . $ex->getMessage());
+                }
+            }
+
+            $mensaje = "Importación completada: {$resultados['creados']} creados, {$resultados['actualizados']} actualizados";
+            if (count($resultados['errores']) > 0) {
+                $mensaje .= ', ' . count($resultados['errores']) . ' errores';
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $mensaje,
+                'data' => $resultados
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al importar ingredientes',
+                'error' => config('app.debug') ? $e->getMessage() : 'Error interno del servidor'
             ], 500);
         }
     }

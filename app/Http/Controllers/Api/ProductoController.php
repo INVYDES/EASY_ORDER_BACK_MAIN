@@ -8,6 +8,7 @@ use App\Http\Requests\ProductoUpdateRequest;
 use App\Models\Producto;
 use App\Models\Categoria;
 use App\Models\User;
+use App\Helpers\XlsxWriter;
 use App\Traits\DetectaCambioDePrecioEnOrdenes;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -1168,6 +1169,168 @@ class ProductoController extends Controller
     }
 
     /**
+     * Exportar productos a CSV.
+     *
+     * Las columnas coinciden exactamente con el formato que acepta import()
+     * (nombre, precio, descripcion, categoria_id, stock, stock_minimo), de modo
+     * que el archivo exportado puede volver a importarse sin editarlo.
+     *
+     * GET /api/productos/export
+     */
+    public function export(Request $request)
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user->hasPermission('VER_PRODUCTOS')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tienes permiso para exportar productos'
+                ], 403);
+            }
+
+            $restauranteActivo = app('restaurante_activo');
+
+            $query = Producto::where('restaurante_id', $restauranteActivo->id);
+
+            // Mismos filtros que index() para que la exportación respete
+            // la búsqueda/categoría que el usuario tenga aplicada en pantalla.
+            if ($request->filled('buscar')) {
+                $buscar = $request->buscar;
+                $query->where(function ($q) use ($buscar) {
+                    $q->where('nombre', 'like', "%{$buscar}%")
+                      ->orWhere('descripcion', 'like', "%{$buscar}%");
+                });
+            }
+
+            if ($request->filled('categoria_id')) {
+                $query->where('categoria_id', $request->categoria_id);
+            }
+
+            if ($request->has('activo')) {
+                $query->where('activo', filter_var($request->activo, FILTER_VALIDATE_BOOLEAN));
+            }
+
+            // Las categorías son pocas: se cargan una sola vez para no depender
+            // del eager loading (incompatible con cursor()) ni provocar N+1.
+            $categorias = Categoria::where('restaurante_id', $restauranteActivo->id)
+                ->pluck('nombre', 'id');
+
+            // .xlsx generado en el servidor: para catálogos enormes evita que el
+            // navegador tenga que parsear el CSV completo con SheetJS.
+            if (strtolower((string) $request->get('formato', 'csv')) === 'xlsx') {
+                $nombreXlsx = 'productos_' . now()->format('Ymd_His') . '.xlsx';
+
+                return response()->streamDownload(function () use ($query, $categorias) {
+                    $xlsx = new XlsxWriter('Productos');
+                    $xlsx->addRow(['nombre', 'precio', 'descripcion', 'categoria_id', 'categoria', 'stock', 'stock_minimo', 'minutos_produccion']);
+
+                    foreach ($query->orderBy('nombre', 'asc')->cursor() as $producto) {
+                        $xlsx->addRow([
+                            $producto->nombre,
+                            (float) $producto->precio,
+                            $producto->descripcion,
+                            $producto->categoria_id,
+                            $categorias[$producto->categoria_id] ?? null,
+                            (int) $producto->stock,
+                            (int) $producto->stock_minimo,
+                            (int) $producto->minutos_produccion,
+                        ]);
+                    }
+
+                    $xlsx->writeTo(fopen('php://output', 'w'));
+                }, $nombreXlsx, [
+                    'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                ]);
+            }
+
+            $nombreArchivo = 'productos_' . now()->format('Ymd_His') . '.csv';
+
+            // El catálogo no tiene tope, así que no se materializa en memoria:
+            // cursor() lee fila por fila y se escribe directo a la salida.
+            return response()->streamDownload(function () use ($query, $categorias) {
+                $salida = fopen('php://output', 'w');
+
+                // BOM UTF-8 para que Excel muestre bien acentos y ñ.
+                fwrite($salida, "\xEF\xBB\xBF");
+
+                fputcsv($salida, [
+                    'nombre', 'precio', 'descripcion', 'categoria_id', 'categoria', 'stock', 'stock_minimo', 'minutos_produccion'
+                ]);
+
+                foreach ($query->orderBy('nombre', 'asc')->cursor() as $producto) {
+                    fputcsv($salida, [
+                        $producto->nombre,
+                        number_format((float) $producto->precio, 2, '.', ''),
+                        $producto->descripcion,
+                        $producto->categoria_id,
+                        // Columna extra legible: al reimportar se puede usar el
+                        // nombre en lugar del id (ver import()).
+                        $categorias[$producto->categoria_id] ?? null,
+                        (int) $producto->stock,
+                        (int) $producto->stock_minimo,
+                        (int) $producto->minutos_produccion,
+                    ]);
+                }
+
+                fclose($salida);
+            }, $nombreArchivo, [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error en ProductoController@export: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al exportar productos',
+                'error' => config('app.debug') ? $e->getMessage() : 'Error interno del servidor'
+            ], 500);
+        }
+    }
+
+    /**
+     * Resuelve el categoria_id de una fila importada.
+     *
+     * Prioriza el id; si no viene, busca por nombre (la columna legible
+     * `categoria` que agrega export()) y, cuando está permitido, crea la
+     * categoría si no existe. $categoriasPorNombre se pasa por referencia para
+     * reutilizar las categorías creadas durante la misma importación.
+     */
+    private function resolverCategoriaId($categoriaId, $nombreCategoria, bool $crearCategorias, array &$categoriasPorNombre, $restauranteId)
+    {
+        if (!empty($categoriaId)) {
+            return $categoriaId;
+        }
+
+        // El archivo puede traer el nombre con comillas o espacios extra
+        $nombre = trim((string) $nombreCategoria, " \t\n\r\0\x0B\"'");
+        if ($nombre === '') {
+            return null;
+        }
+
+        $clave = mb_strtolower($nombre);
+
+        if (isset($categoriasPorNombre[$clave])) {
+            return $categoriasPorNombre[$clave];
+        }
+
+        if (!$crearCategorias) {
+            return null;
+        }
+
+        $categoria = Categoria::create([
+            'restaurante_id' => $restauranteId,
+            'nombre' => $nombre,
+            'color' => '#6B7280',
+            'activo' => true,
+        ]);
+
+        $categoriasPorNombre[$clave] = $categoria->id;
+
+        return $categoria->id;
+    }
+
+    /**
      * Importar productos desde un array
      */
     public function import(Request $request)
@@ -1183,16 +1346,20 @@ class ProductoController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'productos' => 'required|array|min:1|max:100',
+                // El export no tiene tope, así que el import tampoco: cualquier
+                // catálogo que se exporte debe poder reimportarse completo.
+                'productos' => 'required|array|min:1',
                 'productos.*.nombre' => 'required|string|max:150',
-                'productos.*.cantidad' => 'required|numeric|min:0.1',
+                'productos.*.cantidad' => 'nullable|numeric|min:0.1',
                 'productos.*.precio' => 'required|numeric|min:0',
                 'productos.*.descripcion' => 'nullable|string',
                 'productos.*.categoria_id' => 'nullable|exists:categorias,id',
+                'productos.*.categoria' => 'nullable|string|max:100',
                 'productos.*.stock' => 'nullable|integer|min:0',
                 'productos.*.stock_minimo' => 'nullable|integer|min:0',
                 'productos.*.minutos_produccion' => 'nullable|numeric|min:0|max:1440',
                 'sobrescribir' => 'nullable|boolean',
+                'crear_categorias' => 'nullable|boolean',
                 'forzar_precio' => 'nullable|boolean'
             ]);
 
@@ -1206,28 +1373,41 @@ class ProductoController extends Controller
 
             $restauranteActivo = app('restaurante_activo');
             
+            // ───────────────────────────────────────────────────────────────
+            // Categorías por nombre:
+            // el export añade la columna legible `categoria`, así que además del
+            // id se acepta el nombre. Solo se crean categorías nuevas si el
+            // usuario tiene permiso y envió `crear_categorias`.
+            // ───────────────────────────────────────────────────────────────
+            $crearCategorias = filter_var($request->input('crear_categorias', false), FILTER_VALIDATE_BOOLEAN)
+                && $user->hasPermission('CREAR_CATEGORIAS');
+
+            $categoriasPorNombre = Categoria::where('restaurante_id', $restauranteActivo->id)
+                ->get(['id', 'nombre'])
+                ->mapWithKeys(fn($c) => [mb_strtolower(trim($c->nombre)) => $c->id])
+                ->all();
+
             $resultados = [
                 'creados' => 0,
                 'actualizados' => 0,
                 'errores' => []
             ];
-
-            // ───────────────────────────────────────────────────────────────
-            // Guardia de cambio de precio:
-            // igual que en update(), si la importación sobrescribiría el precio
-            // de productos que están en órdenes sin cobrar (cualquier estado
-            // distinto de PAGADA/CANCELADA), no se aplica nada hasta que el
-            // usuario lo confirme con `forzar_precio`.
-            // ───────────────────────────────────────────────────────────────
             $forzarPrecio = filter_var($request->input('forzar_precio', false), FILTER_VALIDATE_BOOLEAN);
+            // Mismo default que paquetes e ingredientes (y que la UI): si el
+            // cliente no lo indica, los existentes se sobrescriben por nombre.
+            $sobrescribir = filter_var($request->input('sobrescribir', true), FILTER_VALIDATE_BOOLEAN);
 
-            if (!$forzarPrecio && filter_var($request->input('sobrescribir', false), FILTER_VALIDATE_BOOLEAN)) {
+            $productosExistentesDict = Producto::where('restaurante_id', $restauranteActivo->id)
+                ->get()
+                ->mapWithKeys(fn($p) => [mb_strtolower(trim($p->nombre), 'UTF-8') => $p])
+                ->all();
+
+            if (!$forzarPrecio && $sobrescribir) {
                 $productosBloqueados = [];
 
                 foreach ($request->productos as $item) {
-                    $productoExistente = Producto::where('restaurante_id', $restauranteActivo->id)
-                        ->where('nombre', $item['nombre'])
-                        ->first();
+                    $nombreKey = mb_strtolower(trim($item['nombre']), 'UTF-8');
+                    $productoExistente = $productosExistentesDict[$nombreKey] ?? null;
 
                     if (!$productoExistente) {
                         continue;
@@ -1280,15 +1460,23 @@ class ProductoController extends Controller
 
             foreach ($request->productos as $item) {
                 try {
-                    $producto = Producto::where('restaurante_id', $restauranteActivo->id)
-                        ->where('nombre', $item['nombre'])
-                        ->first();
+                    $categoriaId = $this->resolverCategoriaId(
+                        $item['categoria_id'] ?? null,
+                        $item['categoria'] ?? null,
+                        $crearCategorias,
+                        $categoriasPorNombre,
+                        $restauranteActivo->id
+                    );
 
-                    if ($producto && $request->sobrescribir) {
+                    $nombreItem = trim($item['nombre']);
+                    $nombreKey = mb_strtolower($nombreItem, 'UTF-8');
+                    $producto = $productosExistentesDict[$nombreKey] ?? null;
+
+                    if ($producto && $sobrescribir) {
                         $producto->update([
                             'precio' => $item['precio'],
                             'descripcion' => $item['descripcion'] ?? $producto->descripcion,
-                            'categoria_id' => $item['categoria_id'] ?? $producto->categoria_id,
+                            'categoria_id' => $categoriaId ?? $producto->categoria_id,
                             'stock' => $item['stock'] ?? $producto->stock,
                             'stock_minimo' => $item['stock_minimo'] ?? $producto->stock_minimo,
                             'minutos_produccion' => $item['minutos_produccion'] ?? $producto->minutos_produccion,
@@ -1298,7 +1486,7 @@ class ProductoController extends Controller
                     } elseif (!$producto) {
                         Producto::create([
                             'restaurante_id' => $restauranteActivo->id,
-                            'categoria_id' => $item['categoria_id'] ?? null,
+                            'categoria_id' => $categoriaId,
                             'nombre' => $item['nombre'],
                             'descripcion' => $item['descripcion'] ?? null,
                             'precio' => $item['precio'],

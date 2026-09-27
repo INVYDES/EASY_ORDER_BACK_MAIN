@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\OrdenDetalle;
 use App\Models\Paquete;
+use App\Models\Producto;
 use App\Models\User;
+use App\Helpers\XlsxWriter;
 use App\Traits\DetectaCambioDePrecioEnOrdenes;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -35,6 +37,360 @@ class PaqueteController extends Controller
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error al obtener paquetes', 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Exportar paquetes a CSV.
+     *
+     * Incluye el contenido del combo (productos y cantidades) para que el
+     * archivo siga siendo legible fuera del sistema.
+     *
+     * GET /api/paquetes/export
+     */
+    public function export(Request $request)
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user->hasPermission('VER_PRODUCTOS')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tienes permiso para exportar paquetes'
+                ], 403);
+            }
+
+            $restauranteActivo = app('restaurante_activo');
+
+            $query = Paquete::with('productos')
+                ->where('restaurante_id', $restauranteActivo->id)
+                ->when($request->filled('buscar'), function ($q) use ($request) {
+                    $q->where('nombre', 'LIKE', "%{$request->buscar}%");
+                });
+
+            // .xlsx generado en el servidor: para catálogos enormes evita que el
+            // navegador tenga que parsear el CSV completo con SheetJS.
+            if (strtolower((string) $request->get('formato', 'csv')) === 'xlsx') {
+                $nombreXlsx = 'paquetes_' . now()->format('Ymd_His') . '.xlsx';
+
+                return response()->streamDownload(function () use ($query) {
+                    $xlsx = new XlsxWriter('Paquetes');
+                    $xlsx->addRow(['nombre', 'precio', 'descripcion', 'activo', 'stock', 'productos']);
+
+                    foreach ($query->orderBy('nombre')->orderBy('id')->lazy(500) as $paquete) {
+                        $contenido = $paquete->productos->map(function ($producto) {
+                            $cantidad = (float) ($producto->pivot->cantidad ?? 1);
+                            $cantidad = rtrim(rtrim(number_format($cantidad, 2, '.', ''), '0'), '.');
+                            return $producto->nombre . ' x' . $cantidad;
+                        })->implode(' | ');
+
+                        $unidadesPosibles = $paquete->productos
+                            ->filter(fn($producto) => (float) ($producto->pivot->cantidad ?? 1) > 0)
+                            ->map(fn($producto) => floor((float) $producto->stock / (float) $producto->pivot->cantidad));
+
+                        $xlsx->addRow([
+                            $paquete->nombre,
+                            (float) $paquete->precio,
+                            $paquete->descripcion,
+                            (bool) $paquete->activo,
+                            $unidadesPosibles->isEmpty() ? 0 : (int) $unidadesPosibles->min(),
+                            $contenido,
+                        ]);
+                    }
+
+                    $xlsx->writeTo(fopen('php://output', 'w'));
+                }, $nombreXlsx, [
+                    'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                ]);
+            }
+
+            $nombreArchivo = 'paquetes_' . now()->format('Ymd_His') . '.csv';
+
+            // Sin tope: lazy() trae los paquetes en bloques (con su relación
+            // `productos` ya eager-loaded) en vez de cargar todo de golpe.
+            return response()->streamDownload(function () use ($query) {
+                $salida = fopen('php://output', 'w');
+
+                // BOM UTF-8 para que Excel muestre bien acentos y ñ.
+                fwrite($salida, "\xEF\xBB\xBF");
+
+                fputcsv($salida, [
+                    'nombre', 'precio', 'descripcion', 'activo', 'stock', 'productos'
+                ]);
+
+                foreach ($query->orderBy('nombre')->orderBy('id')->lazy(500) as $paquete) {
+                    $contenido = $paquete->productos->map(function ($producto) {
+                        $cantidad = (float) ($producto->pivot->cantidad ?? 1);
+                        $cantidad = rtrim(rtrim(number_format($cantidad, 2, '.', ''), '0'), '.');
+                        return $producto->nombre . ' x' . $cantidad;
+                    })->implode(' | ');
+
+                    // Mismo criterio que formatPaqueteResponse(): el stock del
+                    // combo lo limita el producto que menos unidades permite.
+                    $unidadesPosibles = $paquete->productos
+                        ->filter(fn($producto) => (float) ($producto->pivot->cantidad ?? 1) > 0)
+                        ->map(fn($producto) => floor((float) $producto->stock / (float) $producto->pivot->cantidad));
+
+                    fputcsv($salida, [
+                        $paquete->nombre,
+                        number_format((float) $paquete->precio, 2, '.', ''),
+                        $paquete->descripcion,
+                        $paquete->activo ? 1 : 0,
+                        $unidadesPosibles->isEmpty() ? 0 : (int) $unidadesPosibles->min(),
+                        $contenido,
+                    ]);
+                }
+
+                fclose($salida);
+            }, $nombreArchivo, [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al exportar paquetes',
+                'error' => config('app.debug') ? $e->getMessage() : 'Error interno del servidor'
+            ], 500);
+        }
+    }
+
+    /**
+     * Importar paquetes desde un array.
+     *
+     * Las columnas coinciden con las de export(), así que el archivo exportado
+     * funciona como plantilla. La columna `productos` ("Nombre x2 | Otro x1") se
+     * resuelve por nombre contra el catálogo; la columna `stock` es calculada y
+     * se ignora al importar.
+     *
+     * POST /api/paquetes/import
+     */
+    public function import(Request $request)
+    {
+        $request->validate([
+            // Sin tope: el export no lo tiene, así que un catálogo completo debe
+            // poder reimportarse.
+            'paquetes' => 'required|array|min:1',
+            'paquetes.*.nombre' => 'required|string|max:255',
+            'paquetes.*.precio' => 'required|numeric|min:0',
+            'paquetes.*.descripcion' => 'nullable|string',
+            'paquetes.*.activo' => 'nullable',
+            'paquetes.*.productos' => 'required|string',
+            'sobrescribir' => 'nullable|boolean',
+            'forzar_precio' => 'nullable|boolean',
+        ]);
+
+        try {
+            $user = $request->user();
+
+            if (!$user->hasPermission('CREAR_PRODUCTOS')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Sin permiso para importar paquetes'
+                ], 403);
+            }
+
+            $restauranteActivo = app('restaurante_activo');
+
+            // Catálogo del restaurante para resolver los nombres del combo.
+            $productosPorNombre = Producto::where('restaurante_id', $restauranteActivo->id)
+                ->get(['id', 'nombre'])
+                ->mapWithKeys(fn($p) => [mb_strtolower(trim($p->nombre)) => $p->id])
+                ->all();
+
+            $sobrescribir = filter_var($request->input('sobrescribir', true), FILTER_VALIDATE_BOOLEAN);
+            $forzarPrecio = filter_var($request->input('forzar_precio', false), FILTER_VALIDATE_BOOLEAN);
+
+            // ─────────────────────────────────────────────────────────────
+            // Guardia de cambio de precio (igual que en update()): si el paquete
+            // está en órdenes sin cobrar, no se aplica nada hasta confirmarlo.
+            // ─────────────────────────────────────────────────────────────
+            $paquetesBloqueados = [];
+
+            $paquetesExistentesDict = Paquete::where('restaurante_id', $restauranteActivo->id)
+                ->get()
+                ->mapWithKeys(fn($p) => [mb_strtolower(trim($p->nombre), 'UTF-8') => $p])
+                ->all();
+
+            if (!$forzarPrecio && $sobrescribir) {
+                foreach ($request->paquetes as $item) {
+                    $nombreKey = mb_strtolower(trim($item['nombre']), 'UTF-8');
+                    $existente = $paquetesExistentesDict[$nombreKey] ?? null;
+
+                    if (!$existente) {
+                        continue;
+                    }
+
+                    $cambiosPrecio = $this->cambioDePrecioBase($existente->precio, $item['precio']);
+
+                    if (empty($cambiosPrecio)) {
+                        continue;
+                    }
+
+                    $ordenesSinCobrar = $this->ordenesSinCobrarConLinea(
+                        $existente->restaurante_id,
+                        'paquete_id',
+                        $existente->id,
+                        $this->mapaPreciosNuevos([], $cambiosPrecio)
+                    );
+
+                    if (empty($ordenesSinCobrar)) {
+                        continue;
+                    }
+
+                    $paquetesBloqueados[] = [
+                        'item' => [
+                            'id' => $existente->id,
+                            'nombre' => $existente->nombre,
+                            'tipo' => 'paquete'
+                        ],
+                        'cambios' => $cambiosPrecio,
+                        'ordenes' => $ordenesSinCobrar,
+                        'impacto' => $this->impactoDeOrdenes($ordenesSinCobrar)
+                    ];
+                }
+
+                if (!empty($paquetesBloqueados)) {
+                    return response()->json([
+                        'success' => false,
+                        'code' => 'PRECIO_EN_ORDEN_SIN_COBRAR',
+                        'message' => 'La importación cambiaría el precio de ' . count($paquetesBloqueados)
+                            . ' paquete(s) que están en órdenes sin cobrar. El precio ya capturado en esas '
+                            . 'órdenes no cambiará, solo aplicará a órdenes nuevas. ¿Deseas continuar?',
+                        'data' => [
+                            'items' => $paquetesBloqueados
+                        ]
+                    ], 409);
+                }
+            }
+
+            $resultados = [
+                'creados' => 0,
+                'actualizados' => 0,
+                'errores' => []
+            ];
+
+            DB::beginTransaction();
+
+            foreach ($request->paquetes as $item) {
+                try {
+                    $combo = $this->resolverCombo($item['productos'], $productosPorNombre);
+
+                    // Un combo incompleto es peor que no importar la fila.
+                    if (!empty($combo['no_encontrados'])) {
+                        throw new \Exception('Producto(s) no encontrado(s): ' . implode(', ', $combo['no_encontrados']));
+                    }
+
+                    if (empty($combo['productos'])) {
+                        throw new \Exception('El paquete no tiene productos');
+                    }
+
+                    $nombreItem = trim($item['nombre']);
+                    $nombreKey = mb_strtolower($nombreItem, 'UTF-8');
+                    $paquete = $paquetesExistentesDict[$nombreKey] ?? null;
+
+                    $atributos = [
+                        'nombre' => $item['nombre'],
+                        'descripcion' => $item['descripcion'] ?? null,
+                        'precio' => $item['precio'],
+                        'activo' => array_key_exists('activo', $item)
+                            ? filter_var($item['activo'], FILTER_VALIDATE_BOOLEAN)
+                            : true,
+                    ];
+
+                    if ($paquete) {
+                        if (!$sobrescribir) {
+                            continue;
+                        }
+
+                        $paquete->update($atributos);
+                        $paquete->productos()->sync($combo['productos']);
+                        $resultados['actualizados']++;
+                    } else {
+                        $paquete = Paquete::create($atributos + [
+                            'restaurante_id' => $restauranteActivo->id,
+                            'propietario_id' => $restauranteActivo->propietario_id,
+                        ]);
+                        $paquete->productos()->attach($combo['productos']);
+                        $resultados['creados']++;
+                    }
+
+                } catch (\Exception $e) {
+                    $resultados['errores'][] = [
+                        'paquete' => $item['nombre'] ?? '—',
+                        'error' => $e->getMessage()
+                    ];
+                }
+            }
+
+            DB::commit();
+
+            if (method_exists($user, 'logAction')) {
+                $user->logAction('IMPORTAR_PAQUETES', 'paquetes', null, "Importación completada: {$resultados['creados']} creados, {$resultados['actualizados']} actualizados. Errores: " . count($resultados['errores']));
+            }
+
+            $mensaje = "Importación completada: {$resultados['creados']} creados, {$resultados['actualizados']} actualizados";
+            if (count($resultados['errores']) > 0) {
+                $mensaje .= ', ' . count($resultados['errores']) . ' errores';
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $mensaje,
+                'data' => $resultados
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al importar paquetes',
+                'error' => config('app.debug') ? $e->getMessage() : 'Error interno del servidor'
+            ], 500);
+        }
+    }
+
+    /**
+     * Convierte la columna `productos` del export ("Taco x2 | Refresco x1") en el
+     * arreglo que esperan attach()/sync(): [id => ['cantidad' => n]].
+     *
+     * Devuelve también los nombres fuera del catálogo para reportarlos como error
+     * en lugar de crear un combo incompleto.
+     */
+    private function resolverCombo($texto, array $productosPorNombre): array
+    {
+        $productos = [];
+        $noEncontrados = [];
+
+        foreach (explode('|', (string) $texto) as $parte) {
+            $parte = trim($parte);
+            if ($parte === '') {
+                continue;
+            }
+
+            $cantidad = 1;
+            $nombre = $parte;
+
+            // Formato "Nombre x2" (el nombre puede contener espacios; el regex
+            // es greedy para quedarse con el último " x<cantidad>").
+            if (preg_match('/^(.*)\s+x\s*([0-9]+(?:[.,][0-9]+)?)$/u', $parte, $m)) {
+                $nombre = trim($m[1]);
+                $cantidad = (float) str_replace(',', '.', $m[2]);
+            }
+
+            $clave = mb_strtolower($nombre);
+
+            if (!isset($productosPorNombre[$clave])) {
+                $noEncontrados[] = $nombre;
+                continue;
+            }
+
+            $productos[$productosPorNombre[$clave]] = ['cantidad' => $cantidad > 0 ? $cantidad : 1];
+        }
+
+        return [
+            'productos' => $productos,
+            'no_encontrados' => $noEncontrados
+        ];
     }
 
     public function store(Request $request)

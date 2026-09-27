@@ -266,6 +266,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::prefix('productos')->group(function () {
         Route::get('/select-list',                    [ProductoController::class, 'selectList'])->middleware('permission:VER_PRODUCTOS');
         Route::get('/bajo-stock',                     [ProductoController::class, 'bajoStock'])->middleware('permission:VER_PRODUCTOS');
+        Route::get('/export',                         [ProductoController::class, 'export'])->middleware('permission:VER_PRODUCTOS');
         Route::post('/import',                        [ProductoController::class, 'import'])->middleware('permission:CREAR_PRODUCTOS');
         Route::get('/',                               [ProductoController::class, 'index'])->middleware('permission:VER_PRODUCTOS');
         Route::post('/',                              [ProductoController::class, 'store'])->middleware('permission:CREAR_PRODUCTOS');
@@ -279,6 +280,8 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     // ========== PAQUETES ==========
     Route::prefix('paquetes')->group(function () {
         Route::get('/',                     [PaqueteController::class, 'index'])->middleware('permission:VER_PRODUCTOS');
+        Route::get('/export',               [PaqueteController::class, 'export'])->middleware('permission:VER_PRODUCTOS');
+        Route::post('/import',              [PaqueteController::class, 'import'])->middleware('permission:CREAR_PRODUCTOS');
         Route::post('/',                    [PaqueteController::class, 'store'])->middleware('permission:CREAR_PRODUCTOS');
         Route::get('/{id}',                 [PaqueteController::class, 'show'])->middleware('permission:VER_PRODUCTOS');
         Route::put('/{id}',                 [PaqueteController::class, 'update'])->middleware('permission:EDITAR_PRODUCTOS');
@@ -291,6 +294,8 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::get('/producto/{productoId}',       [IngredienteController::class, 'deProducto'])->middleware('permission:VER_PRODUCTOS');
         Route::post('/producto/{productoId}/sync', [IngredienteController::class, 'syncProducto'])->middleware('permission:EDITAR_PRODUCTOS');
         Route::get('/',                            [IngredienteController::class, 'index'])->middleware('permission:VER_PRODUCTOS');
+        Route::get('/export',                      [IngredienteController::class, 'export'])->middleware('permission:VER_PRODUCTOS');
+        Route::post('/import',                     [IngredienteController::class, 'import'])->middleware('permission:CREAR_PRODUCTOS');
         Route::post('/',                           [IngredienteController::class, 'store'])->middleware('permission:CREAR_PRODUCTOS');
         Route::get('/{id}/historial',              [IngredienteController::class, 'historial'])->middleware('permission:VER_PRODUCTOS');
         Route::post('/{id}/ajustar-stock',         [IngredienteController::class, 'ajustarStock'])->middleware('permission:EDITAR_PRODUCTOS');
@@ -410,8 +415,6 @@ Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('
         Route::get('/roi',                   [ReporteController::class, 'roiCompleto']);
         Route::get('/roi/config',            [ReporteController::class, 'roiObtenerConfig']);
         Route::put('/roi/config',            [ReporteController::class, 'roiGuardarConfig']);
-        Route::get('/download/{tipo}/{formato}', [ReporteController::class, 'download']);
-        Route::post('/exportar',             [ReporteController::class, 'exportar'])->middleware('permission:EXPORTAR_REPORTES');
 Route::get('/ventas-por-canal-tipo', [ReporteController::class, 'ventasPorCanalTipo']);
         // ── ✅ ALIAS para rutas que pide el frontend ──────────────────────────
         Route::get('/tiempos-rebase',         [ReporteController::class, 'tiemposRebase']);
@@ -420,12 +423,6 @@ Route::get('/ventas-por-canal-tipo', [ReporteController::class, 'ventasPorCanalT
 
         // GET /api/reportes/rentabilidad-productos  →  productosMasVendidos
         Route::get('/rentabilidad-productos', [ReporteController::class, 'rentabilidadProductos']);
-
-        // GET /api/reportes/tiempos-rebase  →  productosConRetrasoPreparacion
-        Route::get('/tiempos-rebase',         [ReporteController::class, 'tiemposRebase']);
-
-        // GET /api/reportes/platillos-devueltos
-        Route::get('/platillos-devueltos',    [ReporteController::class, 'platillosDevueltos']);
     });
 
     // ========== USUARIOS ==========
