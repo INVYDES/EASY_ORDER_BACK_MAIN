@@ -270,8 +270,11 @@ class OrdenController extends Controller
             'productos.*.producto_id' => 'required_without:productos.*.paquete_id|nullable|exists:productos,id',
             'productos.*.paquete_id'  => 'required_without:productos.*.producto_id|nullable|exists:paquetes,id',
             'productos.*.cantidad'    => 'required|numeric|min:0.1|max:100',
-            'productos.*.tamano'      => 'nullable|in:pequeno,mediano,grande',
-            'productos.*.notas'       => 'nullable|string|max:300',
+            'productos.*.tamano'        => 'nullable|string|max:100',
+            'productos.*.tamano_id'     => 'nullable',
+            'productos.*.tamano_nombre' => 'nullable|string|max:100',
+            'productos.*.precio'        => 'nullable|numeric|min:0',
+            'productos.*.notas'         => 'nullable|string|max:300',
             'productos.*.comensal'    => 'nullable|string|max:100',
             'productos.*.comensal_id' => 'nullable|integer',
             'productos.*.nom_comensal'=> 'nullable|string|max:100',
@@ -377,7 +380,35 @@ class OrdenController extends Controller
                     continue;
                 }
 
-                $tamano = $item['tamano'] ?? 'pequeno';
+                $requestedTamano = $item['tamano_nombre'] ?? $item['tamano'] ?? $item['tamano_id'] ?? null;
+                $tamanoFinal = $requestedTamano ? (string)$requestedTamano : null;
+                $precio = isset($item['precio']) && (float)$item['precio'] > 0 ? (float)$item['precio'] : null;
+
+                if ($requestedTamano) {
+                    $tams = $producto->tamanos_personalizados;
+                    if (is_array($tams) && !empty($tams)) {
+                        foreach ($tams as $t) {
+                            $tId = (string)($t['id'] ?? $t['key'] ?? '');
+                            $tNom = (string)($t['nombre'] ?? '');
+                            if (($tId !== '' && $tId === (string)$requestedTamano) || 
+                                ($tNom !== '' && strtolower($tNom) === strtolower((string)$requestedTamano))) {
+                                $tamanoFinal = $t['nombre'] ?? (string)$requestedTamano;
+                                if (!$precio) {
+                                    $precio = (float)($t['precio'] ?? $producto->precio);
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!$precio && in_array($requestedTamano, ['pequeno', 'mediano', 'grande'])) {
+                        $precio = (float)($producto->{'precio_' . $requestedTamano} ?? $producto->precio);
+                    }
+                }
+
+                if (!$precio) {
+                    $precio = (float)($producto->precio ?? 0);
+                }
 
                 if ($producto->ingredientes->isEmpty()) {
                     if ($producto->stock < $item['cantidad']) {
@@ -389,32 +420,32 @@ class OrdenController extends Controller
                             'notas'        => $item['notas'] ?? null,
                             'nom_comensal' => $item['comensal'] ?? $item['nom_comensal'] ?? null,
                             'comensal_id'  => $item['comensal_id'] ?? null,
-                            'tamano'       => $tamano,
-                            'precio'       => $producto->{'precio_' . $tamano} ?? $producto->precio,
+                            'tamano'       => $tamanoFinal,
+                            'precio'       => $precio,
                         ];
                     }
                     continue;
                 }
 
-                // Validar que el tamaño pedido tenga receta (ingredientes) definida
+                // Validar receta
                 if ($producto->tiene_tamanos && $producto->ingredientes->isNotEmpty()) {
-                    $columna = "cantidad_{$tamano}";
+                    $columna = in_array($requestedTamano, ['pequeno', 'mediano', 'grande']) ? "cantidad_{$requestedTamano}" : 'cantidad';
                     $tieneReceta = $producto->ingredientes->contains(function ($ing) use ($columna) {
-                        return (float) ($ing->pivot->$columna ?? 0) > 0;
+                        return (float) ($ing->pivot->$columna ?? $ing->pivot->cantidad ?? 0) > 0;
                     });
                     if (!$tieneReceta) {
-                        $erroresStock[] = "El producto '{$producto->nombre}' ya no está disponible en tamaño '{$tamano}'";
+                        $erroresStock[] = "El producto '{$producto->nombre}' no tiene receta definida para el tamaño '{$requestedTamano}'";
                         continue;
                     }
                 }
 
-                $maxDisponible = $producto->ingredientes->map(function ($ing) use ($item, $producto, $tamano) {
+                $maxDisponible = $producto->ingredientes->map(function ($ing) use ($item, $producto, $requestedTamano) {
                     $cantidadPivot = $ing->pivot->cantidad ?? 0;
                     if ($producto->tiene_tamanos) {
-                        $columna = "cantidad_{$tamano}";
+                        $columna = in_array($requestedTamano, ['pequeno', 'mediano', 'grande']) ? "cantidad_{$requestedTamano}" : 'cantidad';
                         $cantidadPivot = $ing->pivot->$columna ?? $cantidadPivot;
                     }
-                    $necesario = $cantidadPivot * $item['cantidad'];
+                    $necesario = (float)$cantidadPivot * (float)$item['cantidad'];
                     return $necesario > 0 ? floor($ing->stock_actual / $necesario) : PHP_INT_MAX;
                 })->min();
 
@@ -427,8 +458,8 @@ class OrdenController extends Controller
                         'notas'        => $item['notas'] ?? null,
                         'nom_comensal' => $item['comensal'] ?? $item['nom_comensal'] ?? null,
                         'comensal_id'  => $item['comensal_id'] ?? null,
-                        'tamano'       => $tamano,
-                        'precio'       => $producto->{'precio_' . $tamano} ?? $producto->precio,
+                        'tamano'       => $tamanoFinal,
+                        'precio'       => $precio,
                     ];
                 }
             }
@@ -494,7 +525,7 @@ class OrdenController extends Controller
                     'producto_id'        => $productoModel->id,
                     'paquete_id'         => $paqueteId,
                     'cantidad'           => $item['cantidad'],
-                    'tamano'             => $item['tamano'] ?? 'pequeno',
+                    'tamano'             => $item['tamano'] ?? null,
                     'precio_unitario'    => $precio + ($item['cantidad'] > 0 ? ($paquetePrecio / $item['cantidad']) : 0),
                     'subtotal'           => $subtotal,
                     'notas'              => $item['notas'],
@@ -512,7 +543,7 @@ class OrdenController extends Controller
                     'categoria_id'        => $productoModel->categoria_id,
                     'categoria'           => $productoModel->categoria?->nombre,
                     'cantidad'            => $item['cantidad'],
-                    'tamano'              => $item['tamano'] ?? 'pequeno',
+                    'tamano'              => $item['tamano'] ?? null,
                     'precio_unitario'     => (float) $detalle->precio_unitario,
                     'subtotal'            => (float) $subtotal,
                     'subtotal_formateado' => '$' . number_format($subtotal, 2),
@@ -940,9 +971,10 @@ class OrdenController extends Controller
                     ];
                 }
             } else {
+                $detallesValidos = $orden->detalles->filter(fn($d) => !($d->cancelado ?? false));
                 $idsAsignados = [];
-                $idsEnOrden   = $orden->detalles->pluck('id')->toArray();
-                $detallesMap  = $orden->detalles->keyBy('id');
+                $idsEnOrden   = $detallesValidos->pluck('id')->toArray();
+                $detallesMap  = $detallesValidos->keyBy('id');
 
                 foreach ($request->divisiones as $div) {
                     $subtotalComensal = 0;

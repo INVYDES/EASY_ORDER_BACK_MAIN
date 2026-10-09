@@ -42,6 +42,20 @@ return [
         ],
     ],
 
+    'mercadopago' => [
+        // Credenciales de la aplicación (integrator) para OAuth de terceros.
+        'app_id'        => env('MERCADOPAGO_APP_ID'),
+        'client_secret' => env('MERCADOPAGO_CLIENT_SECRET'),
+        // Token "de plataforma" (solo para operaciones propias / pruebas).
+        'access_token'  => env('MERCADOPAGO_ACCESS_TOKEN'),
+        'public_key'    => env('MERCADOPAGO_PUBLIC_KEY'),
+        'webhook_secret'=> env('MERCADOPAGO_WEBHOOK_SECRET'),
+        'base_url'      => env('MERCADOPAGO_API_URL', 'https://api.mercadopago.com'),
+        'authorize_url' => env('MERCADOPAGO_AUTHORIZE_URL', 'https://auth.mercadopago.com.mx/authorization'),
+        'redirect_uri'  => env('MERCADOPAGO_REDIRECT_URI', env('APP_URL') . '/api/mercadopago/oauth/callback'),
+        'mode'          => env('MERCADOPAGO_MODE', 'sandbox'),
+    ],
+
     'gemini' => [
         'key' => env('GEMINI_API_KEY'),
         'model' => env('GEMINI_MODEL', 'gemini-3.6-flash'),

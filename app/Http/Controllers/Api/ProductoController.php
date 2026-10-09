@@ -402,8 +402,10 @@ class ProductoController extends Controller
                 'descripcion' => $request->descripcion,
                 'precio' => $request->precio,
                 'stock' => $request->stock ?? 0,
-                'tiene_tamanos' => $request->has('tiene_tamanos') ? $request->tiene_tamanos : false,
-                'tamanos_personalizados' => $this->decodeTamanosPersonalizados($request->tamanos_personalizados),
+                'tiene_tamanos' => $request->has('tiene_tamanos')
+                    ? (bool) $request->tiene_tamanos
+                    : !empty($this->decodeTamanosPersonalizados($request->tamanos_personalizados ?? $request->tamanos)),
+                'tamanos_personalizados' => $this->decodeTamanosPersonalizados($request->tamanos_personalizados ?? $request->tamanos),
                 'stock_minimo' => $request->stock_minimo ?? 5,
                 'minutos_produccion' => $request->minutos_produccion ?? 0,
                 'activo' => $request->has('activo') ? $request->activo : true
@@ -2111,7 +2113,8 @@ class ProductoController extends Controller
             'nomina_mensual_base' => (float) $totalNominaMensual,
 
             'tiene_tamanos' => (bool) $producto->tiene_tamanos,
-            'tamanos_personalizados' => $producto->tamanos_personalizados,
+            'tamanos' => $producto->tamanos_personalizados ?? [],
+            'tamanos_personalizados' => $producto->tamanos_personalizados ?? [],
             'stock' => (int) ($producto->stock ?? 0),
             'stock_pequeno' => $producto->stock_pequeno,
             'stock_mediano' => $producto->stock_mediano,

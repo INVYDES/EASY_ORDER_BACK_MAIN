@@ -15,22 +15,22 @@ class CajaController extends Controller
     // ── Helper: selectRaw unificado de ventas por método de pago ──────────────
     private function ventasSelectRaw(): string
     {
-        return '
-            SUM(CASE WHEN metodo_pago = "efectivo"       THEN (total - propina) ELSE 0 END) as ventas_efectivo,
-            SUM(CASE WHEN metodo_pago = "tarjeta"        THEN (total - propina) ELSE 0 END) as ventas_tarjeta,
-            SUM(CASE WHEN metodo_pago = "transferencia"  THEN (total - propina) ELSE 0 END) as ventas_transferencia,
-            SUM(CASE WHEN metodo_pago = "paypal"         THEN (total - propina) ELSE 0 END) as ventas_paypal,
-            SUM(CASE WHEN metodo_pago = "mercadopago"    THEN (total - propina) ELSE 0 END) as ventas_mercadopago,
+        return "
+            SUM(CASE WHEN metodo_pago = 'efectivo'       THEN (total - propina) ELSE 0 END) as ventas_efectivo,
+            SUM(CASE WHEN metodo_pago = 'tarjeta'        THEN (total - propina) ELSE 0 END) as ventas_tarjeta,
+            SUM(CASE WHEN metodo_pago = 'transferencia'  THEN (total - propina) ELSE 0 END) as ventas_transferencia,
+            SUM(CASE WHEN metodo_pago = 'paypal'         THEN (total - propina) ELSE 0 END) as ventas_paypal,
+            SUM(CASE WHEN metodo_pago = 'mercadopago'    THEN (total - propina) ELSE 0 END) as ventas_mercadopago,
             SUM(CASE WHEN metodo_pago NOT IN (
-                "efectivo","tarjeta","transferencia","paypal","mercadopago"
+                'efectivo','tarjeta','transferencia','paypal','mercadopago'
             ) THEN (total - propina) ELSE 0 END) as ventas_otros,
-            SUM(CASE WHEN metodo_pago = "efectivo"       THEN propina ELSE 0 END) as propinas_efectivo,
-            SUM(CASE WHEN metodo_pago = "tarjeta"        THEN propina ELSE 0 END) as propinas_tarjeta,
-            SUM(CASE WHEN metodo_pago = "transferencia"  THEN propina ELSE 0 END) as propinas_transferencia,
-            SUM(CASE WHEN metodo_pago = "paypal"         THEN propina ELSE 0 END) as propinas_paypal,
-            SUM(CASE WHEN metodo_pago = "mercadopago"    THEN propina ELSE 0 END) as propinas_mercadopago,
+            SUM(CASE WHEN metodo_pago = 'efectivo'       THEN propina ELSE 0 END) as propinas_efectivo,
+            SUM(CASE WHEN metodo_pago = 'tarjeta'        THEN propina ELSE 0 END) as propinas_tarjeta,
+            SUM(CASE WHEN metodo_pago = 'transferencia'  THEN propina ELSE 0 END) as propinas_transferencia,
+            SUM(CASE WHEN metodo_pago = 'paypal'         THEN propina ELSE 0 END) as propinas_paypal,
+            SUM(CASE WHEN metodo_pago = 'mercadopago'    THEN propina ELSE 0 END) as propinas_mercadopago,
             COUNT(*) as total_ordenes
-        ';
+        ";
     }
 
     // ── Helper: array de ventas formateado ────────────────────────────────────
@@ -246,14 +246,14 @@ class CajaController extends Controller
             $cuentasActivas = Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('updated_at', '>=', $caja->fecha_apertura)
                 ->whereNotIn('estado', ['CERRADA', 'PAGADA', 'CANCELADA'])
-                ->get(['id', 'mesa', 'comensales', 'estado', 'tipo_orden', 'total']);
+                ->get(['id', 'mesa', 'estado', 'tipo_orden', 'total']);
 
             if ($cuentasActivas->isNotEmpty()) {
                 $detalle = $cuentasActivas->map(fn($o) => [
                     'id'         => $o->id,
                     'folio'      => $o->folio ?? '#' . $o->id,
                     'mesa'       => $o->mesa,
-                    'comensales' => $o->comensales,
+                    'comensales' => 1,
                     'estado'     => $o->estado,
                     'tipo'       => $o->tipo_orden,
                     'total'      => (float) $o->total,
@@ -308,15 +308,19 @@ class CajaController extends Controller
             $caja->update($updateData);
 
             // Cerrar automáticamente cualquier otra caja vieja que haya quedado huérfana y abierta para este restaurante
-            Caja::where('restaurante_id', $restauranteActivo->id)
+            $cajasHuerfanas = Caja::where('restaurante_id', $restauranteActivo->id)
                 ->whereNull('fecha_cierre')
                 ->where('id', '!=', $caja->id)
-                ->update([
+                ->get();
+
+            foreach ($cajasHuerfanas as $huerfana) {
+                $huerfana->update([
                     'fecha_cierre'         => now(),
                     'estado'               => 'cerrada',
-                    'monto_final'          => \Illuminate\Support\Facades\DB::raw('monto_inicial'),
+                    'monto_final'          => $huerfana->monto_inicial,
                     'observaciones_cierre' => 'Cierre automático de caja huérfana o antigua',
                 ]);
+            }
 
             DB::commit();
 

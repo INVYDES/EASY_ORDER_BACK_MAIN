@@ -25,6 +25,8 @@ use App\Http\Controllers\Api\OfertaController;
 use App\Http\Controllers\Api\PayPalController;
 use App\Http\Controllers\Api\LicenciaPagoController;
 use App\Http\Controllers\Api\MercadoPagoController;
+use App\Http\Controllers\Api\PointController;
+use App\Http\Controllers\Api\PointOAuthController;
 use App\Http\Controllers\Api\MeseroController;
 use App\Http\Controllers\Api\HorarioController;
 use App\Http\Controllers\Api\NominaDetalleController;
@@ -35,12 +37,18 @@ use App\Http\Controllers\Api\EstacionController;
 use App\Http\Controllers\Api\InsumosPreparadosController;
 use App\Http\Controllers\Api\ContactoController;
 
+use App\Http\Controllers\Api\CloudPrntController;
+
 /*
 |--------------------------------------------------------------------------
 | RUTAS PÚBLICAS (SIN AUTENTICACIÓN)
 |--------------------------------------------------------------------------
 */
 Route::prefix('')->group(function () {
+    // ========== CLOUDPRNT ==========
+    Route::post('/cloudprnt/{token}', [CloudPrntController::class, 'poll']);
+    Route::get('/cloudprnt/{token}', [CloudPrntController::class, 'download']);
+    Route::delete('/cloudprnt/{token}', [CloudPrntController::class, 'deleteJob']);
     // Endpoint to provide server current date/time for frontend synchronization
     Route::get('/server-time', fn() => response()->json([
         'success' => true,
@@ -70,7 +78,14 @@ Route::prefix('')->group(function () {
         Route::post('/mercadopago/licencia-webhook', [LicenciaController::class, 'webhookMercadoPago']);
         // Alias: URL legacy que se envió en notification_url de preferencias ya creadas
         Route::post('/licencias/webhook/mercadopago', [LicenciaController::class, 'webhookMercadoPago']);
+
+        // ========== MERCADO PAGO POINT (terminales) ==========
+        // Webhook de la Orders API (público, validado por firma).
+        Route::post('/mercadopago/point/webhook', [PointController::class, 'webhook']);
     });
+
+    // ========== MERCADO PAGO OAUTH (callback de retorno — público) ==========
+    Route::get('/mercadopago/oauth/callback', [PointOAuthController::class, 'callback']);
 
     // ========== CALLBACKS PAYPAL ==========
    // ========== CALLBACKS PAYPAL ==========
@@ -188,6 +203,22 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::get('/paypal/capturar',          [CajaController::class, 'capturarPayPal']); // callback
         Route::post('/mercadopago/crear',       [MercadoPagoController::class, 'crearPreferencia'])->middleware('permission:CREAR_ORDENES');
         Route::get('/mercadopago/retorno',      [MercadoPagoController::class, 'retornoPago']);
+
+        // ── Mercado Pago Point (terminales) ──────────────────────────────
+        // Conexión de la cuenta de Mercado Pago del restaurante (OAuth).
+        Route::get('/mercadopago/oauth/conectar',     [PointOAuthController::class, 'conectar'])->middleware('permission:VER_CAJA');
+        Route::get('/mercadopago/oauth/estado',       [PointOAuthController::class, 'estado'])->middleware('permission:VER_CAJA');
+        Route::post('/mercadopago/oauth/desconectar', [PointOAuthController::class, 'desconectar'])->middleware('permission:EDITAR_CAJA');
+
+        // Terminales Point.
+        Route::get('/mercadopago/point/terminales',         [PointController::class, 'terminales'])->middleware('permission:VER_CAJA');
+        Route::post('/mercadopago/point/terminales',        [PointController::class, 'registrarTerminal'])->middleware('permission:EDITAR_CAJA');
+        Route::delete('/mercadopago/point/terminales/{id}', [PointController::class, 'eliminarTerminal'])->middleware('permission:EDITAR_CAJA');
+
+        // Cobro en terminal.
+        Route::post('/mercadopago/point/crear',                       [PointController::class, 'crearOrden'])->middleware('permission:CREAR_ORDENES');
+        Route::get('/mercadopago/point/orden/{orderId}',              [PointController::class, 'estadoOrden'])->middleware('permission:VER_CAJA');
+        Route::post('/mercadopago/point/orden/{orderId}/cancelar',    [PointController::class, 'cancelarOrden'])->middleware('permission:CREAR_ORDENES');
     });
 
     // ========== RESTAURANTES ==========

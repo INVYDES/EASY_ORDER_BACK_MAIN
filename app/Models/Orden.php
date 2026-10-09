@@ -38,6 +38,8 @@ class Orden extends Model
         'paypal_capture_id',
         'mercadopago_preference_id',
         'mercadopago_payment_id',
+        'mercadopago_order_id',
+        'mercadopago_terminal_id',
         'referencia',
         'lista_at',
         'comision_pct',
