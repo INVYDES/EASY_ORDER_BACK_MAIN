@@ -15,10 +15,10 @@ class StockHelper
      * Obtiene la cantidad de un ingrediente en el pivot para un tamaño dado.
      * Mapea 'pequeno'/'mediano'/'grande' a columnas legacy, otros keys usan 'cantidad'.
      */
-    private static function getCantidadPivot($pivot, string $tamano): float
+    private static function getCantidadPivot($pivot, ?string $tamano): float
     {
         $map = ['pequeno' => 'cantidad_pequeno', 'mediano' => 'cantidad_mediano', 'grande' => 'cantidad_grande'];
-        $columna = $map[$tamano] ?? null;
+        $columna = $tamano !== null ? ($map[$tamano] ?? null) : null;
         if ($columna && isset($pivot->$columna) && (float) $pivot->$columna > 0) {
             return (float) $pivot->$columna;
         }
@@ -28,8 +28,12 @@ class StockHelper
     /**
      * Actualiza el stock de un tamaño específico en el JSON tamanos_personalizados.
      */
-    private static function actualizarStockTamano(Producto $producto, string $tamano, int $delta): void
+    private static function actualizarStockTamano(Producto $producto, ?string $tamano, int $delta): void
     {
+        // Sin tamaño no hay columna/entrada que ajustar: evita el TypeError que
+        // saltaba cuando `$detalle->tamano` era null (productos sin tamaños).
+        if ($tamano === null || $tamano === '') return;
+
         $tams = $producto->tamanos_personalizados;
         if (!is_array($tams)) return;
 

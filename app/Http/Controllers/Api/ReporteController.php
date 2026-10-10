@@ -747,8 +747,15 @@ public function recomendacionPaquete(Request $request): JsonResponse
                     'orden_detalles.estado_preparacion',
                     DB::raw('COALESCE(orden_detalles.motivo_cancelacion, "Orden Cancelada") as motivo'),
                     DB::raw('COALESCE(users.name, "Sistema") as usuario'),
-                    // ✅ Marcar si es merma real (ya fue preparado) o solo cancelación (stock devuelto)
-                    DB::raw('CASE WHEN orden_detalles.estado_preparacion IN ("EN_PREPARACION", "LISTO", "ENTREGADO") THEN 1 ELSE 0 END as es_merma')
+                    // ✅ Clasificación: es MERMA real cuando la cancelación la hizo un usuario
+                    // de CAJA/ADMIN (el platillo ya se preparó/sirvió). Es solo CANCELACIÓN
+                    // (sin pérdida) cuando la hizo un MESERO antes de servir. Si el usuario que
+                    // canceló no tiene rol reconocible, se usa el estado de preparación.
+                    DB::raw('CASE
+                        WHEN EXISTS (SELECT 1 FROM role_user ru JOIN roles r ON r.id = ru.role_id WHERE ru.user_id = orden_detalles.usuario_cancelo_id AND UPPER(r.nombre) = "MESERO") THEN 0
+                        WHEN EXISTS (SELECT 1 FROM role_user ru JOIN roles r ON r.id = ru.role_id WHERE ru.user_id = orden_detalles.usuario_cancelo_id AND UPPER(r.nombre) IN ("CAJA", "ADMIN", "ADMINISTRADOR", "PROPIETARIO", "SUPER_ADMIN", "SUPER")) THEN 1
+                        ELSE (CASE WHEN orden_detalles.estado_preparacion IN ("EN_PREPARACION", "LISTO", "ENTREGADO") THEN 1 ELSE 0 END)
+                    END as es_merma')
                 );
 
             if ($request->filled('fecha_inicio')) {
@@ -1361,10 +1368,37 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
     // ROI — CONFIGURACIÓN
     // =========================================================================
 
+    private function getRestauranteActivo(Request $request)
+    {
+        if (app()->bound('restaurante_activo')) {
+            $res = app('restaurante_activo');
+            if ($res) {
+                return is_object($res) ? $res : (object) ['id' => (int) $res];
+            }
+        }
+        $resId = $request->user()?->restaurante_activo ?? 1;
+        return (object) ['id' => (int) $resId];
+    }
+
     public function roiObtenerConfig(Request $request): JsonResponse
     {
         try {
-            $restauranteActivo = app('restaurante_activo');
+            $restauranteActivo = $this->getRestauranteActivo($request);
+
+            if (!Schema::hasTable('roi_config')) {
+                return response()->json([
+                    'success' => true,
+                    'data'    => [
+                        'restaurante_id'    => $restauranteActivo->id,
+                        'inversion_inicial' => 0,
+                        'utilidad_objetivo' => 0,
+                        'gasto_renta'       => 0,
+                        'gasto_servicios'   => 0,
+                        'gasto_software'    => 0,
+                        'gasto_marketing'   => 0,
+                    ]
+                ]);
+            }
 
             $config = \App\Models\RoiConfig::firstOrCreate(
                 ['restaurante_id' => $restauranteActivo->id],
@@ -1388,7 +1422,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
     public function roiGuardarConfig(Request $request): JsonResponse
     {
         try {
-            $restauranteActivo = app('restaurante_activo');
+            $restauranteActivo = $this->getRestauranteActivo($request);
 
             $request->validate([
                 'inversion_inicial' => 'sometimes|numeric|min:0',
@@ -1398,6 +1432,10 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 'gasto_software'    => 'sometimes|numeric|min:0',
                 'gasto_marketing'   => 'sometimes|numeric|min:0',
             ]);
+
+            if (!Schema::hasTable('roi_config')) {
+                return response()->json(['success' => false, 'message' => 'Tabla roi_config no encontrada.'], 400);
+            }
 
             $config = \App\Models\RoiConfig::updateOrCreate(
                 ['restaurante_id' => $restauranteActivo->id],
@@ -1425,7 +1463,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
     public function roiCompleto(Request $request): JsonResponse
     {
         try {
-            $restauranteActivo = app('restaurante_activo');
+            $restauranteActivo = $this->getRestauranteActivo($request);
 
             $request->validate([
                 'fecha_inicio' => 'sometimes|date',
@@ -1435,17 +1473,29 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             $fechaInicio = $request->get('fecha_inicio', now()->startOfMonth()->format('Y-m-d'));
             $fechaFin    = $request->get('fecha_fin',    now()->format('Y-m-d'));
 
-            $config = \App\Models\RoiConfig::firstOrCreate(
-                ['restaurante_id' => $restauranteActivo->id],
-                [
-                    'inversion_inicial' => 0, 'utilidad_objetivo' => 0,
-                    'gasto_renta' => 0, 'gasto_servicios' => 0,
-                    'gasto_software' => 0, 'gasto_marketing' => 0,
-                ]
-            );
+            $inversionInicial = 0;
+            $utilidadObjetivo = 0;
+            $gastoRenta       = 0;
+            $gastoServicios   = 0;
+            $gastoSoftware    = 0;
+            $gastoMarketing   = 0;
 
-            $inversionInicial = (float) $config->inversion_inicial;
-            $utilidadObjetivo = (float) $config->utilidad_objetivo;
+            if (Schema::hasTable('roi_config')) {
+                $config = \App\Models\RoiConfig::firstOrCreate(
+                    ['restaurante_id' => $restauranteActivo->id],
+                    [
+                        'inversion_inicial' => 0, 'utilidad_objetivo' => 0,
+                        'gasto_renta' => 0, 'gasto_servicios' => 0,
+                        'gasto_software' => 0, 'gasto_marketing' => 0,
+                    ]
+                );
+                $inversionInicial = (float) $config->inversion_inicial;
+                $utilidadObjetivo = (float) $config->utilidad_objetivo;
+                $gastoRenta       = (float) $config->gasto_renta;
+                $gastoServicios   = (float) $config->gasto_servicios;
+                $gastoSoftware    = (float) $config->gasto_software;
+                $gastoMarketing   = (float) $config->gasto_marketing;
+            }
 
             $ventasMes = (float) Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
@@ -1453,32 +1503,41 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
             // ✅ Gastos Variables = Gastos Directos + Costo de Productos Vendidos
-            $gastosDirectos = (float) DB::table('gastos')
-                ->where('restaurante_id', $restauranteActivo->id)
-                ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
-                ->sum('monto');
+            $gastosDirectos = Schema::hasTable('gastos')
+                ? (float) DB::table('gastos')
+                    ->where('restaurante_id', $restauranteActivo->id)
+                    ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+                    ->sum('monto')
+                : 0;
 
-            $costoVentas = (float) DB::table('orden_detalles')
+            // Costo y venta de los productos vendidos
+            $costosVentas = DB::table('orden_detalles')
                 ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
                 ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
                 ->where('ordenes.restaurante_id', $restauranteActivo->id)
                 ->where('ordenes.estado', 'CERRADA')
                 ->whereBetween('ordenes.created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
-                ->sum(DB::raw('orden_detalles.cantidad * COALESCE(productos.costo, 0)'));
+                ->selectRaw('SUM(orden_detalles.cantidad * COALESCE(productos.costo, 0)) as costo, SUM(orden_detalles.subtotal) as venta')
+                ->first();
+
+            $costoVentas    = (float) ($costosVentas->costo ?? 0);
+            $ventaProductos = (float) ($costosVentas->venta ?? 0);
 
             $gastosVariables = round($costoVentas, 2);
 
-            $nominaMes = (float) Nomina::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'PAGADA')
-                ->whereBetween('periodo_fin', [$fechaInicio, $fechaFin])
-                ->sum('pago_total');
+            $nominaMes = Schema::hasTable('nominas')
+                ? (float) Nomina::where('restaurante_id', $restauranteActivo->id)
+                    ->where('estado', 'PAGADA')
+                    ->whereBetween('periodo_fin', [$fechaInicio, $fechaFin])
+                    ->sum('pago_total')
+                : 0;
 
             $gastosOperativos = round(
-                (float) $config->gasto_renta    +
-                (float) $config->gasto_servicios +
-                (float) $config->gasto_software  +
-                (float) $config->gasto_marketing +
-                $nominaMes +
+                $gastoRenta     +
+                $gastoServicios +
+                $gastoSoftware  +
+                $gastoMarketing +
+                $nominaMes      +
                 $gastosDirectos,
                 2
             );
@@ -1507,6 +1566,11 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
 
             $pctCumplimientoObjetivo = $utilidadObjetivo > 0
                 ? round(($gananciaNeta / $utilidadObjetivo) * 100, 2)
+                : null;
+
+            // ROI por producto: utilidad de los platillos vendidos ÷ su costo
+            $roiProducto = $costoVentas > 0
+                ? round((($ventaProductos - $costoVentas) / $costoVentas) * 100, 2)
                 : null;
 
             $semaforo = match (true) {
@@ -1566,6 +1630,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                         'utilidad_real'           => $gananciaNeta,
                         'pct_cumplimiento_obj'    => $pctCumplimientoObjetivo,
                         'roi_general'             => $roiGeneral,
+                        'roi_producto'            => $roiProducto,
                         'semaforo'                => $semaforo,
                         'margen_contribucion'     => $margenContribucion,
                         'punto_equilibrio'        => $puntoEquilibrio,

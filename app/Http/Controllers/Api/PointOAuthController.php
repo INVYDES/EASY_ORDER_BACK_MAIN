@@ -9,6 +9,8 @@ use App\Services\MercadoPagoPointService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
+use Illuminate\Support\Facades\Schema;
+
 /**
  * Conexión y desconexión de la cuenta de Mercado Pago de cada restaurante.
  *
@@ -101,21 +103,51 @@ class PointOAuthController extends Controller
      */
     public function estado(Request $request)
     {
-        $cred = MercadoPagoCredencial::first();
+        try {
+            if (!Schema::hasTable('mercadopago_credenciales')) {
+                return response()->json([
+                    'success' => true,
+                    'data'    => [
+                        'conectado'    => false,
+                        'vigente'      => false,
+                        'mp_user_id'   => null,
+                        'live_mode'    => false,
+                        'connected_at' => null,
+                        'terminales'   => [],
+                    ],
+                ]);
+            }
 
-        return response()->json([
-            'success' => true,
-            'data'    => [
-                'conectado'    => (bool) $cred,
-                'vigente'      => $cred ? $cred->estaVigente() : false,
-                'mp_user_id'   => $cred?->mp_user_id,
-                'live_mode'    => (bool) ($cred?->live_mode ?? false),
-                'connected_at' => $cred?->connected_at,
-                'terminales'   => MercadoPagoTerminal::where('is_active', true)
-                    ->orderBy('alias')
-                    ->get(),
-            ],
-        ]);
+            $cred = MercadoPagoCredencial::first();
+            $terminales = Schema::hasTable('mercadopago_terminales')
+                ? MercadoPagoTerminal::where('is_active', true)->orderBy('alias')->get()
+                : [];
+
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'conectado'    => (bool) $cred,
+                    'vigente'      => $cred ? $cred->estaVigente() : false,
+                    'mp_user_id'   => $cred?->mp_user_id,
+                    'live_mode'    => (bool) ($cred?->live_mode ?? false),
+                    'connected_at' => $cred?->connected_at,
+                    'terminales'   => $terminales,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('MP Point estado error: ' . $e->getMessage());
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'conectado'    => false,
+                    'vigente'      => false,
+                    'mp_user_id'   => null,
+                    'live_mode'    => false,
+                    'connected_at' => null,
+                    'terminales'   => [],
+                ],
+            ]);
+        }
     }
 
     /**
@@ -123,8 +155,16 @@ class PointOAuthController extends Controller
      */
     public function desconectar(Request $request)
     {
-        MercadoPagoCredencial::query()->delete();
-        MercadoPagoTerminal::query()->delete();
+        try {
+            if (Schema::hasTable('mercadopago_credenciales')) {
+                MercadoPagoCredencial::query()->delete();
+            }
+            if (Schema::hasTable('mercadopago_terminales')) {
+                MercadoPagoTerminal::query()->delete();
+            }
+        } catch (\Throwable $e) {
+            Log::warning('MP Point desconectar error: ' . $e->getMessage());
+        }
 
         Log::info('MP Point: cuenta desconectada', [
             'user_id' => $request->user()?->id,

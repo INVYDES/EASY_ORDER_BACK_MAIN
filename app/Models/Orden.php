@@ -255,7 +255,11 @@ class Orden extends Model
     public function recalcularTotal(): float
     {
         $subtotal = $this->detalles()->sum('subtotal');
-        $total = $subtotal + ($this->propina ?? 0);
+        // El envío forma parte del total de la orden (mismo criterio que
+        // OrdenController al crear/pagar). Sin sumarlo aquí, cualquier alta/edición
+        // posterior de un detalle borraba el envío y los KPI de ventas (total - propina)
+        // dejaban de cuadrar con el detalle de la orden.
+        $total = $subtotal + ($this->costo_envio ?? 0) + ($this->propina ?? 0);
         $this->update(['total' => $total]);
         return $total;
     }

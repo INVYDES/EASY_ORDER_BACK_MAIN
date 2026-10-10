@@ -1876,25 +1876,51 @@ public function getKpiCocinaReprocesos(Request $request)
             $fechaDesde = $request->get('fecha_desde', now()->startOfMonth()->toDateString());
             $fechaHasta = $request->get('fecha_hasta', now()->toDateString());
 
-            // 1. Tiempo de cobro por cajero
-            $tiemposCobro = DB::table('ordenes as o')
-                ->join('users as u', 'u.id', '=', 'o.cajero_id')
-                ->where('o.restaurante_id', $restauranteId)
-                ->where('o.estado', 'CERRADA')
-                ->whereBetween('o.created_at', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
-                ->select(
-                    'u.name as cajero',
-                    DB::raw('AVG(TIMESTAMPDIFF(SECOND, o.created_at, o.updated_at)) / 60 as tiempo_avg_min'),
-                    DB::raw('COUNT(*) as total_cobros')
-                )
-                ->groupBy('o.cajero_id', 'u.name')
-                ->get();
+            // 1. Tiempo de cobro por cajero (soporta esquema con o sin columna `cajero_id`).
+            if (\Illuminate\Support\Facades\Schema::hasColumn('ordenes', 'cajero_id')) {
+                $tiemposCobro = DB::table('ordenes as o')
+                    ->join('users as u', 'u.id', '=', 'o.cajero_id')
+                    ->where('o.restaurante_id', $restauranteId)
+                    ->where('o.estado', 'CERRADA')
+                    ->whereNull('o.deleted_at')
+                    ->whereBetween('o.created_at', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
+                    ->when($request->filled('user_id'), fn ($q) => $q->where('o.cajero_id', $request->user_id))
+                    ->select(
+                        'u.name as cajero',
+                        DB::raw('AVG(TIMESTAMPDIFF(SECOND, o.created_at, o.updated_at)) / 60 as tiempo_avg_min'),
+                        DB::raw('COUNT(DISTINCT o.id) as total_cobros')
+                    )
+                    ->groupBy('o.cajero_id', 'u.name')
+                    ->get();
+            } else {
+                $tiemposCobro = DB::table('ordenes as o')
+                    ->leftJoin('caja_movimientos as cm', function ($join) {
+                        $join->whereRaw("cm.descripcion LIKE CONCAT('Venta - Orden #', o.id, ' (%')")
+                             ->where('cm.tipo', 'ingreso')
+                             ->whereNull('cm.deleted_at');
+                    })
+                    ->leftJoin('users as u', 'u.id', '=', DB::raw('COALESCE(cm.usuario_id, o.usuario_id)'))
+                    ->where('o.restaurante_id', $restauranteId)
+                    ->where('o.estado', 'CERRADA')
+                    ->whereNull('o.deleted_at')
+                    ->whereBetween('o.created_at', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
+                    ->when($request->filled('user_id'), fn ($q) => $q->where('o.usuario_id', $request->user_id))
+                    ->select(
+                        DB::raw("COALESCE(u.name, 'Cajero') as cajero"),
+                        DB::raw('AVG(TIMESTAMPDIFF(SECOND, o.created_at, o.updated_at)) / 60 as tiempo_avg_min'),
+                        DB::raw('COUNT(DISTINCT o.id) as total_cobros')
+                    )
+                    ->groupBy(DB::raw("COALESCE(u.name, 'Cajero')"))
+                    ->get();
+            }
 
-            // 2. Diferencia en caja acumulada
+            // 2. Diferencia en caja acumulada.
+            // `cajas` guarda el descuadre en la columna `diferencia` (no existen
+            // `monto_cierre` ni `monto_esperado`).
             $diferenciaAcumulada = DB::table('cajas')
                 ->where('restaurante_id', $restauranteId)
                 ->whereBetween('fecha_apertura', [$fechaDesde . ' 00:00:00', $fechaHasta . ' 23:59:59'])
-                ->sum(DB::raw('monto_cierre - monto_esperado'));
+                ->sum('diferencia');
 
             return response()->json([
                 'success' => true,

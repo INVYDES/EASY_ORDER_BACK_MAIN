@@ -12,7 +12,7 @@ class UpdateEstadoEstacionRequest extends FormRequest
     {
         return [
             'estacion' => 'required|string|in:cocina,barra,postres',
-            'estado'   => 'required|string|in:PENDIENTE,EN_PREPARACION,LISTO',
+            'estado'   => 'required|string|in:PENDIENTE,EN_PREPARACION,LISTO,ENTREGADO',
             'ingredientes_excluidos' => 'nullable|array',
             'ingredientes_excluidos.*.producto_id' => 'required|integer|exists:productos,id',
             'ingredientes_excluidos.*.ingrediente_id' => 'required|integer|exists:ingredientes,id',

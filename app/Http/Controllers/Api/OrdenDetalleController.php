@@ -633,6 +633,12 @@ class OrdenDetalleController extends Controller
                 });
             } elseif ($nuevoEstado === 'LISTO') {
                 $query->where('estado_preparacion', 'EN_PREPARACION');
+            } elseif ($nuevoEstado === 'ENTREGADO') {
+                // Todo lo de la estación que todavía no se ha entregado
+                $query->where(function ($q) {
+                    $q->whereNull('estado_preparacion')
+                      ->orWhere('estado_preparacion', '!=', 'ENTREGADO');
+                });
             }
 
             $detalles = $query->get();
@@ -701,6 +707,8 @@ class OrdenDetalleController extends Controller
                     $updateData['en_preparacion_at'] = now();
                 } elseif ($nuevoEstado === 'LISTO' && !$detalle->listo_at) {
                     $updateData['listo_at'] = now();
+                } elseif ($nuevoEstado === 'ENTREGADO' && !$detalle->entregado_en) {
+                    $updateData['entregado_en'] = now();
                 }
                 $detalle->update($updateData);
             }
@@ -708,6 +716,9 @@ class OrdenDetalleController extends Controller
             if ($nuevoEstado === 'EN_PREPARACION' && $orden->estado === 'POR_PREPARAR') {
                 $orden->update(['estado' => 'EN_PREPARACION']);
             }
+
+            // Al entregar todo lo que quedaba pendiente, verificarYActualizarEstadoGlobal()
+            // deja la orden en ENTREGADA (modo rápido: el mesero no usa estaciones).
 
             $orden->verificarYActualizarEstadoGlobal();
 
