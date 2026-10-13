@@ -233,6 +233,10 @@ class Orden extends Model
      */
     public function puedeCambiarEstado(string $nuevoEstado): bool
     {
+        if ($nuevoEstado === $this->estado) {
+            return true;
+        }
+
         $transiciones = [
             'ABIERTA' => ['POR_PREPARAR', 'CANCELADA'],
             'POR_PREPARAR' => ['EN_PREPARACION', 'LISTA', 'ENTREGADA', 'CANCELADA'],
@@ -305,7 +309,7 @@ class Orden extends Model
             $nuevoEstado = 'LISTA';
         }
         // Si hay cosas en preparación
-        elseif ($enPreparacion > 0) {
+        elseif ($enPreparacion > 0 || $entregados > 0) {
             $nuevoEstado = 'EN_PREPARACION';
         } 
         // Por defecto

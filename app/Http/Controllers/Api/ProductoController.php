@@ -174,6 +174,7 @@ class ProductoController extends Controller
                     'tiene_tamanos' => (bool) $producto->tiene_tamanos,
                     'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                     'tamanos_personalizados' => $producto->tamanos_personalizados,
+                    'tamanos' => $this->tamanosConCosto($producto, $totalNomina),
                     'stock' => (int) $producto->stock,
                     'stock_pequeno' => $producto->stock_pequeno,
                     'stock_mediano' => $producto->stock_mediano,
@@ -393,6 +394,8 @@ class ProductoController extends Controller
                 $categoriaId = $categoriaDefault->id;
             }
 
+            $tamanosNormalizados = $this->normalizarTamanos($request->tamanos_personalizados ?? $request->tamanos);
+
             DB::beginTransaction();
 
             $data = [
@@ -404,8 +407,8 @@ class ProductoController extends Controller
                 'stock' => $request->stock ?? 0,
                 'tiene_tamanos' => $request->has('tiene_tamanos')
                     ? (bool) $request->tiene_tamanos
-                    : !empty($this->decodeTamanosPersonalizados($request->tamanos_personalizados ?? $request->tamanos)),
-                'tamanos_personalizados' => $this->decodeTamanosPersonalizados($request->tamanos_personalizados ?? $request->tamanos),
+                    : !empty($tamanosNormalizados),
+                'tamanos_personalizados' => $tamanosNormalizados,
                 'stock_minimo' => $request->stock_minimo ?? 5,
                 'minutos_produccion' => $request->minutos_produccion ?? 0,
                 'activo' => $request->has('activo') ? $request->activo : true
@@ -425,6 +428,15 @@ class ProductoController extends Controller
             // Sincronizar componentes (ingredientes, insumos preparados, productos)
             if ($request->has('ingredientes')) {
                 $this->sincronizarComponentes($producto, $request->ingredientes);
+            }
+
+            // Receta por tamaño definida al crear (cada tamaño trae sus ingredientes)
+            $componentesTamanos = $this->componentesDeTamanos(
+                $producto,
+                $request->input('tamanos') ?? $request->input('tamanos_personalizados')
+            );
+            if (!empty($componentesTamanos)) {
+                $this->sincronizarComponentes($producto, $componentesTamanos);
             }
 
             DB::commit();
@@ -572,7 +584,8 @@ class ProductoController extends Controller
 
             if ($request->has('tamanos_personalizados') || $request->has('tamanos')) {
                 $rawTamanos = $request->tamanos_personalizados ?? $request->tamanos;
-                $data['tamanos_personalizados'] = $this->decodeTamanosPersonalizados($rawTamanos);
+                // Se conservan las keys/slots previos para no perder las recetas por tamaño
+                $data['tamanos_personalizados'] = $this->normalizarTamanos($rawTamanos, $producto->tamanos_personalizados);
             }
 
             // ---------------------------------------------------------------
@@ -1963,15 +1976,18 @@ class ProductoController extends Controller
                 $cantKey = "cantidad_{$key}";
                 $valor = $cantidadesPorTamano[$key] ?? $item[$cantKey] ?? null;
 
-                if ($valor !== null) {
-                    // Si es un key legacy, escribir en columna dedicada
-                    if (in_array($key, ['pequeno', 'mediano', 'grande'])) {
-                        $base["cantidad_{$key}"] = (float) $valor;
-                    }
-                    // Si es el primer tamaño (pequeno), también actualizar cantidad base
-                    if ($key === 'pequeno') {
-                        $base['cantidad'] = (float) $valor;
-                    }
+                if ($valor === null) continue;
+
+                // El alias del tamaño (key o nombre) se resuelve a su slot legacy
+                // (pequeno/mediano/grande) por posición.
+                $slot = $this->slotDeTamanoProducto($producto, $key);
+
+                if ($slot) {
+                    $base["cantidad_{$slot}"] = (float) $valor;
+                }
+                // El primer tamaño (pequeno) también alimenta la cantidad base.
+                if ($slot === null || $slot === 'pequeno') {
+                    $base['cantidad'] = (float) $valor;
                 }
             }
 
@@ -1983,7 +1999,15 @@ class ProductoController extends Controller
 
         // Sincronizar cada tipo
         $producto->ingredientes()->sync($porTipo['ingrediente']);
-        $producto->insumosPreparados()->sync($porTipo['insumo_preparado']);
+
+        // NOTA (mismo motivo que en IngredienteController): la relación
+        // insumosPreparados() filtra con whereRaw('1 = 0'), pero ese where NO se
+        // aplica al newPivotQuery() que usa sync() para detachar, así que sync([])
+        // borraría TODAS las filas del pivot compartido (incluidos los ingredientes
+        // recién sincronizados). Solo sincronizar cuando hay insumos preparados.
+        if (!empty($porTipo['insumo_preparado'])) {
+            $producto->insumosPreparados()->sync($porTipo['insumo_preparado']);
+        }
 
         $producto->recalcularStockDesdeIngredientes();
 
@@ -2000,11 +2024,166 @@ class ProductoController extends Controller
      */
     private function getTamanosKeys($producto): array
     {
+        $slotsLegacy = ['pequeno', 'mediano', 'grande'];
         $tams = $producto->tamanos_personalizados;
         if (!is_array($tams) || empty($tams)) {
-            return ['pequeno', 'mediano', 'grande'];
+            return $slotsLegacy;
         }
-        return array_values(array_unique(array_filter(array_map(fn($t) => $t['key'] ?? null, $tams))));
+
+        $keys = [];
+        foreach (array_values($tams) as $i => $t) {
+            if (!is_array($t)) continue;
+            // Los tamaños creados desde el modal no guardan `key`: el nombre hace
+            // de identidad (igual que getTamanosDisponibles).
+            $keys[] = $t['key'] ?? $t['nombre'] ?? $slotsLegacy[$i] ?? null;
+        }
+        $keys = array_values(array_unique(array_filter($keys)));
+
+        return empty($keys) ? $slotsLegacy : $keys;
+    }
+
+    /**
+     * Mapa alias del tamaño (key o nombre) → slot legacy (pequeno/mediano/grande).
+     */
+    private function mapaTamanosSlots($producto): array
+    {
+        $slotsLegacy = ['pequeno', 'mediano', 'grande'];
+        $mapa = [];
+
+        foreach (collect($producto->tamanos_personalizados ?? [])->filter()->values() as $i => $td) {
+            if (!is_array($td)) continue;
+
+            $slot = $td['slot'] ?? $slotsLegacy[$i] ?? null;
+            if (!$slot) continue;
+
+            foreach ([$td['key'] ?? null, $td['nombre'] ?? null] as $alias) {
+                if (is_string($alias) && trim($alias) !== '') {
+                    $mapa[trim($alias)] = $slot;
+                }
+            }
+        }
+
+        return $mapa;
+    }
+
+    /**
+     * Resuelve un alias de tamaño (key, nombre o slot legacy) a su slot legacy.
+     */
+    private function slotDeTamanoProducto($producto, $tamano): ?string
+    {
+        $slotsLegacy = ['pequeno', 'mediano', 'grande'];
+        $tamano = is_string($tamano) ? trim($tamano) : '';
+
+        if ($tamano !== '' && in_array($tamano, $slotsLegacy, true)) {
+            return $tamano;
+        }
+
+        $slot = $this->mapaTamanosSlots($producto)[$tamano] ?? null;
+
+        return in_array($slot, $slotsLegacy, true) ? $slot : null;
+    }
+
+    /**
+     * Garantiza que cada tamaño tenga `key` y `slot`.
+     * - `key`: identidad del tamaño. recalcularStockDesdeIngredientes() descarta los
+     *   tamaños sin `key` (y con eso se perdían los tamaños recién creados), y la
+     *   receta por tamaño se guarda con este identificador.
+     * - `slot`: variante legacy (pequeno/mediano/grande) que usan las columnas del pivot.
+     * Se conserva la key/slot previos (por posición) para que renombrar un tamaño no
+     * pierda su receta. La receta enviada dentro de cada tamaño no se guarda aquí:
+     * vive en el pivot `ingredientes_de_productos`.
+     */
+    private function normalizarTamanos($valor, ?array $previos = null): ?array
+    {
+        $tamanos = $this->decodeTamanosPersonalizados($valor);
+        if ($tamanos === null) return null;
+
+        $previos = is_array($previos) ? array_values($previos) : [];
+        $slotsLegacy = ['pequeno', 'mediano', 'grande'];
+        $usados = [];
+        $normalizados = [];
+
+        foreach (array_values($tamanos) as $i => $t) {
+            if (!is_array($t)) continue;
+
+            $previo = is_array($previos[$i] ?? null) ? $previos[$i] : [];
+            $nombre = trim((string) ($t['nombre'] ?? ($previo['nombre'] ?? ''))) ?: 'Tamaño ' . ($i + 1);
+
+            $key = trim((string) ($t['key'] ?? ($previo['key'] ?? ''))) ?: $nombre;
+            $base = $key;
+            $n = 2;
+            while (isset($usados[$key])) {
+                $key = $base . ' ' . $n++;
+            }
+            $usados[$key] = true;
+
+            $slot = $t['slot'] ?? ($previo['slot'] ?? ($slotsLegacy[$i] ?? null));
+
+            unset($t['ingredientes']);
+            $t['nombre'] = $nombre;
+            $t['key']    = $key;
+            if ($slot) {
+                $t['slot'] = $slot;
+            }
+
+            $normalizados[] = $t;
+        }
+
+        return $normalizados;
+    }
+
+    /**
+     * Convierte los tamaños enviados por el frontend (cada uno con sus ingredientes)
+     * en componentes con `cantidades_por_tamano`, listos para sincronizar al crear
+     * el producto. Así la receta por tamaño se guarda desde la creación.
+     */
+    private function componentesDeTamanos($producto, $tamanos): array
+    {
+        if (!is_array($tamanos) || empty($tamanos)) return [];
+
+        $slotsLegacy = ['pequeno', 'mediano', 'grande'];
+        $componentes = [];
+
+        foreach (array_values($tamanos) as $idx => $tam) {
+            if (!is_array($tam)) continue;
+
+            $alias = $tam['key'] ?? $tam['nombre'] ?? null;
+            $slot = $slotsLegacy[$idx] ?? null; // slot legacy por posición
+
+            foreach (($tam['ingredientes'] ?? []) as $ing) {
+                if (!is_array($ing)) continue;
+
+                $id = $ing['id'] ?? $ing['ingrediente_id'] ?? null;
+                if (!$id) continue;
+
+                $cantidad = (float) ($ing['cantidad'] ?? 0);
+                if ($cantidad <= 0) continue; // 0 = ese tamaño no lleva el ingrediente
+
+                $tipo = $ing['componente_type'] ?? 'ingrediente';
+
+                if (!isset($componentes[$tipo][$id])) {
+                    $componentes[$tipo][$id] = [
+                        'id' => $id,
+                        'componente_type' => $tipo,
+                        'cantidad' => 0,
+                        'cantidades_por_tamano' => [],
+                    ];
+                }
+
+                if ($slot) {
+                    $componentes[$tipo][$id]['cantidades_por_tamano'][$slot] = $cantidad;
+                }
+                if (is_string($alias) && trim($alias) !== '') {
+                    $componentes[$tipo][$id]['cantidades_por_tamano'][trim($alias)] = $cantidad;
+                }
+            }
+        }
+
+        foreach ($componentes as $tipo => $filas) {
+            $componentes[$tipo] = array_values($filas);
+        }
+
+        return array_merge($componentes['ingrediente'] ?? [], $componentes['insumo_preparado'] ?? []);
     }
 
     /**
@@ -2041,6 +2220,47 @@ class ProductoController extends Controller
             ]];
         }
         return [];
+    }
+
+    /**
+     * Calcula costo y margen por tamaño usando las cantidades del pivot por slot.
+     */
+    private function tamanosConCosto($producto, $totalNomina): array
+    {
+        $tams = collect($producto->tamanos_personalizados ?? [])->filter()->values();
+        if ($tams->isEmpty()) return [];
+
+        $slotsLegacy = ['pequeno', 'mediano', 'grande'];
+        $componentes = collect()
+            ->merge($producto->ingredientes ?? [])
+            ->merge($producto->insumosPreparados ?? []);
+
+        $minProd = (float) ($producto->minutos_produccion ?? 0);
+        $costoMO = ($totalNomina > 0 && $minProd > 0) ? ($totalNomina / 14400) * 1.36 * $minProd : 0;
+
+        return $tams->map(function ($t, $i) use ($slotsLegacy, $componentes, $costoMO, $producto) {
+            $slot = $t['slot'] ?? $slotsLegacy[$i] ?? null;
+
+            $costoInsumos = $componentes->sum(function ($c) use ($slot) {
+                $cant = $slot ? ($c->pivot->{"cantidad_$slot"} ?? $c->pivot->cantidad ?? 0) : ($c->pivot->cantidad ?? 0);
+                return (float) ($c->costo_unitario ?? 0) * (float) $cant;
+            });
+
+            $costo  = ($costoInsumos + $costoMO) * 1.05;
+            $precio = (float) ($t['precio'] ?? 0);
+            $margen = $precio > 0 ? round((($precio - $costo) / $precio) * 100, 2) : 0;
+
+            return [
+                'id'                => $t['key'] ?? $t['nombre'] ?? $i,
+                'key'               => $t['key'] ?? $t['nombre'] ?? null,
+                'nombre'            => $t['nombre'] ?? ('Tamaño ' . ($i + 1)),
+                'precio'            => $precio,
+                'stock'             => (int) ($t['stock'] ?? $producto->stock ?? 0),
+                'costo_total'       => round($costo, 4),
+                'margen_porcentaje' => $margen,
+                'slot'              => $slot,
+            ];
+        })->values()->toArray();
     }
 
     /**
@@ -2113,7 +2333,7 @@ class ProductoController extends Controller
             'nomina_mensual_base' => (float) $totalNominaMensual,
 
             'tiene_tamanos' => (bool) $producto->tiene_tamanos,
-            'tamanos' => $producto->tamanos_personalizados ?? [],
+            'tamanos' => $this->tamanosConCosto($producto, $totalNominaMensual),
             'tamanos_personalizados' => $producto->tamanos_personalizados ?? [],
             'stock' => (int) ($producto->stock ?? 0),
             'stock_pequeno' => $producto->stock_pequeno,

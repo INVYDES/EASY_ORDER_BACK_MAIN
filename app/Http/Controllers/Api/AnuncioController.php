@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Anuncio;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class AnuncioController extends Controller
 {
@@ -74,6 +75,7 @@ class AnuncioController extends Controller
             'precio_promo'     => 'nullable|numeric|min:0',
             'emoji'            => 'nullable|string|max:10',
             'color'            => 'nullable|in:indigo,emerald,amber,rose,blue,purple',
+            'imagen'           => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
             'mostrar_cliente'  => 'boolean',
             'mostrar_interno'  => 'boolean',
             'fecha_inicio'     => 'nullable|date',
@@ -92,6 +94,11 @@ class AnuncioController extends Controller
                 throw new \Exception("No hay restaurante activo configurado");
             }
 
+            $imagenPath = null;
+            if ($request->hasFile('imagen')) {
+                $imagenPath = $request->file('imagen')->store('anuncios', config('filesystems.images_disk'));
+            }
+
             $anuncio = Anuncio::create([
                 'restaurante_id'  => $restaurante->id,
                 'titulo'          => $request->titulo,
@@ -102,6 +109,7 @@ class AnuncioController extends Controller
                 'precio_promo'    => $request->precio_promo,
                 'emoji'           => $request->emoji ?? $this->emojiPorTipo($request->tipo),
                 'color'           => $request->color  ?? $this->colorPorTipo($request->tipo),
+                'imagen'          => $imagenPath,
                 'activo'          => true,
                 'mostrar_cliente' => $request->boolean('mostrar_cliente', true),
                 'mostrar_interno' => $request->boolean('mostrar_interno', false),
@@ -118,12 +126,27 @@ class AnuncioController extends Controller
 
     public function update(Request $request, $id)
     {
+        foreach (['producto_id', 'paquete_id', 'precio_promo', 'fecha_inicio', 'fecha_fin'] as $field) {
+            if ($request->has($field) && ($request->input($field) === '' || $request->input($field) === 'null')) {
+                $request->merge([$field => null]);
+            }
+        }
+
+        if ($request->has('dias_semana')) {
+            $request->merge(['dias_semana' => array_values(array_filter((array) $request->dias_semana, fn($d) => $d !== '' && $d !== null))]);
+        }
+
         $request->validate([
             'titulo'          => 'sometimes|string|max:150',
             'contenido'       => 'nullable|string|max:500',
             'tipo'            => 'sometimes|in:info,promo,alerta,producto',
+            'producto_id'     => 'nullable|exists:productos,id',
+            'paquete_id'      => 'nullable|exists:paquetes,id',
+            'precio_promo'    => 'nullable|numeric|min:0',
             'emoji'           => 'nullable|string|max:10',
             'color'           => 'nullable|in:indigo,emerald,amber,rose,blue,purple',
+            'imagen'          => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
+            'eliminar_imagen' => 'nullable|boolean',
             'activo'          => 'sometimes|boolean',
             'mostrar_cliente' => 'sometimes|boolean',
             'mostrar_interno' => 'sometimes|boolean',
@@ -143,12 +166,29 @@ class AnuncioController extends Controller
                 throw new \Exception("No hay restaurante activo configurado");
             }
 
-            $anuncio = Anuncio::where('restaurante_id',$restaurante->id)->findOrFail($id);
-            $anuncio->update($request->only([
+            $anuncio = Anuncio::where('restaurante_id', $restaurante->id)->findOrFail($id);
+
+            $data = $request->only([
                 'titulo','contenido','tipo','producto_id','paquete_id','precio_promo',
                 'emoji','color','activo','mostrar_cliente','mostrar_interno',
                 'fecha_inicio','fecha_fin','dias_semana','orden',
-            ]));
+            ]);
+
+            $disk = config('filesystems.images_disk');
+            $esUrl = fn($v) => filter_var($v, FILTER_VALIDATE_URL);
+
+            if ($request->boolean('eliminar_imagen') && $anuncio->imagen) {
+                if (!$esUrl($anuncio->imagen)) Storage::disk($disk)->delete($anuncio->imagen);
+                $data['imagen'] = null;
+            }
+            if ($request->hasFile('imagen')) {
+                if ($anuncio->imagen && !$esUrl($anuncio->imagen)) Storage::disk($disk)->delete($anuncio->imagen);
+                $data['imagen'] = $request->file('imagen')->store('anuncios', $disk);
+            }
+
+            $anuncio->update($data);
+            $anuncio->load(['producto:id,nombre,precio,precio_mediano,precio_grande,imagen', 'paquete:id,nombre,precio,imagen']);
+
             return response()->json(['success'=>true,'message'=>'Actualizado','data'=>$this->transform($anuncio)]);
         } catch (\Exception $e) {
             return response()->json(['success'=>false,'message'=>'Error','error'=>$e->getMessage()],500);
@@ -183,6 +223,8 @@ class AnuncioController extends Controller
             'tipo'            => $a->tipo,
             'emoji'           => $a->emoji,
             'color'           => $a->color,
+            'imagen'          => $a->imagen,
+            'imagen_url'      => $a->imagen_url,
             'activo'          => $a->activo,
             'mostrar_cliente' => $a->mostrar_cliente,
             'mostrar_interno' => $a->mostrar_interno,
@@ -192,19 +234,21 @@ class AnuncioController extends Controller
             'orden'           => $a->orden,
             'producto_id'     => $a->producto_id,
             'paquete_id'      => $a->paquete_id,
-            'producto'        => $a->producto ? [
+            'producto' => $a->producto ? [
                 'id'             => $a->producto->id,
                 'nombre'         => $a->producto->nombre,
                 'precio'         => (float) $a->producto->precio,
                 'precio_mediano' => (float) ($a->producto->precio_mediano ?? $a->producto->precio),
                 'precio_grande'  => (float) ($a->producto->precio_grande ?? $a->producto->precio),
                 'imagen'         => $a->producto->imagen,
+                'imagen_url'     => $a->producto->imagen_url,
             ] : null,
-            'paquete'         => $a->paquete ? [
-                'id'       => $a->paquete->id,
-                'nombre'   => $a->paquete->nombre,
-                'precio'   => (float) $a->paquete->precio,
-                'imagen'   => $a->paquete->imagen,
+            'paquete' => $a->paquete ? [
+                'id'         => $a->paquete->id,
+                'nombre'     => $a->paquete->nombre,
+                'precio'     => (float) $a->paquete->precio,
+                'imagen'     => $a->paquete->imagen,
+                'imagen_url' => $a->paquete->imagen_url ?? $a->paquete->imagen,
             ] : null,
             'precio_promo'    => $a->precio_promo,
             'vigente'         => $a->es_vigente,

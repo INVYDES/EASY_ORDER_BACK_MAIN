@@ -14,7 +14,7 @@ class Anuncio extends Model
 
     protected $fillable = [
         'restaurante_id', 'titulo', 'contenido', 'tipo', 'producto_id', 'paquete_id',
-        'precio_promo', 'emoji', 'color', 'activo',
+        'precio_promo', 'emoji', 'color', 'imagen', 'activo',
         'mostrar_cliente', 'mostrar_interno',
         'fecha_inicio', 'fecha_fin', 'dias_semana', 'orden',
     ];
@@ -30,8 +30,19 @@ class Anuncio extends Model
         'orden'           => 'integer',
     ];
 
-    // Para que Vue reciba automáticamente si está vigente
-    protected $appends = ['es_vigente'];
+    // Para que Vue reciba automáticamente si está vigente y su imagen
+    protected $appends = ['es_vigente', 'imagen_url'];
+
+    public function getImagenUrlAttribute()
+    {
+        if ($this->imagen) {
+            if (filter_var($this->imagen, FILTER_VALIDATE_URL)) {
+                return $this->imagen;
+            }
+            return \Illuminate\Support\Facades\Storage::disk(config('filesystems.images_disk'))->url($this->imagen);
+        }
+        return null;
+    }
 
     public function getEsVigenteAttribute()
     {

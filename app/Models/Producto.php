@@ -93,8 +93,11 @@ class Producto extends Model
      */
     public function ingredientes()
     {
+        // Las columnas por tamaño deben venir en el pivot: deProducto() y el
+        // semáforo de stock por tamaño las leen (antes solo llegaban `cantidad`
+        // y `tamano_id`, así que la receta por tamaño se veía como la base).
         return $this->belongsToMany(Ingrediente::class, 'ingredientes_de_productos', 'producto_id', 'ingrediente_id')
-                    ->withPivot('cantidad', 'tamano_id')
+                    ->withPivot('cantidad', 'tamano_id', 'componente_type', 'cantidad_pequeno', 'cantidad_mediano', 'cantidad_grande', 'cantidades_por_tamano')
                     ->withTimestamps();
     }
 
@@ -404,7 +407,8 @@ class Producto extends Model
             $stockTotal = 0;
 
             foreach ((array) $this->tamanos_personalizados as $t) {
-                $key = $t['key'] ?? '';
+                // Los tamaños sin `key` no deben descartarse (antes se perdían al recalcular).
+                $key = $t['key'] ?? $t['nombre'] ?? '';
                 if (!$key) continue;
 
                 $minimo = $todos->map(fn($c) => $this->calcularUnidadesPorTamano($c, $key, $getStock))->min();

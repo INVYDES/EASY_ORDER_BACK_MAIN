@@ -370,7 +370,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::prefix('admin/anuncios')->group(function () {
         Route::get('/',        [AnuncioController::class, 'index'])->middleware('permission:VER_RESTAURANTE');
         Route::post('/',       [AnuncioController::class, 'store'])->middleware('permission:EDITAR_RESTAURANTE');
-        Route::put('/{id}',    [AnuncioController::class, 'update'])->middleware('permission:EDITAR_RESTAURANTE');
+        Route::match(['put', 'post'], '/{id}', [AnuncioController::class, 'update'])->middleware('permission:EDITAR_RESTAURANTE');
         Route::delete('/{id}', [AnuncioController::class, 'destroy'])->middleware('permission:EDITAR_RESTAURANTE');
         Route::patch('/{id}/toggle', [AnuncioController::class, 'toggleActivo'])->middleware('permission:EDITAR_RESTAURANTE');
 Route::post('/reordenar', [AnuncioController::class, 'reordenar'])->middleware('permission:EDITAR_RESTAURANTE');

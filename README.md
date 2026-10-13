@@ -28,7 +28,7 @@ licencias, suscripciones, contactos y notificaciones (correo + WhatsApp + chatbo
 │ Artifact Registry│            ▼               ▼
 │ cloud-run-source-│    ┌──────────────┐  ┌─────────────────────┐
 │ deploy (Docker)  │    │ MySQL (Railway)│ │ Cloudflare R2 (S3) │
-└──────────────────┘    │ railway / 12823│  │ bucket eorder-ing  │
+└──────────────────┘    │ railway / 52033│  │ bucket eorder-ing  │
                         └──────────────┘  └─────────────────────┘
                                   │
                                   │ secretKeyRef
@@ -56,7 +56,7 @@ Programado (notificaciones de suscripción por vencer):
 | Artifact Registry | `cloud-run-source-deploy` | Imágenes Docker (`easy-order-back:latest`) |
 | Secret Manager | secretos `eorder-*` | Credenciales sensibles del runtime |
 | Cloudflare Workers | `eorder` | SPA Vue + assets en `eorder.mx` |
-| MySQL | Railway (`turntable.proxy.rlwy.net:12823`) | Base de datos principal (`railway`) + DB de contactos (`eorder_contactos`) |
+| MySQL | Railway (`sakura.proxy.rlwy.net:52033`) | Base de datos principal (`railway`) + DB de contactos (`eorder_contactos`) |
 | Cloudflare R2 | `eorder-ing` | Almacenamiento de imágenes (S3-compatible) |
 
 ### Secretos en Secret Manager

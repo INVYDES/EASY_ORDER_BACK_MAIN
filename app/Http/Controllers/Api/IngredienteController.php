@@ -653,6 +653,49 @@ class IngredienteController extends Controller
     /**
      * Asignar componentes (ingredientes, insumos preparados o productos) a un producto
      */
+    /**
+     * Mapa alias del tamaño (key o nombre) → slot legacy (pequeno/mediano/grande).
+     * Los tamaños creados desde el modal no guardan `key`, así que el nombre hace
+     * de identidad (igual que getTamanosDisponibles en ProductoController).
+     */
+    private function mapaTamanosSlots($producto): array
+    {
+        $slotsLegacy = ['pequeno', 'mediano', 'grande'];
+        $mapa = [];
+
+        foreach (collect($producto->tamanos_personalizados ?? [])->filter()->values() as $i => $td) {
+            if (!is_array($td)) continue;
+
+            $slot = $td['slot'] ?? $slotsLegacy[$i] ?? null;
+            if (!$slot) continue;
+
+            foreach ([$td['key'] ?? null, $td['nombre'] ?? null] as $alias) {
+                if (is_string($alias) && trim($alias) !== '') {
+                    $mapa[trim($alias)] = $slot;
+                }
+            }
+        }
+
+        return $mapa;
+    }
+
+    /**
+     * Resuelve el tamaño recibido del frontend (nombre, key o slot legacy) a un slot legacy.
+     */
+    private function slotDeTamano($producto, $tamano): ?string
+    {
+        $slotsLegacy = ['pequeno', 'mediano', 'grande'];
+        $tamano = is_string($tamano) ? trim($tamano) : '';
+
+        if ($tamano !== '' && in_array($tamano, $slotsLegacy, true)) {
+            return $tamano;
+        }
+
+        $slot = $this->mapaTamanosSlots($producto)[$tamano] ?? null;
+
+        return in_array($slot, $slotsLegacy, true) ? $slot : null;
+    }
+
     public function syncProducto(Request $request, $productoId)
     {
         $request->validate([
@@ -697,31 +740,62 @@ class IngredienteController extends Controller
                 'insumo_preparado' => [],
             ];
 
-            $tamanosData = collect($producto->tamanos_personalizados ?? [])->filter()->values();
-            $keysTamanos = $tamanosData->pluck('key')->toArray();
-            $keyToSlot = [];
-            foreach ($tamanosData as $i => $td) {
-                $slotsLegacy = ['pequeno', 'mediano', 'grande'];
-                $keyToSlot[$td['key']] = $td['slot'] ?? $slotsLegacy[$i] ?? null;
-            }
+            $slotsLegacy = ['pequeno', 'mediano', 'grande'];
+            $mapaTamanos = $this->mapaTamanosSlots($producto);
 
-            if (empty($keysTamanos)) {
-                $keysTamanos = ['pequeno', 'mediano', 'grande'];
-            }
-
-            $slotsUsados = [];
-            foreach ($keysTamanos as $k) {
-                $s = $keyToSlot[$k] ?? $k;
-                if (in_array($s, ['pequeno', 'mediano', 'grande'])) {
-                    $slotsUsados[] = $s;
+            if (empty($mapaTamanos)) {
+                $slotsUsados = $slotsLegacy;
+            } else {
+                $slotsUsados = array_values(array_unique(array_filter(
+                    array_map(fn ($slot) => in_array($slot, $slotsLegacy, true) ? $slot : null, array_values($mapaTamanos))
+                )));
+                if (empty($slotsUsados)) {
+                    $slotsUsados = $slotsLegacy;
                 }
             }
-            $slotsUsados = array_unique($slotsUsados);
 
-            foreach ($request->ingredientes as $item) {
+            // El frontend manda la receta de TODOS los tamaños en `tamanos[]` (cada
+            // uno con sus ingredientes). Esa es la fuente de verdad: el listado plano
+            // `ingredientes` solo trae el tamaño activo y usarlo solo borraría las
+            // cantidades de los demás tamaños.
+            $entradas = [];
+            $tamanosPayload = $request->input('tamanos');
+            if (is_array($tamanosPayload) && !empty($tamanosPayload)) {
+                foreach (array_values($tamanosPayload) as $idx => $tam) {
+                    if (!is_array($tam)) continue;
+                    $alias = $tam['key'] ?? $tam['nombre'] ?? null;
+                    // Si el alias no se puede resolver (producto sin tamaños guardados,
+                    // p. ej. creados antes de guardar `key`), se usa el slot por posición.
+                    $slot = $this->slotDeTamano($producto, $alias) ?? ($slotsLegacy[$idx] ?? null);
+
+                    foreach (($tam['ingredientes'] ?? []) as $ing) {
+                        if (!is_array($ing)) continue;
+                        $entradas[] = [
+                            'id' => $ing['id'] ?? $ing['ingrediente_id'] ?? null,
+                            'cantidad' => $ing['cantidad'] ?? 0,
+                            'tamano' => $slot,
+                            'componente_type' => $ing['componente_type'] ?? 'ingrediente',
+                        ];
+                    }
+                }
+            }
+
+            if (empty($entradas)) {
+                foreach ($request->ingredientes as $item) {
+                    $entradas[] = [
+                        'id' => $item['id'] ?? $item['ingrediente_id'] ?? null,
+                        'cantidad' => $item['cantidad'] ?? 0,
+                        'tamano' => $this->slotDeTamano($producto, $item['tamano'] ?? null),
+                        'componente_type' => $item['componente_type'] ?? 'ingrediente',
+                    ];
+                }
+            }
+
+            foreach ($entradas as $item) {
+                if (empty($item['id'])) continue;
                 $id = $item['id'];
-                $cantidad = $item['cantidad'];
-                $tamano = $item['tamano'] ?? 'pequeno';
+                $cantidad = (float) $item['cantidad'];
+                $tamano = in_array($item['tamano'], $slotsLegacy, true) ? $item['tamano'] : 'pequeno';
                 $tipo = $item['componente_type'] ?? 'ingrediente';
 
                 if (!isset($porTipo[$tipo][$id])) {
@@ -800,7 +874,9 @@ class IngredienteController extends Controller
             $tipoReal = fn($item) => $item instanceof \App\Models\InsumoPreparado ? 'insumo_preparado' : 'ingrediente';
 
             if ($tamano) {
-                $columna = in_array($tamano, ['pequeno', 'mediano', 'grande']) ? "cantidad_{$tamano}" : null;
+                // El frontend puede mandar el slot legacy o el nombre del tamaño.
+                $slotFiltro = $this->slotDeTamano($producto, $tamano) ?? (in_array($tamano, ['pequeno', 'mediano', 'grande'], true) ? $tamano : null);
+                $columna = $slotFiltro ? "cantidad_{$slotFiltro}" : null;
                 $componentes = $componentes->map(fn($i) => [
                     ...$this->transformCompuesto($i),
                     'componente_type' => $tipoReal($i),
@@ -811,35 +887,39 @@ class IngredienteController extends Controller
                 ]);
             } else {
                 $tamanosData = collect($producto->tamanos_personalizados ?? [])->filter()->values();
-                $tamanosKeys = $tamanosData->pluck('key')->toArray();
+                $slotsLegacyDeProducto = ['pequeno', 'mediano', 'grande'];
+                $tamanosKeys = [];
+                foreach ($tamanosData as $i => $td) {
+                    if (!is_array($td)) continue;
+                    $tamanosKeys[] = $td['key'] ?? $td['nombre'] ?? $slotsLegacyDeProducto[$i] ?? null;
+                }
+                $tamanosKeys = array_values(array_unique(array_filter($tamanosKeys)));
 
                 if (empty($tamanosKeys)) {
-                    $tamanosKeys = ['pequeno', 'mediano', 'grande'];
+                    $tamanosKeys = $slotsLegacyDeProducto;
                 }
 
-                $keyToSlot = [];
-                foreach ($tamanosData as $td) {
-                    $keyToSlot[$td['key']] = $td['slot'] ?? null;
-                }
+                $keyToSlot = $this->mapaTamanosSlots($producto);
 
                 $componentes = $componentes->flatMap(function($i) use ($tipoReal, $producto, $tamanosKeys, $keyToSlot) {
                     $items = [];
                     $tams = is_array($producto->tamanos_personalizados) ? $producto->tamanos_personalizados : [];
                     foreach ($tamanosKeys as $idx => $t) {
-                        $slotsLegacy = ['pequeno', 'mediano', 'grande'];
-                        $slot = $keyToSlot[$t] ?? $slotsLegacy[$idx] ?? 'pequeno';
+                        $slot = $keyToSlot[$t] ?? null;
                         $col = in_array($slot, ['pequeno', 'mediano', 'grande']) ? "cantidad_{$slot}" : null;
                         $cant = $col
                             ? (float) ($i->pivot->$col ?: ($slot === 'pequeno' ? $i->pivot->cantidad : 0))
                             : (float) ($i->pivot->cantidad ?? 0);
                         if ($cant > 0) {
-                            $tamanoInfo = collect($tams)->firstWhere('key', $t);
+                            // Los tamaños creados desde el modal no guardan `key`:
+                            // en ese caso el identificador es el nombre.
+                            $tamanoInfo = collect($tams)->first(fn ($td) => is_array($td) && (($td['key'] ?? null) === $t || ($td['nombre'] ?? null) === $t));
                             $items[] = [
                                 ...$this->transformCompuesto($i),
                                 'componente_type' => $tipoReal($i),
                                 'cantidad_receta' => $cant,
                                 'tamano' => $t,
-                                'tamano_nombre' => $tamanoInfo['nombre'] ?? null,
+                                'tamano_nombre' => $tamanoInfo['nombre'] ?? $t,
                             ];
                         }
                     }

@@ -282,7 +282,8 @@ class OrdenController extends Controller
             'mesa'                    => 'required_if:tipo_orden,local|nullable|integer|min:1',
             'metodo_pago'             => 'nullable|string|max:50',
             'propina'                 => 'nullable|numeric|min:0',
-            'tipo_orden'              => 'nullable|in:local,pickup,delivery',
+            // 'kiosko' = autoservicio: no entra al flujo de mesero (ver servicio_rapido).
+            'tipo_orden'              => 'nullable|in:local,pickup,delivery,kiosko',
             'direccion_entrega'       => 'required_if:tipo_orden,delivery|nullable|string|max:500',
             'telefono_contacto'       => 'required_if:tipo_orden,delivery|nullable|string|max:20',
             'costo_envio'             => 'nullable|numeric|min:0',
@@ -757,8 +758,11 @@ class OrdenController extends Controller
                 'pagos.*.propina'    => 'nullable|numeric|min:0',
                 'pagos.*.comensal'   => 'nullable|string|max:100',
                 'pagos.*.referencia' => 'nullable|string|max:100',
-                'pagos.*.detalles'   => 'nullable|array',
-                'comision_pct'       => 'nullable|numeric|min:0|max:100',
+                'pagos.*.detalles'         => 'nullable|array',
+                'pagos.*.items'            => 'nullable|array',
+                'pagos.*.items.*.id'       => 'required_with:pagos.*.items|integer',
+                'pagos.*.items.*.cantidad' => 'required_with:pagos.*.items|numeric|min:0.1',
+                'comision_pct'             => 'nullable|numeric|min:0|max:100',
                 'comision_monto'     => 'nullable|numeric|min:0',
                 'neto_depositar'     => 'nullable|numeric|min:0',
             ]);
@@ -815,7 +819,35 @@ class OrdenController extends Controller
                                 'created_at'        => $orden->created_at,
                             ]);
 
-                            if (!empty($p['detalles'])) {
+                            if (!empty($p['items'])) {
+                                foreach ($p['items'] as $it) {
+                                    $det = \App\Models\OrdenDetalle::where('orden_id', $orden->id)->find($it['id']);
+                                    if (!$det) continue;
+
+                                    $cant     = (float) $it['cantidad'];
+                                    $cantOrig = (float) $det->cantidad;
+
+                                    if ($cant >= $cantOrig) {
+                                        // Se lleva el renglón completo
+                                        $det->update(['orden_id' => $nuevaOrden->id]);
+                                    } else {
+                                        // Se divide el renglón: queda el resto en la original y se crea uno nuevo
+                                        $unit     = (float) $det->subtotal / $cantOrig;
+                                        $restante = $cantOrig - $cant;
+
+                                        $nuevo = $det->replicate();
+                                        $nuevo->orden_id = $nuevaOrden->id;
+                                        $nuevo->cantidad = $cant;
+                                        $nuevo->subtotal = round($unit * $cant, 2);
+                                        $nuevo->save();
+
+                                        $det->update([
+                                            'cantidad' => $restante,
+                                            'subtotal' => round($unit * $restante, 2),
+                                        ]);
+                                    }
+                                }
+                            } elseif (!empty($p['detalles'])) {
                                 \App\Models\OrdenDetalle::whereIn('id', $p['detalles'])
                                     ->update(['orden_id' => $nuevaOrden->id]);
                             }

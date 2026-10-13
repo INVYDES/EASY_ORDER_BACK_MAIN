@@ -604,6 +604,14 @@ class OrdenDetalleController extends Controller
         }
     }
 
+    private function estacionDeCategoria(?string $nombre): string
+    {
+        $nom = strtolower($nombre ?? '');
+        if (str_contains($nom, 'barra') || str_contains($nom, 'bebida')) return 'barra';
+        if (str_contains($nom, 'postre') || str_contains($nom, 'reposteria') || str_contains($nom, 'pastel')) return 'postres';
+        return 'cocina';
+    }
+
    public function actualizarEstadoPorEstacion(UpdateEstadoEstacionRequest $request, $ordenId)
     {
 
@@ -620,11 +628,8 @@ class OrdenDetalleController extends Controller
 
             DB::beginTransaction();
 
-            $query = OrdenDetalle::with(['producto.ingredientes'])
-                ->where('orden_id', $orden->id)
-                ->whereHas('producto.categoria', function ($q) use ($estacion) {
-                    $q->whereRaw('LOWER(nombre) = ?', [$estacion]);
-                });
+            $query = OrdenDetalle::with(['producto.ingredientes', 'producto.categoria'])
+                ->where('orden_id', $orden->id);
 
             if ($nuevoEstado === 'EN_PREPARACION') {
                 $query->where(function ($q) {
@@ -641,14 +646,17 @@ class OrdenDetalleController extends Controller
                 });
             }
 
-            $detalles = $query->get();
+            $detalles = $query->get()
+                ->filter(fn($d) => $this->estacionDeCategoria($d->producto?->categoria?->nombre) === $estacion)
+                ->values();
 
             if ($detalles->isEmpty()) {
                 DB::rollBack();
                 return response()->json([
-                    'success' => false,
-                    'message' => "No hay productos de la estación: {$estacion}",
-                ], 404);
+                    'success' => true,
+                    'message' => "Sin productos pendientes en la estación: {$estacion}",
+                    'data'    => ['orden_id' => $orden->id, 'estado_orden' => $orden->estado],
+                ]);
             }
 
             // Procesar ingredientes deseleccionados/excluidos para devolverlos al inventario
@@ -732,9 +740,11 @@ class OrdenDetalleController extends Controller
                 \Log::warning('Broadcast error: ' . $be->getMessage());
             }
 
+            $orden->refresh();
             return response()->json([
                 'success' => true,
                 'message' => "Estación {$estacion} actualizada a {$nuevoEstado}",
+                'data'    => ['orden_id' => $orden->id, 'estado_orden' => $orden->estado],
             ]);
 
         } catch (\Exception $e) {
