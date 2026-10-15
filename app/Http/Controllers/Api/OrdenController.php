@@ -1290,18 +1290,18 @@ class OrdenController extends Controller
             'detalles'               => $orden->detalles->map(fn($d) => [
                 'id'                  => $d->id,
                 'producto_id'         => $d->producto_id,
-                'producto_nombre'     => $d->producto->nombre ?? 'Producto eliminado',
+                'producto_nombre'     => $d->producto?->nombre ?? 'Producto eliminado',
                 'producto'            => [
                     'id'           => $d->producto_id,
-                    'nombre'       => $d->producto->nombre ?? 'Producto eliminado',
-                    'categoria_id' => $d->producto->categoria_id ?? null,
-                    'categoria'    => $d->producto->categoria ? [
+                    'nombre'       => $d->producto?->nombre ?? 'Producto eliminado',
+                    'categoria_id' => $d->producto?->categoria_id ?? null,
+                    'categoria'    => $d->producto?->categoria ? [
                         'id'     => $d->producto->categoria->id,
                         'nombre' => $d->producto->categoria->nombre,
                     ] : null,
                 ],
-                'categoria_id'        => $d->producto->categoria_id ?? null,
-                'categoria'           => $d->producto->categoria?->nombre ?? null,
+                'categoria_id'        => $d->producto?->categoria_id ?? null,
+                'categoria'           => $d->producto?->categoria?->nombre ?? null,
                 'cantidad'            => $d->cantidad,
                 'mesa'                => $orden->mesa,
                 'precio_unitario'     => (float) $d->precio_unitario,
@@ -1312,7 +1312,7 @@ class OrdenController extends Controller
                 'comensal'            => $d->nom_comensal ?? null,
                 'comensal_id'         => $d->comensal_id ?? null,
                 'estado_preparacion'  => $d->estado_preparacion ?? 'PENDIENTE',
-                'minutos_produccion'  => (float) ($d->producto->minutos_produccion ?? 0),
+                'minutos_produccion'  => (float) ($d->producto?->minutos_produccion ?? 0),
                 'cancelado'           => $d->trashed(),
                 'motivo_cancelacion'  => $d->motivo_cancelacion,
                 'usuario_cancelo'     => $d->usuarioCancelo ? [

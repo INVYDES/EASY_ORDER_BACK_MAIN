@@ -1105,6 +1105,7 @@ class ProductoController extends Controller
                         'precio'          => (float) $producto->precio,
                         'precio_mediano'  => (float) $producto->precio_mediano,
                         'precio_grande'   => (float) $producto->precio_grande,
+                        'tamanos'        => $this->getTamanosDisponibles($producto),
                         'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                         'imagen_url'      => $producto->imagen_url,
                         'categoria'       => $producto->categoria ? [
@@ -1141,6 +1142,7 @@ class ProductoController extends Controller
                     'precio'          => (float) $producto->precio,
                     'precio_mediano'  => (float) $producto->precio_mediano,
                     'precio_grande'   => (float) $producto->precio_grande,
+                    'tamanos'         => $this->getTamanosDisponibles($producto),
                     'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                     'imagen_url'      => $producto->imagen_url,
                     'categoria'       => $producto->categoria ? [
@@ -1841,6 +1843,7 @@ class ProductoController extends Controller
                             'precio_formateado' => '$' . number_format($producto->precio, 2),
                     'precio_mediano' => (float) $producto->precio_mediano,
                     'precio_grande' => (float) $producto->precio_grande,
+                        'tamanos' => $this->getTamanosDisponibles($producto),
                         'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                         'imagen_url' => $producto->imagen_url,
                         'categoria' => $producto->categoria ? [
@@ -1870,6 +1873,7 @@ class ProductoController extends Controller
                         'precio_formateado' => '$' . number_format($producto->precio, 2),
                     'precio_mediano' => (float) $producto->precio_mediano,
                     'precio_grande' => (float) $producto->precio_grande,
+                    'tamanos' => $this->getTamanosDisponibles($producto),
                     'tamanos_disponibles' => $this->getTamanosDisponibles($producto),
                     'imagen_url' => $producto->imagen_url,
                     'categoria' => $producto->categoria ? [
@@ -2202,6 +2206,7 @@ class ProductoController extends Controller
         if (!empty($producto->tamanos_personalizados) && is_array($producto->tamanos_personalizados)) {
             return collect($producto->tamanos_personalizados)
                 ->map(fn($t) => [
+                    'id'     => $t['id'] ?? $t['key'] ?? $t['nombre'] ?? null,
                     'key'    => $t['key'] ?? $t['nombre'] ?? null,
                     'nombre' => $limpiar($t['nombre'] ?? $t['key'] ?? null),
                     'precio' => (float) ($t['precio'] ?? 0),
@@ -2213,6 +2218,7 @@ class ProductoController extends Controller
         }
         if ((float) ($producto->precio ?? 0) > 0) {
             return [[
+                'id'     => 'unico',
                 'key'    => 'unico',
                 'nombre' => 'Único',
                 'precio' => (float) $producto->precio,

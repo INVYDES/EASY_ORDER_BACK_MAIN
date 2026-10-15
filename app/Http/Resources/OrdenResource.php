@@ -27,16 +27,16 @@ class OrdenResource extends JsonResource
                     'producto_id'   => $d->producto_id,
                     'producto'      => [
                         'id'           => $d->producto_id,
-                        'nombre'       => $d->producto->nombre ?? 'N/A',
-                        'categoria_id' => $d->producto->categoria_id ?? null,
-                        'categoria'    => $d->producto->categoria ? [
+                        'nombre'       => $d->producto?->nombre ?? 'N/A',
+                        'categoria_id' => $d->producto?->categoria_id ?? null,
+                        'categoria'    => $d->producto?->categoria ? [
                             'id'     => $d->producto->categoria->id,
                             'nombre' => $d->producto->categoria->nombre,
                         ] : null,
                     ],
-                    'producto_nombre' => $d->producto->nombre ?? 'N/A',
-                    'categoria_id'  => $d->producto->categoria_id ?? null,
-                    'categoria'     => $d->producto->categoria?->nombre ?? null,
+                    'producto_nombre' => $d->producto?->nombre ?? 'N/A',
+                    'categoria_id'  => $d->producto?->categoria_id ?? null,
+                    'categoria'     => $d->producto?->categoria?->nombre ?? null,
                     'cantidad'      => $d->cantidad,
                     'mesa'          => $this->mesa,
                     'comensal'      => $d->nom_comensal,
@@ -49,7 +49,7 @@ class OrdenResource extends JsonResource
                     'notas'         => $d->notas,
                     'cancelado'     => $d->trashed(),
                     'motivo_cancelacion' => $d->motivo_cancelacion,
-                    'minutos_produccion' => (float) ($d->producto->minutos_produccion ?? 0),
+                    'minutos_produccion' => (float) ($d->producto?->minutos_produccion ?? 0),
                     'tamano'            => $d->tamano,
                     'created_at'    => $d->created_at?->format('Y-m-d H:i:s'),
                 ]);
