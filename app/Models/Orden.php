@@ -238,14 +238,14 @@ class Orden extends Model
         }
 
         $transiciones = [
-            'ABIERTA' => ['POR_PREPARAR', 'CANCELADA'],
-            'POR_PREPARAR' => ['EN_PREPARACION', 'LISTA', 'ENTREGADA', 'CANCELADA'],
+            'ABIERTA'        => ['POR_PREPARAR', 'EN_PREPARACION', 'LISTA', 'ENTREGADA', 'CANCELADA'],
+            'POR_PREPARAR'   => ['EN_PREPARACION', 'LISTA', 'ENTREGADA', 'CANCELADA'],
             'EN_PREPARACION' => ['LISTA', 'ENTREGADA', 'CANCELADA'],
-            'LISTA' => ['ENTREGADA', 'CERRADA'],
-            'ENTREGADA' => ['CERRADA', 'PAGADA'],
-            'CERRADA' => ['PAGADA'],
-            'PAGADA' => [],
-            'CANCELADA' => []
+            'LISTA'          => ['ENTREGADA', 'CERRADA', 'PAGADA'],
+            'ENTREGADA'      => ['CERRADA', 'PAGADA'],
+            'CERRADA'        => ['PAGADA'],
+            'PAGADA'         => [],
+            'CANCELADA'      => []
         ];
 
         return in_array($nuevoEstado, $transiciones[$this->estado] ?? []);

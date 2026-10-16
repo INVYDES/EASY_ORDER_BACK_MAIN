@@ -491,11 +491,18 @@ class OrdenController extends Controller
                     $clienteId = $cliente->id;
                 }
 
+                // Determinar estado inicial:
+                // Si es Kiosko en modo NO rápido, nace directo en POR_PREPARAR para entrar de inmediato a Cocina/Barra sin mesero.
+                // Si es Kiosko en modo rápido o servicio tradicional, nace en ABIERTA.
+                $esKioskoNoRapido = ($tipoOrden === 'kiosko' && !($restauranteActivo->servicio_rapido ?? false));
+                $estadoInicial    = $esKioskoNoRapido ? 'POR_PREPARAR' : 'ABIERTA';
+                $mesaFinal        = (in_array($tipoOrden, ['local', 'kiosko']) && $request->filled('mesa')) ? (int)$request->mesa : null;
+
                 $orden = Orden::create([
                     'restaurante_id'          => $restauranteActivo->id,
                     'cliente_id'              => $clienteId,
                     'usuario_id'              => $user->id,
-                    'mesa'                    => $tipoOrden === 'local' ? $request->mesa : null,
+                    'mesa'                    => $mesaFinal,
                     'tipo_orden'              => $tipoOrden,
                     'direccion_entrega'       => $request->direccion_entrega,
                     'telefono_contacto'       => $request->telefono_contacto,
@@ -505,7 +512,7 @@ class OrdenController extends Controller
                     'total'                   => 0,
                     'propina'                 => $request->propina ?? 0,
                     'notas'                   => $request->notas,
-                    'estado'                  => 'ABIERTA',
+                    'estado'                  => $estadoInicial,
                     'programado_para'         => $request->programado_para,
                 ]);
                 $esNueva = true;
@@ -520,6 +527,7 @@ class OrdenController extends Controller
                 $paqueteId     = $item['paquete_id'] ?? null;
                 $paquetePrecio = $item['paquete_precio'] ?? 0;
                 $subtotal      = ($precio * $item['cantidad']) + $paquetePrecio;
+                $estadoPrep    = ($orden->estado === 'POR_PREPARAR') ? 'PENDIENTE' : 'ABIERTA';
 
                 $detalle = OrdenDetalle::create([
                     'orden_id'           => $orden->id,
@@ -531,7 +539,7 @@ class OrdenController extends Controller
                     'subtotal'           => $subtotal,
                     'notas'              => $item['notas'],
                     'nom_comensal'       => $item['nom_comensal'] ?? ($tipoOrden !== 'local' ? 'Para llevar' : null),
-                    'estado_preparacion' => 'ABIERTA',
+                    'estado_preparacion' => $estadoPrep,
                 ]);
 
                 \App\Helpers\StockHelper::descontarStock($detalle, $item['cantidad'], $user->id);
@@ -675,9 +683,12 @@ class OrdenController extends Controller
                 if ($request->estado === 'LISTA') {
                     $campos['lista_at'] = now();
                 }
+                if ($request->estado === 'ENTREGADA') {
+                    // Actualizar todos los detalles activos de esta orden a ENTREGADO
+                    $orden->detalles()->where('estado_preparacion', '!=', 'CANCELADO')->update(['estado_preparacion' => 'ENTREGADO']);
+                }
                 if ($request->filled('metodo_pago')) $campos['metodo_pago'] = $request->metodo_pago;
                 if ($request->has('propina'))         $campos['propina']     = $request->propina ?? 0;
-
 
                 $orden->update($campos);
             }
