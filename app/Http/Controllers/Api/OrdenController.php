@@ -49,32 +49,42 @@ class OrdenController extends Controller
             if ($request->filled('mesa')) {
                 $query->where('mesa', $request->mesa);
             }
-            if ($request->filled('fecha_desde')) {
-                try {
-                    $startUtc   = \Carbon\Carbon::parse($request->fecha_desde, 'America/Mexico_City')->startOfDay()->setTimezone('UTC');
-                    $startLocal = \Carbon\Carbon::parse($request->fecha_desde, 'America/Mexico_City')->startOfDay();
-                    $minStart   = $startUtc->min($startLocal);
-
-                    $query->where(function($q) use ($minStart) {
-                        $q->where('created_at', '>=', $minStart)
-                          ->orWhere('updated_at', '>=', $minStart);
-                    });
-                } catch (\Exception $e) {
-                    $query->where(function($q) use ($request) {
-                        $q->whereDate('created_at', '>=', $request->fecha_desde)
-                          ->orWhereDate('updated_at', '>=', $request->fecha_desde);
-                    });
+            if ($request->boolean('caja_actual')) {
+                $caja = \App\Models\Caja::where('restaurante_id', $restauranteActivo->id)
+                    ->whereNull('fecha_cierre')
+                    ->latest()
+                    ->first();
+                if ($caja) {
+                    $query->where('updated_at', '>=', $caja->fecha_apertura);
                 }
-            }
-            if ($request->filled('fecha_hasta')) {
-                try {
-                    $endUtc   = \Carbon\Carbon::parse($request->fecha_hasta, 'America/Mexico_City')->endOfDay()->setTimezone('UTC');
-                    $endLocal = \Carbon\Carbon::parse($request->fecha_hasta, 'America/Mexico_City')->endOfDay();
-                    $maxEnd   = $endUtc->max($endLocal);
+            } else {
+                if ($request->filled('fecha_desde')) {
+                    try {
+                        $startUtc   = \Carbon\Carbon::parse($request->fecha_desde, 'America/Mexico_City')->startOfDay()->setTimezone('UTC');
+                        $startLocal = \Carbon\Carbon::parse($request->fecha_desde, 'America/Mexico_City')->startOfDay();
+                        $minStart   = $startUtc->min($startLocal);
 
-                    $query->where('created_at', '<=', $maxEnd);
-                } catch (\Exception $e) {
-                    $query->whereDate('created_at', '<=', $request->fecha_hasta);
+                        $query->where(function($q) use ($minStart) {
+                            $q->where('created_at', '>=', $minStart)
+                              ->orWhere('updated_at', '>=', $minStart);
+                        });
+                    } catch (\Exception $e) {
+                        $query->where(function($q) use ($request) {
+                            $q->whereDate('created_at', '>=', $request->fecha_desde)
+                              ->orWhereDate('updated_at', '>=', $request->fecha_desde);
+                        });
+                    }
+                }
+                if ($request->filled('fecha_hasta')) {
+                    try {
+                        $endUtc   = \Carbon\Carbon::parse($request->fecha_hasta, 'America/Mexico_City')->endOfDay()->setTimezone('UTC');
+                        $endLocal = \Carbon\Carbon::parse($request->fecha_hasta, 'America/Mexico_City')->endOfDay();
+                        $maxEnd   = $endUtc->max($endLocal);
+
+                        $query->where('created_at', '<=', $maxEnd);
+                    } catch (\Exception $e) {
+                        $query->whereDate('created_at', '<=', $request->fecha_hasta);
+                    }
                 }
             }
             if ($request->filled('fecha')) {
