@@ -65,9 +65,6 @@ class OrdenController extends Controller
                     $query->whereDate('created_at', '<=', $request->fecha_hasta);
                 }
             }
-            if ($request->filled('updated_at_desde')) {
-                $query->where('updated_at', '>=', $request->updated_at_desde);
-            }
             if ($request->filled('fecha')) {
                 try {
                     $start = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->fecha . ' 00:00:00', 'America/Mexico_City');
@@ -1270,6 +1267,7 @@ class OrdenController extends Controller
             'tipo_orden'             => $orden->tipo_orden ?? 'local',
             'tipo_orden_texto'       => $orden->tipo_orden_texto ?? 'Local',
             'tipo_orden_badge'       => $orden->tipo_orden_badge ?? ['color' => 'blue', 'icono' => '🏠', 'texto' => 'Local'],
+            'mesero'                 => $u ? $u->name : 'N/A',
             'user'                   => $u ? [
                 'id'       => $u->id,
                 'name'     => $u->name,
@@ -1333,6 +1331,7 @@ class OrdenController extends Controller
                 'recogido_en'         => $d->recogido_en?->format('Y-m-d H:i:s'),
                 'entregado_en'        => $d->entregado_en?->format('Y-m-d H:i:s'),
                 'tamano'              => $d->tamano,
+                'tamano_nombre'       => $d->tamano,
                 'created_at'          => $d->created_at?->format('Y-m-d H:i:s'),
             ]),
             'created_at'             => $orden->created_at,

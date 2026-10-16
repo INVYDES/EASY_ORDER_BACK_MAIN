@@ -136,6 +136,10 @@ class AnuncioController extends Controller
             $request->merge(['dias_semana' => array_values(array_filter((array) $request->dias_semana, fn($d) => $d !== '' && $d !== null))]);
         }
 
+        if ($request->has('imagen') && !$request->hasFile('imagen')) {
+            $request->request->remove('imagen');
+        }
+
         $request->validate([
             'titulo'          => 'sometimes|string|max:150',
             'contenido'       => 'nullable|string|max:500',

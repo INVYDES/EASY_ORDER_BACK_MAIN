@@ -73,6 +73,7 @@ class OrdenDetalleController extends Controller
                 'created_at'          => $detalle->created_at,
                 'updated_at'          => $detalle->updated_at,
                 'tamano'              => $detalle->tamano,
+                'tamano_nombre'       => $detalle->tamano,
             ]);
 
             return response()->json([
