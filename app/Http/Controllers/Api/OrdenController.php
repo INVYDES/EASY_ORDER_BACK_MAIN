@@ -51,25 +51,43 @@ class OrdenController extends Controller
             }
             if ($request->filled('fecha_desde')) {
                 try {
-                    $start = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->fecha_desde . ' 00:00:00', 'America/Mexico_City');
-                    $query->where('created_at', '>=', $start);
+                    $startUtc   = \Carbon\Carbon::parse($request->fecha_desde, 'America/Mexico_City')->startOfDay()->setTimezone('UTC');
+                    $startLocal = \Carbon\Carbon::parse($request->fecha_desde, 'America/Mexico_City')->startOfDay();
+                    $minStart   = $startUtc->min($startLocal);
+
+                    $query->where(function($q) use ($minStart) {
+                        $q->where('created_at', '>=', $minStart)
+                          ->orWhere('updated_at', '>=', $minStart);
+                    });
                 } catch (\Exception $e) {
-                    $query->whereDate('created_at', '>=', $request->fecha_desde);
+                    $query->where(function($q) use ($request) {
+                        $q->whereDate('created_at', '>=', $request->fecha_desde)
+                          ->orWhereDate('updated_at', '>=', $request->fecha_desde);
+                    });
                 }
             }
             if ($request->filled('fecha_hasta')) {
                 try {
-                    $end = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->fecha_hasta . ' 23:59:59', 'America/Mexico_City');
-                    $query->where('created_at', '<=', $end);
+                    $endUtc   = \Carbon\Carbon::parse($request->fecha_hasta, 'America/Mexico_City')->endOfDay()->setTimezone('UTC');
+                    $endLocal = \Carbon\Carbon::parse($request->fecha_hasta, 'America/Mexico_City')->endOfDay();
+                    $maxEnd   = $endUtc->max($endLocal);
+
+                    $query->where('created_at', '<=', $maxEnd);
                 } catch (\Exception $e) {
                     $query->whereDate('created_at', '<=', $request->fecha_hasta);
                 }
             }
             if ($request->filled('fecha')) {
                 try {
-                    $start = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->fecha . ' 00:00:00', 'America/Mexico_City');
-                    $end = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->fecha . ' 23:59:59', 'America/Mexico_City');
-                    $query->whereBetween('created_at', [$start, $end]);
+                    $startUtc   = \Carbon\Carbon::parse($request->fecha, 'America/Mexico_City')->startOfDay()->setTimezone('UTC');
+                    $endUtc     = \Carbon\Carbon::parse($request->fecha, 'America/Mexico_City')->endOfDay()->setTimezone('UTC');
+                    $startLocal = \Carbon\Carbon::parse($request->fecha, 'America/Mexico_City')->startOfDay();
+                    $endLocal   = \Carbon\Carbon::parse($request->fecha, 'America/Mexico_City')->endOfDay();
+
+                    $minStart = $startUtc->min($startLocal);
+                    $maxEnd   = $endUtc->max($endLocal);
+
+                    $query->whereBetween('created_at', [$minStart, $maxEnd]);
                 } catch (\Exception $e) {
                     $query->whereDate('created_at', $request->fecha);
                 }
@@ -178,15 +196,20 @@ class OrdenController extends Controller
                 return response()->json(['success' => false, 'message' => 'No tienes permiso'], 403);
             }
 
-            $restauranteActivo = app('restaurante_activo');
-            $hoy   = now()->format('Y-m-d');
+            $startUtc   = now('America/Mexico_City')->startOfDay()->setTimezone('UTC');
+            $endUtc     = now('America/Mexico_City')->endOfDay()->setTimezone('UTC');
+            $startLocal = now('America/Mexico_City')->startOfDay();
+            $endLocal   = now('America/Mexico_City')->endOfDay();
+            $minStart   = $startUtc->min($startLocal);
+            $maxEnd     = $endUtc->max($endLocal);
+
             $query = Orden::with([
                     'usuario:id,name,username,email',
                     'detalles' => function($q) { $q->withTrashed()->with('producto.categoria'); },
                     'cliente'
                 ])
                 ->where('restaurante_id', $restauranteActivo->id)
-                ->whereDate('created_at', $hoy);
+                ->whereBetween('created_at', [$minStart, $maxEnd]);
 
             if ($request->filled('estado')) {
                 $query->whereIn('estado', explode(',', $request->estado));
