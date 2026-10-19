@@ -649,7 +649,8 @@ public function recomendacionPaquete(Request $request): JsonResponse
             $inversionProducto = $this->calcularCostoRealProductos(
                 $restauranteActivo->id,
                 $request->fecha_inicio,
-                $request->fecha_fin
+                $request->fecha_fin,
+                true // ✅ Solo costo de insumos (materia prima); la mano de obra se calcula y deduce por separado
             );
 
             $inversionManoObra = 0.0;
@@ -848,7 +849,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->whereDate('created_at', $fecha)
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
-            $costoProducto = (float) $this->calcularCostoRealProductos($restauranteActivo->id, $fecha, false, $fecha);
+            $costoProducto = (float) $this->calcularCostoRealProductos($restauranteActivo->id, $fecha, $fecha, true);
 
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
@@ -1734,34 +1735,39 @@ public function ventasPorCanalTipo(Request $request): JsonResponse
         $labels = [];
         $datasets = [];
         $colors = [
-            'local' => '#3B82F6',
-            'pickup' => '#10B981',
+            'local'    => '#3B82F6',
+            'pickup'   => '#10B981',
             'delivery' => '#F59E0B',
+            'kiosko'   => '#8B5CF6',
         ];
         $icons = [
-            'local' => '🏠',
-            'pickup' => '📦',
+            'local'    => '🏠',
+            'pickup'   => '📦',
             'delivery' => '🛵',
+            'kiosko'   => '🖥️',
         ];
         $textos = [
-            'local' => 'Comer en local',
-            'pickup' => 'Para llevar',
+            'local'    => 'Comer en local',
+            'pickup'   => 'Para llevar',
             'delivery' => 'Delivery',
+            'kiosko'   => 'Kiosko Autoservicio',
         ];
 
-        // Datos para KpiVentas.vue (Local, Pickup, Delivery)
+        // Datos para KpiVentas.vue (Local, Pickup, Delivery, Kiosko)
         $canalVentas = [
-            'Local' => 0,
-            'Pickup' => 0,
+            'Local'    => 0,
+            'Pickup'   => 0,
             'Delivery' => 0,
+            'Kiosko'   => 0,
         ];
 
         foreach ($ventasPorTipo as $item) {
             $tipoKey = strtolower($item->tipo_orden ?: 'local');
             
-            if ($tipoKey === 'local') $canalVentas['Local'] = (int) $item->total_ordenes;
-            if ($tipoKey === 'pickup') $canalVentas['Pickup'] = (int) $item->total_ordenes;
+            if ($tipoKey === 'local')    $canalVentas['Local']    = (int) $item->total_ordenes;
+            if ($tipoKey === 'pickup')   $canalVentas['Pickup']   = (int) $item->total_ordenes;
             if ($tipoKey === 'delivery') $canalVentas['Delivery'] = (int) $item->total_ordenes;
+            if ($tipoKey === 'kiosko')   $canalVentas['Kiosko']   = (int) $item->total_ordenes;
 
             $labels[] = $textos[$tipoKey] ?? $tipoKey;
             $datasets[] = [
@@ -1781,6 +1787,7 @@ public function ventasPorCanalTipo(Request $request): JsonResponse
                 'Local'    => $canalVentas['Local'],
                 'Pickup'   => $canalVentas['Pickup'],
                 'Delivery' => $canalVentas['Delivery'],
+                'Kiosko'   => $canalVentas['Kiosko'],
                 'grafica_donut' => [
                     'labels' => $labels,
                     'datasets' => $datasets,
