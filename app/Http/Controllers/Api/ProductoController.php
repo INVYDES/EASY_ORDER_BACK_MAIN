@@ -2216,15 +2216,6 @@ class ProductoController extends Controller
                 ->values()
                 ->toArray();
         }
-        if ((float) ($producto->precio ?? 0) > 0) {
-            return [[
-                'id'     => 'unico',
-                'key'    => 'unico',
-                'nombre' => 'Único',
-                'precio' => (float) $producto->precio,
-                'stock'  => (int) ($producto->stock ?? 0),
-            ]];
-        }
         return [];
     }
 
