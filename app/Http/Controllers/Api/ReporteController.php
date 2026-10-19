@@ -646,11 +646,20 @@ public function recomendacionPaquete(Request $request): JsonResponse
 
             $totalVentas       = (float) ($queryOrdenes->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0);
 
+            // 1. Costo solo de insumos (materia prima/receta pura)
             $inversionProducto = $this->calcularCostoRealProductos(
                 $restauranteActivo->id,
                 $request->fecha_inicio,
                 $request->fecha_fin,
-                true // ✅ Solo costo de insumos (materia prima); la mano de obra se calcula y deduce por separado
+                true
+            );
+
+            // 2. Costo integral de producción (insumos + minutos de MO dedicados + 5% indirectos)
+            $costoProduccionIntegral = $this->calcularCostoRealProductos(
+                $restauranteActivo->id,
+                $request->fecha_inicio,
+                $request->fecha_fin,
+                false
             );
 
             $inversionManoObra = 0.0;
@@ -692,19 +701,26 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 $inversionManoObra = ($totalNominaMensual / 30.0) * $dias;
             }
 
-            $utilidadBruta = $totalVentas - $inversionProducto;
-            $utilidadNeta  = $utilidadBruta - $inversionManoObra;
+            // Utilidad operativa del día: coincide con Resumen General (Ventas - Costo Producción de platillos)
+            $utilidadOperativa = $totalVentas - $costoProduccionIntegral;
+            $utilidadBruta     = $totalVentas - $inversionProducto;
+            // Utilidad neta operativa (para el día a día no castiga con toda la nómina mensual prorrateada de golpe)
+            $utilidadNeta      = $utilidadOperativa;
+            $balanceNominaFija = $utilidadBruta - $inversionManoObra;
 
             return response()->json([
                 'success' => true,
                 'data'    => [
-                    'total_ventas'        => round($totalVentas, 2),
-                    'inversion_producto'  => round($inversionProducto, 2),
-                    'inversion_mano_obra' => round($inversionManoObra, 2),
-                    'utilidad_bruta'      => round($utilidadBruta, 2),
-                    'utilidad_neta'       => round($utilidadNeta, 2),
-                    'margen_bruto_pct'    => $totalVentas > 0 ? round(($utilidadBruta / $totalVentas) * 100, 2) : 0,
-                    'margen_neto_pct'     => $totalVentas > 0 ? round(($utilidadNeta  / $totalVentas) * 100, 2) : 0,
+                    'total_ventas'          => round($totalVentas, 2),
+                    'inversion_producto'    => round($inversionProducto, 2),
+                    'costo_produccion'      => round($costoProduccionIntegral, 2),
+                    'inversion_mano_obra'   => round($inversionManoObra, 2),
+                    'utilidad_bruta'        => round($utilidadBruta, 2),
+                    'utilidad_operativa'    => round($utilidadOperativa, 2),
+                    'utilidad_neta'         => round($utilidadNeta, 2),
+                    'balance_nomina_fija'   => round($balanceNominaFija, 2),
+                    'margen_bruto_pct'      => $totalVentas > 0 ? round(($utilidadBruta / $totalVentas) * 100, 2) : 0,
+                    'margen_neto_pct'       => $totalVentas > 0 ? round(($utilidadNeta  / $totalVentas) * 100, 2) : 0,
                 ],
             ]);
 
