@@ -35,17 +35,20 @@ class GastoController extends Controller
             $query->where('categoria', $request->categoria);
         }
 
-        $gastos = $query
-            ->orderByDesc('fecha')
-            ->orderByDesc('created_at')
-            ->paginate($request->get('per_page', 20));
+        $baseQuery = clone $query;
 
-        $totalesCategoria = (clone $query)
+        $totalesCategoria = (clone $baseQuery)
+            ->reorder()
             ->select('categoria', DB::raw('SUM(monto) as total'))
             ->groupBy('categoria')
             ->pluck('total', 'categoria');
 
-        $totalGeneral = (clone $query)->sum('monto');
+        $totalGeneral = (clone $baseQuery)->sum('monto');
+
+        $gastos = $query
+            ->orderByDesc('fecha')
+            ->orderByDesc('created_at')
+            ->paginate($request->get('per_page', 20));
 
         return response()->json([
             'success' => true,
