@@ -2085,13 +2085,20 @@ public function getKpiCocinaReprocesos(Request $request)
             $totalOrdenes = $ventasQuery->count();
 
             $gastosQuery = DB::table('gastos')
-                ->where('restaurante_id', $restauranteId);
+                ->where('restaurante_id', $restauranteId)
+                ->whereNull('deleted_at');
 
             if ($request->filled('fecha_desde')) {
-                $gastosQuery->whereDate('created_at', '>=', $request->fecha_desde);
+                $gastosQuery->where(function($q) use ($request) {
+                    $q->whereDate('fecha', '>=', $request->fecha_desde)
+                      ->orWhereDate('created_at', '>=', $request->fecha_desde);
+                });
             }
             if ($request->filled('fecha_hasta')) {
-                $gastosQuery->whereDate('created_at', '<=', $request->fecha_hasta);
+                $gastosQuery->where(function($q) use ($request) {
+                    $q->whereDate('fecha', '<=', $request->fecha_hasta)
+                      ->orWhereDate('created_at', '<=', $request->fecha_hasta);
+                });
             }
 
             $gastosTotal = $gastosQuery->sum('monto');

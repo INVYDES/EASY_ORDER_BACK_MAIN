@@ -40,12 +40,12 @@ class GastoController extends Controller
             ->orderByDesc('created_at')
             ->paginate($request->get('per_page', 20));
 
-        $totalesCategoria = Gasto::where('restaurante_id', $restaurante->id)
+        $totalesCategoria = (clone $query)
             ->select('categoria', DB::raw('SUM(monto) as total'))
             ->groupBy('categoria')
             ->pluck('total', 'categoria');
 
-        $totalGeneral = Gasto::where('restaurante_id', $restaurante->id)->sum('monto');
+        $totalGeneral = (clone $query)->sum('monto');
 
         return response()->json([
             'success' => true,

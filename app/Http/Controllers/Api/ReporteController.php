@@ -670,20 +670,25 @@ public function recomendacionPaquete(Request $request): JsonResponse
         $costoFijoDiario  = $gastosFijosMes / 30.0;
         $costoFijoPeriodo = $costoFijoDiario * $dias;
 
-        // 3. Gastos registrados en el módulo de Gastos para este período
+        // 3. Gastos registrados en el módulo de Gastos para este período (excluyendo eliminados)
         $gastosRegistrados = 0.0;
         if (Schema::hasTable('gastos')) {
             $gastosRegistrados = (float) DB::table('gastos')
                 ->where('restaurante_id', $restauranteId)
-                ->whereBetween('fecha', [$fInicio, $fFin])
+                ->whereNull('deleted_at')
+                ->where(function($q) use ($fInicio, $fFin) {
+                    $q->whereBetween('fecha', [$fInicio, $fFin])
+                      ->orWhereBetween('created_at', [$fInicio . ' 00:00:00', $fFin . ' 23:59:59']);
+                })
                 ->sum('monto');
         }
 
-        // 4. Retiros/egresos de caja durante este período
+        // 4. Retiros/egresos de caja durante este período (excluyendo eliminados)
         $retirosCaja = 0.0;
         if (Schema::hasTable('cajas') && Schema::hasTable('caja_movimientos')) {
             $cajasIds = DB::table('cajas')
                 ->where('restaurante_id', $restauranteId)
+                ->whereNull('deleted_at')
                 ->whereDate('fecha_apertura', '>=', $fInicio)
                 ->whereDate('fecha_apertura', '<=', $fFin)
                 ->pluck('id');
@@ -692,6 +697,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 $retirosCaja = (float) DB::table('caja_movimientos')
                     ->whereIn('caja_id', $cajasIds)
                     ->where('tipo', 'egreso')
+                    ->whereNull('deleted_at')
                     ->sum('monto');
             }
         }
@@ -1153,7 +1159,11 @@ public function recomendacionPaquete(Request $request): JsonResponse
 
             $gastos = DB::table('gastos')
                 ->where('restaurante_id', $restauranteActivo->id)
-                ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+                ->whereNull('deleted_at')
+                ->where(function($q) use ($fechaInicio, $fechaFin) {
+                    $q->whereBetween('fecha', [$fechaInicio, $fechaFin])
+                      ->orWhereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59']);
+                })
                 ->sum('monto');
 
             $nominas = 0;
@@ -1517,7 +1527,11 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             $gastosDirectos = Schema::hasTable('gastos')
                 ? (float) DB::table('gastos')
                     ->where('restaurante_id', $restauranteActivo->id)
-                    ->whereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+                    ->whereNull('deleted_at')
+                    ->where(function($q) use ($fechaInicio, $fechaFin) {
+                        $q->whereBetween('fecha', [$fechaInicio, $fechaFin])
+                          ->orWhereBetween('created_at', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59']);
+                    })
                     ->sum('monto')
                 : 0;
 
