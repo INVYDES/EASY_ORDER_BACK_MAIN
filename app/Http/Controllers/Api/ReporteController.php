@@ -620,6 +620,92 @@ public function recomendacionPaquete(Request $request): JsonResponse
         return (float) $costoTotalGeneral;
     }
 
+    /**
+     * Helper centralizado para obtener deducciones operativas:
+     * - Nómina activa prorrateada
+     * - Gastos fijos operativos prorrateados (renta, servicios, software, marketing de roi_config)
+     * - Gastos directos registrados en la tabla gastos
+     * - Retiros/egresos de caja
+     */
+    private function obtenerDeduccionesOperativas(int $restauranteId, string $fInicio, string $fFin): array
+    {
+        $datetime1 = new \DateTime($fInicio);
+        $datetime2 = new \DateTime($fFin);
+        $dias = (int) $datetime1->diff($datetime2)->format('%a') + 1;
+        if ($dias < 1) $dias = 1;
+
+        // 1. Nómina mensual de empleados activos asignados a la sucursal (excluyendo rol MENU)
+        $totalNominaMensual = (float) DB::table('restaurante_user')
+            ->join('users', 'restaurante_user.user_id', '=', 'users.id')
+            ->where('restaurante_user.restaurante_id', $restauranteId)
+            ->where('users.activo', '!=', 0)
+            ->whereNull('users.deleted_at')
+            ->whereNotExists(function($q) {
+                $q->select(DB::raw(1))
+                  ->from('role_user')
+                  ->join('roles', 'role_user.role_id', '=', 'roles.id')
+                  ->whereColumn('role_user.user_id', 'users.id')
+                  ->where(function($sub) {
+                      $sub->where('roles.id', 7)
+                          ->orWhere('roles.nombre', 'MENU')
+                          ->orWhere('roles.nombre', 'menu');
+                  });
+            })
+            ->sum('users.salario_base');
+
+        $nominaDiariaTotal = $totalNominaMensual / 30.0;
+        $nominaPeriodo     = $nominaDiariaTotal * $dias;
+
+        // 2. Gastos fijos mensuales del local configurados en Análisis Financiero (roi_config)
+        $gastosFijosMes = 0.0;
+        if (Schema::hasTable('roi_config')) {
+            $roiConf = DB::table('roi_config')->where('restaurante_id', $restauranteId)->first();
+            if ($roiConf) {
+                $gastosFijosMes = (float) ($roiConf->gasto_renta ?? 0)
+                                + (float) ($roiConf->gasto_servicios ?? 0)
+                                + (float) ($roiConf->gasto_software ?? 0)
+                                + (float) ($roiConf->gasto_marketing ?? 0);
+            }
+        }
+        $costoFijoDiario  = $gastosFijosMes / 30.0;
+        $costoFijoPeriodo = $costoFijoDiario * $dias;
+
+        // 3. Gastos registrados en el módulo de Gastos para este período
+        $gastosRegistrados = 0.0;
+        if (Schema::hasTable('gastos')) {
+            $gastosRegistrados = (float) DB::table('gastos')
+                ->where('restaurante_id', $restauranteId)
+                ->whereBetween('fecha', [$fInicio, $fFin])
+                ->sum('monto');
+        }
+
+        // 4. Retiros/egresos de caja durante este período
+        $retirosCaja = 0.0;
+        if (Schema::hasTable('cajas') && Schema::hasTable('caja_movimientos')) {
+            $cajasIds = DB::table('cajas')
+                ->where('restaurante_id', $restauranteId)
+                ->whereDate('fecha_apertura', '>=', $fInicio)
+                ->whereDate('fecha_apertura', '<=', $fFin)
+                ->pluck('id');
+
+            if ($cajasIds->isNotEmpty()) {
+                $retirosCaja = (float) DB::table('caja_movimientos')
+                    ->whereIn('caja_id', $cajasIds)
+                    ->where('tipo', 'egreso')
+                    ->sum('monto');
+            }
+        }
+
+        return [
+            'dias'                  => $dias,
+            'nomina_activa_periodo' => round($nominaPeriodo, 2),
+            'costo_fijo_periodo'    => round($costoFijoPeriodo, 2),
+            'gastos_registrados'    => round($gastosRegistrados, 2),
+            'retiros_caja'          => round($retirosCaja, 2),
+            'total_deducciones'     => round($nominaPeriodo + $costoFijoPeriodo + $gastosRegistrados + $retirosCaja, 2),
+        ];
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // INVERSIÓN Y UTILIDAD
     // ─────────────────────────────────────────────────────────────────────────
@@ -634,91 +720,49 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 'fecha_fin'    => 'sometimes|date|after_or_equal:fecha_inicio',
             ]);
 
+            $fechaInicioStr = $request->get('fecha_inicio', now()->format('Y-m-d'));
+            $fechaFinStr    = $request->get('fecha_fin',    now()->format('Y-m-d'));
+            if ($fechaInicioStr > $fechaFinStr) {
+                $tmp = $fechaInicioStr;
+                $fechaInicioStr = $fechaFinStr;
+                $fechaFinStr = $tmp;
+            }
+
             $queryOrdenes = Orden::where('restaurante_id', $restauranteActivo->id)
-                ->where('estado', 'CERRADA');
+                ->where('estado', 'CERRADA')
+                ->where('created_at', '>=', $fechaInicioStr . ' 00:00:00')
+                ->where('created_at', '<=', $fechaFinStr . ' 23:59:59');
 
-            if ($request->filled('fecha_inicio')) {
-                $queryOrdenes->where('created_at', '>=', $request->fecha_inicio . ' 00:00:00');
-            }
-            if ($request->filled('fecha_fin')) {
-                $queryOrdenes->where('created_at', '<=', $request->fecha_fin . ' 23:59:59');
-            }
+            $totalVentas = (float) ($queryOrdenes->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0);
 
-            $totalVentas       = (float) ($queryOrdenes->sum(DB::raw('total - COALESCE(propina, 0)')) ?? 0);
-
-            // 1. Costo solo de insumos (materia prima/receta pura)
+            // Costo integral de producción (insumos + minutos de MO dedicados + 5% indirectos)
             $inversionProducto = $this->calcularCostoRealProductos(
                 $restauranteActivo->id,
-                $request->fecha_inicio,
-                $request->fecha_fin,
-                true
-            );
-
-            // 2. Costo integral de producción (insumos + minutos de MO dedicados + 5% indirectos)
-            $costoProduccionIntegral = $this->calcularCostoRealProductos(
-                $restauranteActivo->id,
-                $request->fecha_inicio,
-                $request->fecha_fin,
+                $fechaInicioStr,
+                $fechaFinStr,
                 false
             );
 
-            $inversionManoObra = 0.0;
-            if (Schema::hasTable('nomina_diaria')) {
-                $qNomina = DB::table('nomina_diaria')
-                    ->where('restaurante_id', $restauranteActivo->id);
-                if ($request->filled('fecha_inicio')) $qNomina->where('fecha', '>=', $request->fecha_inicio);
-                if ($request->filled('fecha_fin'))    $qNomina->where('fecha', '<=', $request->fecha_fin);
-                $inversionManoObra = (float) ($qNomina->sum('total_mano_obra') ?? 0);
-            }
+            // Deducciones operativas completas (nómina activa + costos fijos + gastos registrados + retiros caja)
+            $deducciones = $this->obtenerDeduccionesOperativas($restauranteActivo->id, $fechaInicioStr, $fechaFinStr);
 
-            if ($inversionManoObra <= 0) {
-                $fechaInicioStr = $request->get('fecha_inicio', now()->format('Y-m-d'));
-                $fechaFinStr    = $request->get('fecha_fin',    now()->format('Y-m-d'));
-
-                $datetime1 = new \DateTime($fechaInicioStr);
-                $datetime2 = new \DateTime($fechaFinStr);
-                $dias = (int) $datetime1->diff($datetime2)->format('%a') + 1;
-                if ($dias < 1) $dias = 1;
-
-                $totalNominaMensual = DB::table('restaurante_user')
-                    ->join('users', 'restaurante_user.user_id', '=', 'users.id')
-                    ->where('restaurante_user.restaurante_id', $restauranteActivo->id)
-                    ->where('users.activo', '!=', 0)
-                    ->whereNull('users.deleted_at')
-                    ->whereNotExists(function($q) {
-                        $q->select(DB::raw(1))
-                          ->from('role_user')
-                          ->join('roles', 'role_user.role_id', '=', 'roles.id')
-                          ->whereColumn('role_user.user_id', 'users.id')
-                          ->where(function($sub) {
-                              $sub->where('roles.id', 7)
-                                  ->orWhere('roles.nombre', 'MENU')
-                                  ->orWhere('roles.nombre', 'menu');
-                          });
-                    })
-                    ->sum('users.salario_base');
-
-                $inversionManoObra = ($totalNominaMensual / 30.0) * $dias;
-            }
-
-            // Utilidad operativa del día: coincide con Resumen General (Ventas - Costo Producción de platillos)
-            $utilidadOperativa = $totalVentas - $costoProduccionIntegral;
-            $utilidadBruta     = $totalVentas - $inversionProducto;
-            // Utilidad neta operativa (para el día a día no castiga con toda la nómina mensual prorrateada de golpe)
-            $utilidadNeta      = $utilidadOperativa;
-            $balanceNominaFija = $utilidadBruta - $inversionManoObra;
+            $utilidadBruta = $totalVentas - $inversionProducto;
+            $utilidadNeta  = $utilidadBruta - $deducciones['total_deducciones'];
 
             return response()->json([
                 'success' => true,
                 'data'    => [
                     'total_ventas'          => round($totalVentas, 2),
                     'inversion_producto'    => round($inversionProducto, 2),
-                    'costo_produccion'      => round($costoProduccionIntegral, 2),
-                    'inversion_mano_obra'   => round($inversionManoObra, 2),
+                    'costo_produccion'      => round($inversionProducto, 2),
+                    'inversion_mano_obra'   => round($deducciones['nomina_activa_periodo'], 2),
+                    'costo_fijo_operativo'  => round($deducciones['costo_fijo_periodo'], 2),
+                    'gastos_registrados'    => round($deducciones['gastos_registrados'], 2),
+                    'retiros_caja'          => round($deducciones['retiros_caja'], 2),
+                    'total_deducciones'     => round($deducciones['total_deducciones'], 2),
                     'utilidad_bruta'        => round($utilidadBruta, 2),
-                    'utilidad_operativa'    => round($utilidadOperativa, 2),
+                    'utilidad_operativa'    => round($utilidadNeta, 2),
                     'utilidad_neta'         => round($utilidadNeta, 2),
-                    'balance_nomina_fija'   => round($balanceNominaFija, 2),
                     'margen_bruto_pct'      => $totalVentas > 0 ? round(($utilidadBruta / $totalVentas) * 100, 2) : 0,
                     'margen_neto_pct'       => $totalVentas > 0 ? round(($utilidadNeta  / $totalVentas) * 100, 2) : 0,
                 ],
@@ -865,96 +909,45 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->whereDate('created_at', $fecha)
                 ->sum(DB::raw('total - COALESCE(propina, 0)'));
 
-            $costoProducto = (float) $this->calcularCostoRealProductos($restauranteActivo->id, $fecha, $fecha, true);
+            // Costo integral de producción (insumos + minutos de MO dedicados + 5% indirectos)
+            $costoProducto = (float) $this->calcularCostoRealProductos($restauranteActivo->id, $fecha, $fecha, false);
 
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
                 ->whereDate('created_at', $fecha)
                 ->sum('propina');
 
-            $manoObraDia = 0.0;
-            if (Schema::hasTable('nomina_diaria')) {
-                $manoObraDia = (float) DB::table('nomina_diaria')
-                    ->where('restaurante_id', $restauranteActivo->id)
-                    ->whereDate('fecha', $fecha)
-                    ->sum('total_mano_obra');
-            }
-// Retiros parciales de caja del día (egresos manuales)
-$retirosCaja = 0.0;
-$cajaHoy = DB::table('cajas')
-    ->where('restaurante_id', $restauranteActivo->id)
-    ->whereDate('fecha_apertura', $fecha)
-    ->first();
+            // Deducciones operativas completas (nómina activa, fijos diarios, gastos, retiros caja)
+            $deducciones = $this->obtenerDeduccionesOperativas($restauranteActivo->id, $fecha, $fecha);
 
-if ($cajaHoy) {
-    $retirosCaja = (float) DB::table('caja_movimientos')
-        ->where('caja_id', $cajaHoy->id)
-        ->where('tipo', 'egreso')
-        ->sum('monto');
-}
             $ordenesEnProceso = Orden::where('restaurante_id', $restauranteActivo->id)
                 ->whereNotIn('estado', ['CERRADA', 'CANCELADA'])
                 ->whereDate('created_at', $fecha)
                 ->count();
 
             $utilidadBruta = $ventasDia - $costoProducto;
-            $utilidadNeta  = $utilidadBruta - $retirosCaja;
-
-            // DEBUG: Desglose para entender por qué la utilidad no cuadra
-            $detallesCostos = DB::table('orden_detalles')
-                ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
-                ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
-                ->where('ordenes.restaurante_id', $restauranteActivo->id)
-                ->where('ordenes.estado', 'CERRADA')
-                ->whereDate('ordenes.created_at', $fecha)
-                ->whereNull('orden_detalles.deleted_at')
-                ->select('orden_detalles.producto_id', 'productos.nombre as producto', DB::raw('SUM(orden_detalles.cantidad) as cantidad'))
-                ->groupBy('orden_detalles.producto_id', 'productos.nombre')
-                ->get();
-
-            $totalNomina = DB::table('restaurante_user')
-                ->join('users', 'restaurante_user.user_id', '=', 'users.id')
-                ->where('restaurante_user.restaurante_id', $restauranteActivo->id)
-                ->whereNull('users.deleted_at')
-                ->sum('users.salario_base');
-
-            $costoProducto = 0;
-            foreach ($detallesCostos as $dc) {
-                $p = Producto::with('ingredientes')->find($dc->producto_id);
-                if ($p) {
-                    $costoI = $p->ingredientes->reduce(fn($c, $ing) =>
-                        $c + (($ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
-                    
-                    if ($costoI <= 0) {
-                        $costoI = (float) ($p->costo ?? 0);
-                    }
-
-                    $costoMO = ($totalNomina > 0 && $p->minutos_produccion > 0) ? (($totalNomina / 14400) * 1.36 * $p->minutos_produccion) : 0;
-                    
-                    $costoIntegralUnitario = round(($costoI + $costoMO) * 1.05, 2);
-                    $dc->subtotal_costo = round($costoIntegralUnitario * $dc->cantidad, 2);
-                    $costoProducto += $dc->subtotal_costo;
-                }
-            }
-
-            $utilidadBruta = $ventasDia - $costoProducto;
-            $utilidadNeta  = $utilidadBruta - $retirosCaja;
+            $utilidadNeta  = $utilidadBruta - $deducciones['total_deducciones'];
 
             return response()->json([
                 'success' => true,
                 'data'    => [
-                    'fecha'              => $fecha,
-                    'ventas_dia'         => round($ventasDia, 2),
-                    'costo_producto_dia' => round($costoProducto, 2),
-                    'propinas_dia'       => round($propinasDia, 2),
-                    'mano_obra_dia'      => round($manoObraDia, 2),
-                    'retiros_caja_dia'   => round($retirosCaja, 2),
-                    'utilidad_bruta_dia' => round($utilidadBruta, 2),
-                    'utilidad_neta_dia'  => round($utilidadNeta, 2),
-                    'margen_bruto_pct'   => $ventasDia > 0 ? round(($utilidadBruta / $ventasDia) * 100, 2) : 0,
-                    'margen_neto_pct'    => $ventasDia > 0 ? round(($utilidadNeta  / $ventasDia) * 100, 2) : 0,
-                    'ordenes_en_proceso' => $ordenesEnProceso,
-                    'hora_calculo'       => now()->format('H:i:s')
+                    'fecha'                => $fecha,
+                    'ventas_dia'           => round($ventasDia, 2),
+                    'costo_producto_dia'   => round($costoProducto, 2),
+                    'costo_insumos_dia'    => round($costoProducto, 2),
+                    'inversion_mano_obra'  => round($deducciones['nomina_activa_periodo'], 2),
+                    'costo_fijo_operativo' => round($deducciones['costo_fijo_periodo'], 2),
+                    'gastos_registrados'   => round($deducciones['gastos_registrados'], 2),
+                    'retiros_caja_dia'     => round($deducciones['retiros_caja'], 2),
+                    'total_deducciones'    => round($deducciones['total_deducciones'], 2),
+                    'propinas_dia'         => round($propinasDia, 2),
+                    'mano_obra_dia'        => round($deducciones['nomina_activa_periodo'], 2),
+                    'utilidad_bruta_dia'   => round($utilidadBruta, 2),
+                    'utilidad_neta_dia'    => round($utilidadNeta, 2),
+                    'margen_bruto_pct'     => $ventasDia > 0 ? round(($utilidadBruta / $ventasDia) * 100, 2) : 0,
+                    'margen_neto_pct'      => $ventasDia > 0 ? round(($utilidadNeta  / $ventasDia) * 100, 2) : 0,
+                    'ordenes_en_proceso'   => $ordenesEnProceso,
+                    'hora_calculo'         => now()->format('H:i:s'),
                 ],
             ]);
 
@@ -1027,22 +1020,17 @@ if ($cajaHoy) {
                 ->get();
 
             $propinaHoy  = (float) ((clone $queryHoy)->sum('propina') ?? 0);
-            $manoObraHoy = 0.0;
 
-            if (Schema::hasTable('nomina_diaria')) {
-                $manoObraHoy = (float) DB::table('nomina_diaria')
-                    ->where('restaurante_id', $restauranteActivo->id)
-                    ->whereBetween('fecha', [$fInicio, $fFin])
-                    ->sum('total_mano_obra');
-            }
-
-            // La utilidad bruta usa costo real detallado (insumos + MO + indirectos)
-            $costoProductoHoy = $this->calcularCostoRealProductos(
-                $restauranteActivo->id, $fInicio, $fFin
+            // Costo integral de producción (insumos + minutos de MO dedicados + 5% indirectos)
+            $costoProductoHoy = (float) $this->calcularCostoRealProductos(
+                $restauranteActivo->id, $fInicio, $fFin, false
             );
 
+            // Deducciones operativas completas (nómina activa, fijos diarios, gastos, retiros caja)
+            $deducciones = $this->obtenerDeduccionesOperativas($restauranteActivo->id, $fInicio, $fFin);
+
             $utilidadBrutaHoy = $ventasHoy - $costoProductoHoy;
-            $utilidadNetaHoy  = $utilidadBrutaHoy;
+            $utilidadNetaHoy  = $utilidadBrutaHoy - $deducciones['total_deducciones'];
 
             $topClientes = [];
             if (class_exists('App\Models\Cliente')) {
@@ -1084,7 +1072,13 @@ if ($cajaHoy) {
                     'ordenes_por_estado'   => $ordenesPorEstado,
                     'ventas_por_metodo'    => $ventasPorMetodo,
                     'propinas_hoy'         => round($propinaHoy, 2),
-                    'inversion_mano_obra'  => round($manoObraHoy, 2),
+                    'costo_insumos_hoy'    => round($costoProductoHoy, 2),
+                    'costo_produccion'     => round($costoProductoHoy, 2),
+                    'inversion_mano_obra'  => round($deducciones['nomina_activa_periodo'], 2),
+                    'costo_fijo_operativo' => round($deducciones['costo_fijo_periodo'], 2),
+                    'gastos_registrados'   => round($deducciones['gastos_registrados'], 2),
+                    'retiros_caja'         => round($deducciones['retiros_caja'], 2),
+                    'total_deducciones'    => round($deducciones['total_deducciones'], 2),
                     'utilidad_bruta_hoy'   => round($utilidadBrutaHoy, 2),
                     'utilidad_neta_hoy'    => round($utilidadNetaHoy, 2),
                     'margen_bruto_pct'     => $ventasHoy > 0 ? round(($utilidadBrutaHoy / $ventasHoy) * 100, 2) : 0,
