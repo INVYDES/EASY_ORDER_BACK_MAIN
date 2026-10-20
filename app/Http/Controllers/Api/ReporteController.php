@@ -621,6 +621,70 @@ public function recomendacionPaquete(Request $request): JsonResponse
     }
 
     /**
+     * Calcula el costo real de los insumos (recetas o costo base) de los platillos
+     * preparados que fueron cancelados/desechados (merma real).
+     */
+    private function calcularCostoMermaReal(int $restauranteId, ?string $fechaInicio = null, ?string $fechaFin = null): float
+    {
+        $query = DB::table('orden_detalles')
+            ->join('ordenes', 'orden_detalles.orden_id', '=', 'ordenes.id')
+            ->join('productos', 'orden_detalles.producto_id', '=', 'productos.id')
+            ->where('ordenes.restaurante_id', $restauranteId)
+            ->where(function($q) {
+                $q->whereNotNull('orden_detalles.motivo_cancelacion')
+                  ->orWhere('ordenes.estado', 'CANCELADA');
+            })
+            ->whereRaw('(CASE
+                WHEN EXISTS (SELECT 1 FROM role_user ru JOIN roles r ON r.id = ru.role_id WHERE ru.user_id = orden_detalles.usuario_cancelo_id AND UPPER(r.nombre) = "MESERO") THEN 0
+                WHEN EXISTS (SELECT 1 FROM role_user ru JOIN roles r ON r.id = ru.role_id WHERE ru.user_id = orden_detalles.usuario_cancelo_id AND UPPER(r.nombre) IN ("CAJA", "ADMIN", "ADMINISTRADOR", "PROPIETARIO", "SUPER_ADMIN", "SUPER")) THEN 1
+                ELSE (CASE WHEN orden_detalles.estado_preparacion IN ("EN_PREPARACION", "LISTO", "ENTREGADO") THEN 1 ELSE 0 END)
+            END) = 1');
+
+        if ($fechaInicio && $fechaFin && $fechaInicio === $fechaFin) {
+            $query->whereDate(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'), $fechaInicio);
+        } else {
+            if ($fechaInicio) {
+                $query->where(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'), '>=', $fechaInicio . ' 00:00:00');
+            }
+            if ($fechaFin) {
+                $query->where(DB::raw('COALESCE(orden_detalles.deleted_at, ordenes.updated_at)'), '<=', $fechaFin . ' 23:59:59');
+            }
+        }
+
+        $itemsMermados = $query
+            ->select('orden_detalles.producto_id', DB::raw('SUM(orden_detalles.cantidad) as cantidad_total'))
+            ->groupBy('orden_detalles.producto_id')
+            ->get();
+
+        if ($itemsMermados->isEmpty()) {
+            return 0.0;
+        }
+
+        $productos = Producto::with('ingredientes')
+            ->whereIn('id', $itemsMermados->pluck('producto_id'))
+            ->get()
+            ->keyBy('id');
+
+        $costoTotalMerma = 0.0;
+
+        foreach ($itemsMermados as $im) {
+            $producto = $productos->get($im->producto_id);
+            if (!$producto) continue;
+
+            $costoInsumos = $producto->ingredientes->reduce(fn($c, $ing) =>
+                $c + (($ing->costo_unitario ?? 0) * ($ing->pivot->cantidad ?? 0)), 0);
+
+            if ($costoInsumos <= 0) {
+                $costoInsumos = (float) ($producto->costo ?? 0);
+            }
+
+            $costoTotalMerma += round($costoInsumos, 2) * $im->cantidad_total;
+        }
+
+        return round($costoTotalMerma, 2);
+    }
+
+    /**
      * Helper centralizado para obtener deducciones operativas:
      * - Nómina activa prorrateada
      * - Gastos fijos operativos prorrateados (renta, servicios, software, marketing de roi_config)
@@ -749,18 +813,28 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 false
             );
 
+            // Costo de merma real en el período (platillos preparados y cancelados)
+            $costoMerma = $this->calcularCostoMermaReal(
+                $restauranteActivo->id,
+                $fechaInicioStr,
+                $fechaFinStr
+            );
+
+            $inversionTotalInsumos = round($inversionProducto + $costoMerma, 2);
+
             // Deducciones operativas completas (nómina activa + costos fijos + gastos registrados + retiros caja)
             $deducciones = $this->obtenerDeduccionesOperativas($restauranteActivo->id, $fechaInicioStr, $fechaFinStr);
 
-            $utilidadBruta = $totalVentas - $inversionProducto;
+            $utilidadBruta = $totalVentas - $inversionTotalInsumos;
             $utilidadNeta  = $utilidadBruta - $deducciones['total_deducciones'];
 
             return response()->json([
                 'success' => true,
                 'data'    => [
                     'total_ventas'          => round($totalVentas, 2),
-                    'inversion_producto'    => round($inversionProducto, 2),
-                    'costo_produccion'      => round($inversionProducto, 2),
+                    'inversion_producto'    => round($inversionTotalInsumos, 2),
+                    'costo_produccion'      => round($inversionTotalInsumos, 2),
+                    'costo_merma'           => round($costoMerma, 2),
                     'inversion_mano_obra'   => round($deducciones['nomina_activa_periodo'], 2),
                     'costo_fijo_operativo'  => round($deducciones['costo_fijo_periodo'], 2),
                     'gastos_registrados'    => round($deducciones['gastos_registrados'], 2),
@@ -836,6 +910,8 @@ public function recomendacionPaquete(Request $request): JsonResponse
 
             // Solo sumar como merma los que realmente se prepararon (stock no devuelto)
             $totalMermas = round($resultados->where('es_merma', 1)->sum('subtotal'), 2);
+            // Costo de insumos real de la merma (para deducir en Food Cost)
+            $costoRealMermas = round($this->calcularCostoMermaReal($restauranteActivo->id, $request->fecha_inicio, $request->fecha_fin), 2);
             // Total de cancelaciones simples (stock devuelto, no es pérdida)
             $totalCancelaciones = round($resultados->where('es_merma', 0)->sum('subtotal'), 2);
 
@@ -843,6 +919,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 'success' => true,
                 'data'    => $resultados,
                 'total_mermas' => $totalMermas,
+                'costo_real_mermas' => $costoRealMermas,
                 'total_cancelaciones_sin_merma' => $totalCancelaciones,
                 'total_general' => round($totalMermas + $totalCancelaciones, 2),
             ]);
@@ -918,6 +995,11 @@ public function recomendacionPaquete(Request $request): JsonResponse
             // Costo integral de producción (insumos + minutos de MO dedicados + 5% indirectos)
             $costoProducto = (float) $this->calcularCostoRealProductos($restauranteActivo->id, $fecha, $fecha, false);
 
+            // Costo de merma real del día (platillos preparados y cancelados)
+            $costoMermaDia = (float) $this->calcularCostoMermaReal($restauranteActivo->id, $fecha, $fecha);
+
+            $costoTotalInsumos = round($costoProducto + $costoMermaDia, 2);
+
             $propinasDia = (float) Orden::where('restaurante_id', $restauranteActivo->id)
                 ->where('estado', 'CERRADA')
                 ->whereDate('created_at', $fecha)
@@ -931,7 +1013,7 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 ->whereDate('created_at', $fecha)
                 ->count();
 
-            $utilidadBruta = $ventasDia - $costoProducto;
+            $utilidadBruta = $ventasDia - $costoTotalInsumos;
             $utilidadNeta  = $utilidadBruta - $deducciones['total_deducciones'];
 
             return response()->json([
@@ -939,8 +1021,9 @@ public function recomendacionPaquete(Request $request): JsonResponse
                 'data'    => [
                     'fecha'                => $fecha,
                     'ventas_dia'           => round($ventasDia, 2),
-                    'costo_producto_dia'   => round($costoProducto, 2),
-                    'costo_insumos_dia'    => round($costoProducto, 2),
+                    'costo_producto_dia'   => round($costoTotalInsumos, 2),
+                    'costo_insumos_dia'    => round($costoTotalInsumos, 2),
+                    'costo_merma_dia'      => round($costoMermaDia, 2),
                     'inversion_mano_obra'  => round($deducciones['nomina_activa_periodo'], 2),
                     'costo_fijo_operativo' => round($deducciones['costo_fijo_periodo'], 2),
                     'gastos_registrados'   => round($deducciones['gastos_registrados'], 2),
@@ -1548,7 +1631,10 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
             $costoVentas    = (float) ($costosVentas->costo ?? 0);
             $ventaProductos = (float) ($costosVentas->venta ?? 0);
 
-            $gastosVariables = round($costoVentas, 2);
+            // Costo de merma real del período (insumos tirados en productos preparados y cancelados)
+            $costoMerma = $this->calcularCostoMermaReal($restauranteActivo->id, $fechaInicio, $fechaFin);
+
+            $gastosVariables = round($costoVentas + $costoMerma, 2);
 
             $nominaMes = Schema::hasTable('nominas')
                 ? (float) Nomina::where('restaurante_id', $restauranteActivo->id)
@@ -1645,6 +1731,8 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                     ],
                     'financiero' => [
                         'venta_mes'         => round($ventasMes, 2),
+                        'costo_ventas'      => round($costoVentas, 2),
+                        'costo_merma'       => round($costoMerma, 2),
                         'gastos_variables'  => round($gastosVariables, 2),
                         'nomina_mes'        => round($nominaMes, 2),
                         'gastos_operativos' => round($gastosOperativos, 2),
@@ -1653,6 +1741,7 @@ public function productosMayorMargenMenosVendidos(Request $request): JsonRespons
                     'kpis' => [
                         'utilidad_objetivo'       => $utilidadObjetivo,
                         'utilidad_real'           => $gananciaNeta,
+                        'costo_merma'             => round($costoMerma, 2),
                         'pct_cumplimiento_obj'    => $pctCumplimientoObjetivo,
                         'roi_general'             => $roiGeneral,
                         'roi_producto'            => $roiProducto,
